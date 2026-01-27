@@ -1,29 +1,3 @@
-<p align="center">
-    <img src="docs/assets/logo-large.png" alt="KIAUH Logo" height="181">
-    <h1 align="center">Klipper Installation And Update Helper</h1>
-</p>
-
-<p align="center">
-  A handy installation script that makes installing Klipper (and more) a breeze!
-</p>
-
-<p align="center">
-  <a><img src="https://img.shields.io/github/license/dw-0/kiauh"></a>
-  <a><img src="https://img.shields.io/github/stars/dw-0/kiauh"></a>
-  <a><img src="https://img.shields.io/github/forks/dw-0/kiauh"></a>
-  <a><img src="https://img.shields.io/github/languages/top/dw-0/kiauh?logo=gnubash&logoColor=white"></a>
-  <a><img src="https://img.shields.io/github/v/tag/dw-0/kiauh"></a>
-  <br />
-  <a><img src="https://img.shields.io/github/last-commit/dw-0/kiauh"></a>
-  <a><img src="https://img.shields.io/github/contributors/dw-0/kiauh"></a>
-</p>
-
-<hr>
-
-<h2 align="center">
-  📄️ Instructions 📄
-</h2>
-
 ### 📋 Prerequisites
 
 KIAUH is a script that assists you in installing Klipper on a Linux operating
@@ -38,17 +12,6 @@ is the simplest way to flash an image like this to an SD card.
 
 * Once you have downloaded, installed and launched the Raspberry Pi Imager,
   select `Choose OS -> Raspberry Pi OS (other)`: \
-
-<p align="center">
-  <img src="docs/assets/rpi_imager1.png" alt="KIAUH logo" height="350">
-</p>
-
-* Then select `Raspberry Pi OS Lite (32bit)` (or 64bit if you want to use that
-  instead):
-
-<p align="center">
-  <img src="docs/assets/rpi_imager2.png" alt="KIAUH logo" height="350">
-</p>
 
 * Back in the Raspberry Pi Imager's main menu, select the corresponding SD card
   to which
@@ -122,120 +85,44 @@ changes!**
 
 <hr>
 
-<h2 align="center">🌐 Sources & Further Information</h2>
+KIAUH 项目分析
+项目概述
+KIAUH (Klipper Installation And Update Helper) 是一个用于在 Linux 系统（主要是树莓派）上安装和管理 Klipper 3D打印机固件及其生态系统的 Python 工具。
 
-<table align="center">
-<tr>
-    <th><h3><a href="https://github.com/Klipper3d/klipper">Klipper</a></h3></th>
-    <th><h3><a href="https://github.com/Arksine/moonraker">Moonraker</a></h3></th>
-    <th><h3><a href="https://github.com/mainsail-crew/mainsail">Mainsail</a></h3></th>
-</tr>
-<tr>
-    <th><img src="https://raw.githubusercontent.com/Klipper3d/klipper/master/docs/img/klipper-logo.png" alt="Klipper Logo" height="64"></th>
-    <th><img src="https://avatars.githubusercontent.com/u/9563098?v=4" alt="Arksine avatar" height="64"></th>
-    <th><img src="https://raw.githubusercontent.com/mainsail-crew/docs/master/assets/img/logo.png" alt="Mainsail Logo" height="64"></th>
-</tr>
-<tr>
-    <th>by <a href="https://github.com/KevinOConnor">KevinOConnor</a></th>
-    <th>by <a href="https://github.com/Arksine">Arksine</a></th>
-    <th>by <a href="https://github.com/mainsail-crew">mainsail-crew</a></th>
-</tr>
+技术栈
+语言: Python 3.8+
+运行环境: Linux (主要是 Debian/Raspberry Pi OS)
+代码规范: 使用 ruff 进行 linting，mypy 进行类型检查
+许可证: GPLv3
+架构设计
+1. 核心模块 (kiauh/core/)
 
-<tr>
-    <th><h3><a href="https://github.com/fluidd-core/fluidd">Fluidd</a></h3></th>
-    <th><h3><a href="https://github.com/KlipperScreen/KlipperScreen">KlipperScreen</a></h3></th>
-    <th><h3><a href="https://github.com/OctoPrint/OctoPrint">OctoPrint</a></h3></th>
-</tr>
-<tr>
-    <th><img src="https://raw.githubusercontent.com/fluidd-core/fluidd/master/docs/assets/images/logo.svg" alt="Fluidd Logo" height="64"></th>
-    <th><img src="https://avatars.githubusercontent.com/u/31575189?v=4" alt="jordanruthe avatar" height="64"></th>
-    <th><img src="https://raw.githubusercontent.com/OctoPrint/OctoPrint/master/docs/images/octoprint-logo.png" alt="OctoPrint Logo" height="64"></th>
-</tr>
-<tr>
-    <th>by <a href="https://github.com/fluidd-core">fluidd-core</a></th>
-    <th>by <a href="https://github.com/alfrix">alfrix</a></th>
-    <th>by <a href="https://github.com/OctoPrint">OctoPrint</a></th>
-</tr>
+menus/ - 基于文本的菜单系统，采用抽象基类 BaseMenu 实现
+instance_manager/ - 管理服务实例的生命周期
+settings/ - 配置管理
+services/ - 备份、消息等核心服务
+submodules/ - 包含一个自定义的配置文件解析器 simple_config_parser
+2. 组件模块 (kiauh/components/) 管理各个可安装的核心组件：
 
-<tr>
-    <th><h3><a href="https://github.com/nlef/moonraker-telegram-bot">Moonraker-Telegram-Bot</a></h3></th>
-    <th><h3><a href="https://github.com/Kragrathea/pgcode">PrettyGCode for Klipper</a></h3></th>
-    <th><h3><a href="https://github.com/TheSpaghettiDetective/moonraker-obico">Obico for Klipper</a></h3></th>
-</tr>
-<tr>
-    <th><img src="https://avatars.githubusercontent.com/u/52351624?v=4" alt="nlef avatar" height="64"></th>
-    <th><img src="https://avatars.githubusercontent.com/u/5917231?v=4" alt="Kragrathea avatar" height="64"></th>
-    <th><img src="https://avatars.githubusercontent.com/u/46323662?s=200&v=4" alt="Obico logo" height="64"></th>
-</tr>
-<tr>
-    <th>by <a href="https://github.com/nlef">nlef</a></th>
-    <th>by <a href="https://github.com/Kragrathea">Kragrathea</a></th>
-    <th>by <a href="https://github.com/TheSpaghettiDetective">Obico</a></th>
-</tr>
+Klipper - 3D 打印机固件
+Moonraker - Klipper 的 API 服务
+Web UI 客户端 - Mainsail / Fluidd 前端界面
+KlipperScreen - 触摸屏界面
+Crowsnest - 摄像头流媒体服务
+Klipper Firmware - 固件编译和刷写工具
+3. 扩展模块 (kiauh/extensions/) 采用插件架构，支持社区扩展：
 
-<tr>
-    <th><h3><a href="https://github.com/Clon1998/mobileraker_companion">Mobileraker's Companion</a></h3></th>
-    <th><h3><a href="https://octoeverywhere.com/?source=kiauh_readme">OctoEverywhere For Klipper</a></h3></th>
-    <th><h3><a href="https://github.com/crysxd/OctoApp-Plugin">OctoApp For Klipper</a></h3></th>
-</tr>
-<tr>
-    <th><a href="https://github.com/Clon1998/mobileraker_companion"><img src="https://raw.githubusercontent.com/Clon1998/mobileraker/master/assets/icon/mr_appicon.png" alt="Mobileraker Logo" height="64"></a></th>
-    <th><a href="https://octoeverywhere.com/?source=kiauh_readme"><img src="https://octoeverywhere.com/img/logo.svg" alt="OctoEverywhere Logo" height="64"></a></th>
-    <th><a href="https://octoapp.eu/?source=kiauh_readme"><img src="https://octoapp.eu/octoapp.webp" alt="OctoApp Logo" height="64"></a></th>
-</tr>
-<tr>
-    <th>by <a href="https://github.com/Clon1998">Patrick Schmidt</a></th>
-    <th>by <a href="https://github.com/QuinnDamerell">Quinn Damerell</a></th>
-    <th>by <a href="https://github.com/crysxd">Christian Würthner</a></th>
-</tr>
+Telegram Bot、OctoEverywhere、Obico 等远程监控
+Spoolman (耗材管理)、PrettyGCode 等工具
+每个扩展继承 BaseExtension 抽象类
+4. 工具模块 (kiauh/utils/) 通用工具函数：文件系统、Git 操作、系统命令、配置解析等
 
-<tr>
-    <th><h3><a href="https://github.com/staubgeborener/klipper-backup">Klipper-Backup</a></h3></th>
-    <th><h3><a href="https://simplyprint.io/">SimplyPrint for Klipper</a></h3></th>
-</tr>
-<tr>
-    <th><a href="https://github.com/staubgeborener/klipper-backup"><img src="https://avatars.githubusercontent.com/u/28908603?v=4" alt="Staubgeroner Avatar" height="64"></a></th>
-    <th><a href="https://github.com/SimplyPrint"><img src="https://avatars.githubusercontent.com/u/64896552?s=200&v=4" alt="" height="64"></a></th>
-</tr>
-<tr>
-    <th>by <a href="https://github.com/Staubgeborener">Staubgeborener</a></th>
-    <th>by <a href="https://github.com/SimplyPrint">SimplyPrint</a></th>
-</tr>
-</table>
-
-<hr>
-
-<h2 align="center">🎖️ Contributors 🎖️</h2>
-
-<div align="center">
-  <a href="https://github.com/dw-0/kiauh/graphs/contributors">
-    <img src="https://contrib.rocks/image?repo=dw-0/kiauh" alt=""/>
-  </a>
-</div>
-
-<hr>
-
-<div align="center">
-    <img src="https://repobeats.axiom.co/api/embed/a1afbda9190c04a90cf4bd3061e5573bc836cb05.svg" alt="Repobeats analytics image"/>
-</div>
-
-<hr>
-
-<h2 align="center">✨ Credits ✨</h2>
-
-* A big thank you to [lixxbox](https://github.com/lixxbox) for that awesome
-  KIAUH-Logo!
-* Also, a big thank you to everyone who supported my work with
-  a [Ko-fi](https://ko-fi.com/dw__0) !
-* Last but not least: Thank you to all contributors and members of the Klipper
-  Community who like and share this project!
-
-<hr>
-
-<h4 align="center">A special thank you to JetBrains for sponsoring this project
-with their incredible software!</h4>
-<p align="center">
-  <a href="https://www.jetbrains.com/community/opensource/#support" target="_blank">
-    <img src="https://resources.jetbrains.com/storage/products/company/brand/logos/jb_beam.png" alt="JetBrains Logo (Main) logo." height="128">
-  </a>
-</p>
+设计模式
+模板方法模式 - BaseMenu 定义菜单生命周期，子类实现具体内容
+策略模式 - 扩展系统允许动态加载不同的安装/卸载策略
+元类 - PostInitCaller 实现自动调用 __post_init__
+项目特点
+纯终端 TUI 界面，使用 ASCII 艺术绘制菜单
+模块化设计，组件和扩展解耦良好
+支持多实例管理（如多个 Klipper 实例）
+完善的日志和错误处理机制
