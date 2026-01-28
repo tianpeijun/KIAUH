@@ -1,0 +1,1319 @@
+ARM GAS  /tmp/ccnmeBnB.s 			page 1
+
+
+   1              		.cpu cortex-m4
+   2              		.eabi_attribute 27, 1
+   3              		.eabi_attribute 28, 1
+   4              		.eabi_attribute 20, 1
+   5              		.eabi_attribute 21, 1
+   6              		.eabi_attribute 23, 3
+   7              		.eabi_attribute 24, 1
+   8              		.eabi_attribute 25, 1
+   9              		.eabi_attribute 26, 1
+  10              		.eabi_attribute 30, 2
+  11              		.eabi_attribute 34, 1
+  12              		.eabi_attribute 18, 4
+  13              		.file	"sched.c"
+  14              		.text
+  15              	.Ltext0:
+  16              		.cfi_sections	.debug_frame
+  17              		.section	.text.sched_get_time,"ax",%progbits
+  18              		.align	1
+  19              		.p2align 2,,3
+  20              		.global	sched_get_time
+  21              		.arch armv7e-m
+  22              		.syntax unified
+  23              		.thumb
+  24              		.thumb_func
+  25              		.fpu fpv4-sp-d16
+  27              	sched_get_time:
+  28              	.LFB7:
+  29              		.file 1 "src/sched.c"
+   1:src/sched.c   **** /**
+   2:src/sched.c   ****  * @file    sched.c
+   3:src/sched.c   ****  * @brief   任务调度器实现
+   4:src/sched.c   ****  * 
+   5:src/sched.c   ****  * 复用自 Klipper src/sched.c
+   6:src/sched.c   ****  * 提供定时器回调注册和任务调度功能
+   7:src/sched.c   ****  */
+   8:src/sched.c   **** 
+   9:src/sched.c   **** #include "sched.h"
+  10:src/sched.c   **** #include "board/irq.h"
+  11:src/sched.c   **** #include <stddef.h>
+  12:src/sched.c   **** 
+  13:src/sched.c   **** /* ========== 私有变量 ========== */
+  14:src/sched.c   **** 
+  15:src/sched.c   **** /* 定时器链表头 */
+  16:src/sched.c   **** static sched_timer_t* s_timer_list = NULL;
+  17:src/sched.c   **** 
+  18:src/sched.c   **** /* 系统关闭标志 */
+  19:src/sched.c   **** static volatile int s_shutdown_flag = 0;
+  20:src/sched.c   **** 
+  21:src/sched.c   **** /* 关闭原因 */
+  22:src/sched.c   **** static const char* s_shutdown_reason = NULL;
+  23:src/sched.c   **** 
+  24:src/sched.c   **** /* ========== 时间接口实现 ========== */
+  25:src/sched.c   **** 
+  26:src/sched.c   **** /**
+  27:src/sched.c   ****  * @brief  获取当前系统时间（微秒级）
+  28:src/sched.c   ****  * @note   需要 HAL 层实现具体的硬件定时器读取
+  29:src/sched.c   ****  * @retval 当前时间戳
+ARM GAS  /tmp/ccnmeBnB.s 			page 2
+
+
+  30:src/sched.c   ****  */
+  31:src/sched.c   **** sched_time_t sched_get_time(void)
+  32:src/sched.c   **** {
+  30              		.loc 1 32 1 view -0
+  31              		.cfi_startproc
+  32              		@ args = 0, pretend = 0, frame = 0
+  33              		@ frame_needed = 0, uses_anonymous_args = 0
+  34              		@ link register save eliminated.
+  33:src/sched.c   ****     /* TODO: 从硬件定时器读取当前时间 */
+  34:src/sched.c   ****     /* 需要 HAL 层提供 timer_read_time() 函数 */
+  35:src/sched.c   ****     extern uint32_t timer_read_time(void);
+  35              		.loc 1 35 5 view .LVU1
+  36:src/sched.c   ****     return timer_read_time();
+  36              		.loc 1 36 5 view .LVU2
+  37              		.loc 1 36 12 is_stmt 0 view .LVU3
+  38 0000 FFF7FEBF 		b	timer_read_time
+  39              	.LVL0:
+  40              		.cfi_endproc
+  41              	.LFE7:
+  43              		.section	.text.sched_is_before,"ax",%progbits
+  44              		.align	1
+  45              		.p2align 2,,3
+  46              		.global	sched_is_before
+  47              		.syntax unified
+  48              		.thumb
+  49              		.thumb_func
+  50              		.fpu fpv4-sp-d16
+  52              	sched_is_before:
+  53              	.LVL1:
+  54              	.LFB8:
+  37:src/sched.c   **** }
+  38:src/sched.c   **** 
+  39:src/sched.c   **** /**
+  40:src/sched.c   ****  * @brief  检查时间是否已到
+  41:src/sched.c   ****  * @param  time 目标时间
+  42:src/sched.c   ****  * @retval 1 已到，0 未到
+  43:src/sched.c   ****  */
+  44:src/sched.c   **** int sched_is_before(sched_time_t time)
+  45:src/sched.c   **** {
+  55              		.loc 1 45 1 is_stmt 1 view -0
+  56              		.cfi_startproc
+  57              		@ args = 0, pretend = 0, frame = 0
+  58              		@ frame_needed = 0, uses_anonymous_args = 0
+  46:src/sched.c   ****     sched_time_t now = sched_get_time();
+  59              		.loc 1 46 5 view .LVU5
+  60              	.LBB56:
+  61              	.LBI56:
+  31:src/sched.c   **** {
+  62              		.loc 1 31 14 view .LVU6
+  63              	.LBB57:
+  35:src/sched.c   ****     return timer_read_time();
+  64              		.loc 1 35 5 view .LVU7
+  36:src/sched.c   **** }
+  65              		.loc 1 36 5 view .LVU8
+  66              	.LBE57:
+  67              	.LBE56:
+  45:src/sched.c   ****     sched_time_t now = sched_get_time();
+ARM GAS  /tmp/ccnmeBnB.s 			page 3
+
+
+  68              		.loc 1 45 1 is_stmt 0 view .LVU9
+  69 0000 10B5     		push	{r4, lr}
+  70              		.cfi_def_cfa_offset 8
+  71              		.cfi_offset 4, -8
+  72              		.cfi_offset 14, -4
+  45:src/sched.c   ****     sched_time_t now = sched_get_time();
+  73              		.loc 1 45 1 view .LVU10
+  74 0002 0446     		mov	r4, r0
+  75              	.LBB59:
+  76              	.LBB58:
+  36:src/sched.c   **** }
+  77              		.loc 1 36 12 view .LVU11
+  78 0004 FFF7FEFF 		bl	timer_read_time
+  79              	.LVL2:
+  36:src/sched.c   **** }
+  80              		.loc 1 36 12 view .LVU12
+  81              	.LBE58:
+  82              	.LBE59:
+  47:src/sched.c   ****     return sched_time_diff(time, now) <= 0;
+  83              		.loc 1 47 5 is_stmt 1 view .LVU13
+  84              	.LBB60:
+  85              	.LBI60:
+  48:src/sched.c   **** }
+  49:src/sched.c   **** 
+  50:src/sched.c   **** /**
+  51:src/sched.c   ****  * @brief  计算时间差（考虑溢出）
+  52:src/sched.c   ****  * @param  t1 时间 1
+  53:src/sched.c   ****  * @param  t2 时间 2
+  54:src/sched.c   ****  * @retval t1 - t2 的差值
+  55:src/sched.c   ****  */
+  56:src/sched.c   **** int32_t sched_time_diff(sched_time_t t1, sched_time_t t2)
+  86              		.loc 1 56 9 view .LVU14
+  87              	.LBB61:
+  57:src/sched.c   **** {
+  58:src/sched.c   ****     return (int32_t)(t1 - t2);
+  88              		.loc 1 58 5 view .LVU15
+  89              		.loc 1 58 25 is_stmt 0 view .LVU16
+  90 0008 201A     		subs	r0, r4, r0
+  91              	.LVL3:
+  92              		.loc 1 58 25 view .LVU17
+  93              	.LBE61:
+  94              	.LBE60:
+  48:src/sched.c   **** }
+  95              		.loc 1 48 1 view .LVU18
+  96 000a 0028     		cmp	r0, #0
+  97 000c CCBF     		ite	gt
+  98 000e 0020     		movgt	r0, #0
+  99 0010 0120     		movle	r0, #1
+ 100 0012 10BD     		pop	{r4, pc}
+  48:src/sched.c   **** }
+ 101              		.loc 1 48 1 view .LVU19
+ 102              		.cfi_endproc
+ 103              	.LFE8:
+ 105              		.section	.text.sched_time_diff,"ax",%progbits
+ 106              		.align	1
+ 107              		.p2align 2,,3
+ 108              		.global	sched_time_diff
+ARM GAS  /tmp/ccnmeBnB.s 			page 4
+
+
+ 109              		.syntax unified
+ 110              		.thumb
+ 111              		.thumb_func
+ 112              		.fpu fpv4-sp-d16
+ 114              	sched_time_diff:
+ 115              	.LVL4:
+ 116              	.LFB9:
+  57:src/sched.c   **** {
+ 117              		.loc 1 57 1 is_stmt 1 view -0
+ 118              		.cfi_startproc
+ 119              		@ args = 0, pretend = 0, frame = 0
+ 120              		@ frame_needed = 0, uses_anonymous_args = 0
+ 121              		@ link register save eliminated.
+ 122              		.loc 1 58 5 view .LVU21
+  59:src/sched.c   **** }
+ 123              		.loc 1 59 1 is_stmt 0 view .LVU22
+ 124 0000 401A     		subs	r0, r0, r1
+ 125              	.LVL5:
+ 126              		.loc 1 59 1 view .LVU23
+ 127 0002 7047     		bx	lr
+ 128              		.cfi_endproc
+ 129              	.LFE9:
+ 131              		.section	.text.sched_irq_save,"ax",%progbits
+ 132              		.align	1
+ 133              		.p2align 2,,3
+ 134              		.global	sched_irq_save
+ 135              		.syntax unified
+ 136              		.thumb
+ 137              		.thumb_func
+ 138              		.fpu fpv4-sp-d16
+ 140              	sched_irq_save:
+ 141              	.LFB10:
+  60:src/sched.c   **** 
+  61:src/sched.c   **** /* ========== 关键区保护实现 ========== */
+  62:src/sched.c   **** 
+  63:src/sched.c   **** /**
+  64:src/sched.c   ****  * @brief  进入关键区（禁用中断）
+  65:src/sched.c   ****  * @retval 之前的中断状态
+  66:src/sched.c   ****  */
+  67:src/sched.c   **** uint32_t sched_irq_save(void)
+  68:src/sched.c   **** {
+ 142              		.loc 1 68 1 is_stmt 1 view -0
+ 143              		.cfi_startproc
+ 144              		@ args = 0, pretend = 0, frame = 0
+ 145              		@ frame_needed = 0, uses_anonymous_args = 0
+ 146              		@ link register save eliminated.
+  69:src/sched.c   ****     /* TODO: 需要 HAL 层实现 */
+  70:src/sched.c   ****     extern uint32_t irq_save(void);
+ 147              		.loc 1 70 5 view .LVU25
+  71:src/sched.c   ****     return irq_save();
+ 148              		.loc 1 71 5 view .LVU26
+ 149              		.loc 1 71 12 is_stmt 0 view .LVU27
+ 150 0000 FFF7FEBF 		b	irq_save
+ 151              	.LVL6:
+ 152              		.cfi_endproc
+ 153              	.LFE10:
+ 155              		.section	.text.sched_irq_restore,"ax",%progbits
+ARM GAS  /tmp/ccnmeBnB.s 			page 5
+
+
+ 156              		.align	1
+ 157              		.p2align 2,,3
+ 158              		.global	sched_irq_restore
+ 159              		.syntax unified
+ 160              		.thumb
+ 161              		.thumb_func
+ 162              		.fpu fpv4-sp-d16
+ 164              	sched_irq_restore:
+ 165              	.LVL7:
+ 166              	.LFB11:
+  72:src/sched.c   **** }
+  73:src/sched.c   **** 
+  74:src/sched.c   **** /**
+  75:src/sched.c   ****  * @brief  退出关键区（恢复中断）
+  76:src/sched.c   ****  * @param  flag 之前的中断状态
+  77:src/sched.c   ****  */
+  78:src/sched.c   **** void sched_irq_restore(uint32_t flag)
+  79:src/sched.c   **** {
+ 167              		.loc 1 79 1 is_stmt 1 view -0
+ 168              		.cfi_startproc
+ 169              		@ args = 0, pretend = 0, frame = 0
+ 170              		@ frame_needed = 0, uses_anonymous_args = 0
+ 171              		@ link register save eliminated.
+  80:src/sched.c   ****     /* TODO: 需要 HAL 层实现 */
+  81:src/sched.c   ****     extern void irq_restore(uint32_t flag);
+ 172              		.loc 1 81 5 view .LVU29
+  82:src/sched.c   ****     irq_restore(flag);
+ 173              		.loc 1 82 5 view .LVU30
+ 174              	.LBB62:
+ 175              	.LBI62:
+ 176              		.file 2 "./board/irq.h"
+   1:./board/irq.h **** /**
+   2:./board/irq.h ****  * @file    irq.h
+   3:./board/irq.h ****  * @brief   Interrupt management interface
+   4:./board/irq.h ****  * 
+   5:./board/irq.h ****  * Provides interrupt enable/disable functions and critical section
+   6:./board/irq.h ****  * management for STM32F407.
+   7:./board/irq.h ****  */
+   8:./board/irq.h **** 
+   9:./board/irq.h **** #ifndef BOARD_IRQ_H
+  10:./board/irq.h **** #define BOARD_IRQ_H
+  11:./board/irq.h **** 
+  12:./board/irq.h **** #include <stdint.h>
+  13:./board/irq.h **** 
+  14:./board/irq.h **** /* ========== Interrupt Control ========== */
+  15:./board/irq.h **** 
+  16:./board/irq.h **** /**
+  17:./board/irq.h ****  * @brief   Disable all interrupts
+  18:./board/irq.h ****  * @return  Previous interrupt state (for restore)
+  19:./board/irq.h ****  */
+  20:./board/irq.h **** static inline uint32_t irq_disable(void)
+  21:./board/irq.h **** {
+  22:./board/irq.h ****     uint32_t primask;
+  23:./board/irq.h ****     __asm__ __volatile__(
+  24:./board/irq.h ****         "mrs %0, primask\n"
+  25:./board/irq.h ****         "cpsid i\n"
+  26:./board/irq.h ****         : "=r" (primask)
+ARM GAS  /tmp/ccnmeBnB.s 			page 6
+
+
+  27:./board/irq.h ****         :
+  28:./board/irq.h ****         : "memory"
+  29:./board/irq.h ****     );
+  30:./board/irq.h ****     return primask;
+  31:./board/irq.h **** }
+  32:./board/irq.h **** 
+  33:./board/irq.h **** /**
+  34:./board/irq.h ****  * @brief   Enable all interrupts
+  35:./board/irq.h ****  */
+  36:./board/irq.h **** static inline void irq_enable(void)
+  37:./board/irq.h **** {
+  38:./board/irq.h ****     __asm__ __volatile__("cpsie i" ::: "memory");
+  39:./board/irq.h **** }
+  40:./board/irq.h **** 
+  41:./board/irq.h **** /**
+  42:./board/irq.h ****  * @brief   Restore interrupt state
+  43:./board/irq.h ****  * @param   flag    Previous interrupt state from irq_disable()
+  44:./board/irq.h ****  */
+  45:./board/irq.h **** static inline void irq_restore(uint32_t flag)
+ 177              		.loc 2 45 20 view .LVU31
+ 178              	.LBB63:
+  46:./board/irq.h **** {
+  47:./board/irq.h ****     __asm__ __volatile__(
+ 179              		.loc 2 47 5 view .LVU32
+ 180              		.syntax unified
+ 181              	@ 47 "./board/irq.h" 1
+ 182 0000 80F31088 		msr primask, r0
+ 183              	
+ 184              	@ 0 "" 2
+ 185              	.LVL8:
+ 186              		.loc 2 47 5 is_stmt 0 view .LVU33
+ 187              		.thumb
+ 188              		.syntax unified
+ 189              	.LBE63:
+ 190              	.LBE62:
+  83:src/sched.c   **** }
+ 191              		.loc 1 83 1 view .LVU34
+ 192 0004 7047     		bx	lr
+ 193              		.cfi_endproc
+ 194              	.LFE11:
+ 196 0006 00BF     		.section	.text.sched_add_timer,"ax",%progbits
+ 197              		.align	1
+ 198              		.p2align 2,,3
+ 199              		.global	sched_add_timer
+ 200              		.syntax unified
+ 201              		.thumb
+ 202              		.thumb_func
+ 203              		.fpu fpv4-sp-d16
+ 205              	sched_add_timer:
+ 206              	.LVL9:
+ 207              	.LFB12:
+  84:src/sched.c   **** 
+  85:src/sched.c   **** /* ========== 定时器管理实现 ========== */
+  86:src/sched.c   **** 
+  87:src/sched.c   **** /**
+  88:src/sched.c   ****  * @brief  添加定时器到链表（按唤醒时间排序）
+  89:src/sched.c   ****  * @param  timer 定时器结构体指针
+ARM GAS  /tmp/ccnmeBnB.s 			page 7
+
+
+  90:src/sched.c   ****  */
+  91:src/sched.c   **** void sched_add_timer(sched_timer_t* timer)
+  92:src/sched.c   **** {
+ 208              		.loc 1 92 1 is_stmt 1 view -0
+ 209              		.cfi_startproc
+ 210              		@ args = 0, pretend = 0, frame = 0
+ 211              		@ frame_needed = 0, uses_anonymous_args = 0
+  93:src/sched.c   ****     uint32_t flag;
+ 212              		.loc 1 93 5 view .LVU36
+  94:src/sched.c   ****     sched_timer_t** p_prev;
+ 213              		.loc 1 94 5 view .LVU37
+  95:src/sched.c   ****     
+  96:src/sched.c   ****     if (timer == NULL || timer->func == NULL) {
+ 214              		.loc 1 96 5 view .LVU38
+ 215              		.loc 1 96 8 is_stmt 0 view .LVU39
+ 216 0000 B0B1     		cbz	r0, .L21
+  92:src/sched.c   ****     uint32_t flag;
+ 217              		.loc 1 92 1 discriminator 1 view .LVU40
+ 218 0002 38B5     		push	{r3, r4, r5, lr}
+ 219              		.cfi_def_cfa_offset 16
+ 220              		.cfi_offset 3, -16
+ 221              		.cfi_offset 4, -12
+ 222              		.cfi_offset 5, -8
+ 223              		.cfi_offset 14, -4
+ 224              		.loc 1 96 23 discriminator 1 view .LVU41
+ 225 0004 8368     		ldr	r3, [r0, #8]
+ 226 0006 0446     		mov	r4, r0
+ 227 0008 8BB1     		cbz	r3, .L8
+ 228              	.LVL10:
+ 229              	.LBB78:
+ 230              	.LBI78:
+  91:src/sched.c   **** {
+ 231              		.loc 1 91 6 is_stmt 1 view .LVU42
+ 232              	.LBB79:
+  97:src/sched.c   ****         return;
+  98:src/sched.c   ****     }
+  99:src/sched.c   ****     
+ 100:src/sched.c   ****     flag = sched_irq_save();
+ 233              		.loc 1 100 5 view .LVU43
+ 234              	.LBB80:
+ 235              	.LBI80:
+  67:src/sched.c   **** {
+ 236              		.loc 1 67 10 view .LVU44
+ 237              	.LBB81:
+  70:src/sched.c   ****     return irq_save();
+ 238              		.loc 1 70 5 view .LVU45
+  71:src/sched.c   **** }
+ 239              		.loc 1 71 5 view .LVU46
+  71:src/sched.c   **** }
+ 240              		.loc 1 71 12 is_stmt 0 view .LVU47
+ 241 000a FFF7FEFF 		bl	irq_save
+ 242              	.LVL11:
+  71:src/sched.c   **** }
+ 243              		.loc 1 71 12 view .LVU48
+ 244              	.LBE81:
+ 245              	.LBE80:
+ 101:src/sched.c   ****     
+ARM GAS  /tmp/ccnmeBnB.s 			page 8
+
+
+ 102:src/sched.c   ****     /* 按唤醒时间排序插入链表 */
+ 103:src/sched.c   ****     p_prev = &s_timer_list;
+ 246              		.loc 1 103 12 view .LVU49
+ 247 000e 0949     		ldr	r1, .L25
+ 248              	.LVL12:
+ 249              		.loc 1 103 5 is_stmt 1 view .LVU50
+ 104:src/sched.c   ****     while (*p_prev != NULL) {
+ 250              		.loc 1 104 5 view .LVU51
+ 103:src/sched.c   ****     while (*p_prev != NULL) {
+ 251              		.loc 1 103 12 is_stmt 0 view .LVU52
+ 252 0010 0B68     		ldr	r3, [r1]
+ 253              		.loc 1 104 11 is_stmt 1 view .LVU53
+ 254 0012 43B1     		cbz	r3, .L10
+ 105:src/sched.c   ****         if (sched_time_diff(timer->waketime, (*p_prev)->waketime) < 0) {
+ 255              		.loc 1 105 13 is_stmt 0 view .LVU54
+ 256 0014 6568     		ldr	r5, [r4, #4]
+ 257 0016 02E0     		b	.L11
+ 258              	.LVL13:
+ 259              	.L24:
+ 106:src/sched.c   ****             break;
+ 107:src/sched.c   ****         }
+ 108:src/sched.c   ****         p_prev = &((*p_prev)->next);
+ 260              		.loc 1 108 16 view .LVU55
+ 261 0018 1946     		mov	r1, r3
+ 262              	.LVL14:
+ 263              		.loc 1 108 16 view .LVU56
+ 264 001a 1B68     		ldr	r3, [r3]
+ 104:src/sched.c   ****         if (sched_time_diff(timer->waketime, (*p_prev)->waketime) < 0) {
+ 265              		.loc 1 104 11 is_stmt 1 view .LVU57
+ 266 001c 1BB1     		cbz	r3, .L10
+ 267              	.LVL15:
+ 268              	.L11:
+ 105:src/sched.c   ****         if (sched_time_diff(timer->waketime, (*p_prev)->waketime) < 0) {
+ 269              		.loc 1 105 9 view .LVU58
+ 270              	.LBB82:
+ 271              	.LBI82:
+  56:src/sched.c   **** {
+ 272              		.loc 1 56 9 view .LVU59
+ 273              	.LBB83:
+  58:src/sched.c   **** }
+ 274              		.loc 1 58 5 view .LVU60
+  58:src/sched.c   **** }
+ 275              		.loc 1 58 5 is_stmt 0 view .LVU61
+ 276              	.LBE83:
+ 277              	.LBE82:
+ 278              		.loc 1 108 9 is_stmt 1 view .LVU62
+ 279              	.LBB85:
+ 280              	.LBB84:
+  58:src/sched.c   **** }
+ 281              		.loc 1 58 25 is_stmt 0 view .LVU63
+ 282 001e 5A68     		ldr	r2, [r3, #4]
+ 283 0020 AA1A     		subs	r2, r5, r2
+ 284              	.LBE84:
+ 285              	.LBE85:
+ 105:src/sched.c   ****             break;
+ 286              		.loc 1 105 12 view .LVU64
+ 287 0022 002A     		cmp	r2, #0
+ARM GAS  /tmp/ccnmeBnB.s 			page 9
+
+
+ 288 0024 F8DA     		bge	.L24
+ 289              	.L10:
+ 109:src/sched.c   ****     }
+ 110:src/sched.c   ****     
+ 111:src/sched.c   ****     timer->next = *p_prev;
+ 290              		.loc 1 111 5 is_stmt 1 view .LVU65
+ 291              		.loc 1 111 17 is_stmt 0 view .LVU66
+ 292 0026 2360     		str	r3, [r4]
+ 112:src/sched.c   ****     *p_prev = timer;
+ 293              		.loc 1 112 5 is_stmt 1 view .LVU67
+ 294              		.loc 1 112 13 is_stmt 0 view .LVU68
+ 295 0028 0C60     		str	r4, [r1]
+ 113:src/sched.c   ****     
+ 114:src/sched.c   ****     sched_irq_restore(flag);
+ 296              		.loc 1 114 5 is_stmt 1 view .LVU69
+ 297              	.LVL16:
+ 298              	.LBB86:
+ 299              	.LBI86:
+  78:src/sched.c   **** {
+ 300              		.loc 1 78 6 view .LVU70
+ 301              	.LBB87:
+  81:src/sched.c   ****     irq_restore(flag);
+ 302              		.loc 1 81 5 view .LVU71
+  82:src/sched.c   **** }
+ 303              		.loc 1 82 5 view .LVU72
+ 304              	.LBB88:
+ 305              	.LBI88:
+  45:./board/irq.h **** {
+ 306              		.loc 2 45 20 view .LVU73
+ 307              	.LBB89:
+ 308              		.loc 2 47 5 view .LVU74
+ 309              		.syntax unified
+ 310              	@ 47 "./board/irq.h" 1
+ 311 002a 80F31088 		msr primask, r0
+ 312              	
+ 313              	@ 0 "" 2
+ 314              	.LVL17:
+ 315              		.thumb
+ 316              		.syntax unified
+ 317              	.L8:
+ 318              		.loc 2 47 5 is_stmt 0 view .LVU75
+ 319              	.LBE89:
+ 320              	.LBE88:
+ 321              	.LBE87:
+ 322              	.LBE86:
+ 323              	.LBE79:
+ 324              	.LBE78:
+ 115:src/sched.c   **** }
+ 325              		.loc 1 115 1 view .LVU76
+ 326 002e 38BD     		pop	{r3, r4, r5, pc}
+ 327              	.LVL18:
+ 328              	.L21:
+ 329              		.cfi_def_cfa_offset 0
+ 330              		.cfi_restore 3
+ 331              		.cfi_restore 4
+ 332              		.cfi_restore 5
+ 333              		.cfi_restore 14
+ARM GAS  /tmp/ccnmeBnB.s 			page 10
+
+
+ 334              		.loc 1 115 1 view .LVU77
+ 335 0030 7047     		bx	lr
+ 336              	.L26:
+ 337 0032 00BF     		.align	2
+ 338              	.L25:
+ 339 0034 00000000 		.word	.LANCHOR0
+ 340              		.cfi_endproc
+ 341              	.LFE12:
+ 343              		.section	.text.sched_del_timer,"ax",%progbits
+ 344              		.align	1
+ 345              		.p2align 2,,3
+ 346              		.global	sched_del_timer
+ 347              		.syntax unified
+ 348              		.thumb
+ 349              		.thumb_func
+ 350              		.fpu fpv4-sp-d16
+ 352              	sched_del_timer:
+ 353              	.LVL19:
+ 354              	.LFB13:
+ 116:src/sched.c   **** 
+ 117:src/sched.c   **** /**
+ 118:src/sched.c   ****  * @brief  从链表移除定时器
+ 119:src/sched.c   ****  * @param  timer 定时器结构体指针
+ 120:src/sched.c   ****  */
+ 121:src/sched.c   **** void sched_del_timer(sched_timer_t* timer)
+ 122:src/sched.c   **** {
+ 355              		.loc 1 122 1 is_stmt 1 view -0
+ 356              		.cfi_startproc
+ 357              		@ args = 0, pretend = 0, frame = 0
+ 358              		@ frame_needed = 0, uses_anonymous_args = 0
+ 123:src/sched.c   ****     uint32_t flag;
+ 359              		.loc 1 123 5 view .LVU79
+ 124:src/sched.c   ****     sched_timer_t** p_prev;
+ 360              		.loc 1 124 5 view .LVU80
+ 125:src/sched.c   ****     
+ 126:src/sched.c   ****     if (timer == NULL) {
+ 361              		.loc 1 126 5 view .LVU81
+ 362              		.loc 1 126 8 is_stmt 0 view .LVU82
+ 363 0000 98B1     		cbz	r0, .L42
+ 127:src/sched.c   ****         return;
+ 128:src/sched.c   ****     }
+ 129:src/sched.c   ****     
+ 130:src/sched.c   ****     flag = sched_irq_save();
+ 364              		.loc 1 130 5 is_stmt 1 view .LVU83
+ 365              	.LBB90:
+ 366              	.LBI90:
+  67:src/sched.c   **** {
+ 367              		.loc 1 67 10 view .LVU84
+ 368              	.LBB91:
+  70:src/sched.c   ****     return irq_save();
+ 369              		.loc 1 70 5 view .LVU85
+  71:src/sched.c   **** }
+ 370              		.loc 1 71 5 view .LVU86
+ 371              	.LBE91:
+ 372              	.LBE90:
+ 122:src/sched.c   ****     uint32_t flag;
+ 373              		.loc 1 122 1 is_stmt 0 view .LVU87
+ARM GAS  /tmp/ccnmeBnB.s 			page 11
+
+
+ 374 0002 10B5     		push	{r4, lr}
+ 375              		.cfi_def_cfa_offset 8
+ 376              		.cfi_offset 4, -8
+ 377              		.cfi_offset 14, -4
+ 378 0004 0446     		mov	r4, r0
+ 379              	.LBB93:
+ 380              	.LBB92:
+  71:src/sched.c   **** }
+ 381              		.loc 1 71 12 view .LVU88
+ 382 0006 FFF7FEFF 		bl	irq_save
+ 383              	.LVL20:
+  71:src/sched.c   **** }
+ 384              		.loc 1 71 12 view .LVU89
+ 385              	.LBE92:
+ 386              	.LBE93:
+ 131:src/sched.c   ****     
+ 132:src/sched.c   ****     /* 查找并移除 */
+ 133:src/sched.c   ****     p_prev = &s_timer_list;
+ 387              		.loc 1 133 12 view .LVU90
+ 388 000a 084A     		ldr	r2, .L46
+ 389              	.LVL21:
+ 390              		.loc 1 133 5 is_stmt 1 view .LVU91
+ 134:src/sched.c   ****     while (*p_prev != NULL) {
+ 391              		.loc 1 134 5 view .LVU92
+ 133:src/sched.c   ****     while (*p_prev != NULL) {
+ 392              		.loc 1 133 12 is_stmt 0 view .LVU93
+ 393 000c 1368     		ldr	r3, [r2]
+ 394              		.loc 1 134 11 is_stmt 1 view .LVU94
+ 395 000e 1BB9     		cbnz	r3, .L32
+ 396 0010 08E0     		b	.L29
+ 397              	.LVL22:
+ 398              	.L31:
+ 135:src/sched.c   ****         if (*p_prev == timer) {
+ 399              		.loc 1 135 9 view .LVU95
+ 136:src/sched.c   ****             *p_prev = timer->next;
+ 137:src/sched.c   ****             timer->next = NULL;
+ 138:src/sched.c   ****             break;
+ 139:src/sched.c   ****         }
+ 140:src/sched.c   ****         p_prev = &((*p_prev)->next);
+ 400              		.loc 1 140 9 view .LVU96
+ 401              		.loc 1 140 9 is_stmt 0 view .LVU97
+ 402 0012 1A46     		mov	r2, r3
+ 403              		.loc 1 140 16 view .LVU98
+ 404 0014 1B68     		ldr	r3, [r3]
+ 405              	.LVL23:
+ 134:src/sched.c   ****         if (*p_prev == timer) {
+ 406              		.loc 1 134 11 is_stmt 1 view .LVU99
+ 407 0016 2BB1     		cbz	r3, .L29
+ 408              	.LVL24:
+ 409              	.L32:
+ 135:src/sched.c   ****         if (*p_prev == timer) {
+ 410              		.loc 1 135 12 is_stmt 0 view .LVU100
+ 411 0018 9C42     		cmp	r4, r3
+ 412 001a FAD1     		bne	.L31
+ 136:src/sched.c   ****             *p_prev = timer->next;
+ 413              		.loc 1 136 13 is_stmt 1 view .LVU101
+ 136:src/sched.c   ****             *p_prev = timer->next;
+ARM GAS  /tmp/ccnmeBnB.s 			page 12
+
+
+ 414              		.loc 1 136 28 is_stmt 0 view .LVU102
+ 415 001c 2168     		ldr	r1, [r4]
+ 136:src/sched.c   ****             *p_prev = timer->next;
+ 416              		.loc 1 136 21 view .LVU103
+ 417 001e 1160     		str	r1, [r2]
+ 137:src/sched.c   ****             break;
+ 418              		.loc 1 137 13 is_stmt 1 view .LVU104
+ 137:src/sched.c   ****             break;
+ 419              		.loc 1 137 25 is_stmt 0 view .LVU105
+ 420 0020 0023     		movs	r3, #0
+ 421 0022 2360     		str	r3, [r4]
+ 138:src/sched.c   ****         }
+ 422              		.loc 1 138 13 is_stmt 1 view .LVU106
+ 423              	.L29:
+ 141:src/sched.c   ****     }
+ 142:src/sched.c   ****     
+ 143:src/sched.c   ****     sched_irq_restore(flag);
+ 424              		.loc 1 143 5 view .LVU107
+ 425              	.LVL25:
+ 426              	.LBB94:
+ 427              	.LBI94:
+  78:src/sched.c   **** {
+ 428              		.loc 1 78 6 view .LVU108
+ 429              	.LBB95:
+  81:src/sched.c   ****     irq_restore(flag);
+ 430              		.loc 1 81 5 view .LVU109
+  82:src/sched.c   **** }
+ 431              		.loc 1 82 5 view .LVU110
+ 432              	.LBB96:
+ 433              	.LBI96:
+  45:./board/irq.h **** {
+ 434              		.loc 2 45 20 view .LVU111
+ 435              	.LBB97:
+ 436              		.loc 2 47 5 view .LVU112
+ 437              		.syntax unified
+ 438              	@ 47 "./board/irq.h" 1
+ 439 0024 80F31088 		msr primask, r0
+ 440              	
+ 441              	@ 0 "" 2
+ 442              	.LVL26:
+ 443              		.loc 2 47 5 is_stmt 0 view .LVU113
+ 444              		.thumb
+ 445              		.syntax unified
+ 446              	.LBE97:
+ 447              	.LBE96:
+ 448              	.LBE95:
+ 449              	.LBE94:
+ 144:src/sched.c   **** }
+ 450              		.loc 1 144 1 view .LVU114
+ 451 0028 10BD     		pop	{r4, pc}
+ 452              	.LVL27:
+ 453              	.L42:
+ 454              		.cfi_def_cfa_offset 0
+ 455              		.cfi_restore 4
+ 456              		.cfi_restore 14
+ 457              		.loc 1 144 1 view .LVU115
+ 458 002a 7047     		bx	lr
+ARM GAS  /tmp/ccnmeBnB.s 			page 13
+
+
+ 459              	.L47:
+ 460              		.align	2
+ 461              	.L46:
+ 462 002c 00000000 		.word	.LANCHOR0
+ 463              		.cfi_endproc
+ 464              	.LFE13:
+ 466              		.section	.text.sched_init,"ax",%progbits
+ 467              		.align	1
+ 468              		.p2align 2,,3
+ 469              		.global	sched_init
+ 470              		.syntax unified
+ 471              		.thumb
+ 472              		.thumb_func
+ 473              		.fpu fpv4-sp-d16
+ 475              	sched_init:
+ 476              	.LFB14:
+ 145:src/sched.c   **** 
+ 146:src/sched.c   **** /* ========== 调度器核心实现 ========== */
+ 147:src/sched.c   **** 
+ 148:src/sched.c   **** /**
+ 149:src/sched.c   ****  * @brief  初始化调度器
+ 150:src/sched.c   ****  * @retval 0 成功，负数 失败
+ 151:src/sched.c   ****  */
+ 152:src/sched.c   **** int sched_init(void)
+ 153:src/sched.c   **** {
+ 477              		.loc 1 153 1 is_stmt 1 view -0
+ 478              		.cfi_startproc
+ 479              		@ args = 0, pretend = 0, frame = 0
+ 480              		@ frame_needed = 0, uses_anonymous_args = 0
+ 481              		@ link register save eliminated.
+ 154:src/sched.c   ****     s_timer_list = NULL;
+ 482              		.loc 1 154 5 view .LVU117
+ 483              		.loc 1 154 18 is_stmt 0 view .LVU118
+ 484 0000 024A     		ldr	r2, .L49
+ 155:src/sched.c   ****     s_shutdown_flag = 0;
+ 485              		.loc 1 155 21 view .LVU119
+ 486 0002 034B     		ldr	r3, .L49+4
+ 154:src/sched.c   ****     s_timer_list = NULL;
+ 487              		.loc 1 154 18 view .LVU120
+ 488 0004 0020     		movs	r0, #0
+ 489 0006 1060     		str	r0, [r2]
+ 490              		.loc 1 155 5 is_stmt 1 view .LVU121
+ 491              		.loc 1 155 21 is_stmt 0 view .LVU122
+ 492 0008 1860     		str	r0, [r3]
+ 156:src/sched.c   ****     s_shutdown_reason = NULL;
+ 493              		.loc 1 156 5 is_stmt 1 view .LVU123
+ 157:src/sched.c   ****     
+ 158:src/sched.c   ****     /* TODO: 初始化硬件定时器 */
+ 159:src/sched.c   ****     /* 需要 HAL 层提供 timer_init() 函数 */
+ 160:src/sched.c   ****     
+ 161:src/sched.c   ****     return 0;
+ 494              		.loc 1 161 5 view .LVU124
+ 162:src/sched.c   **** }
+ 495              		.loc 1 162 1 is_stmt 0 view .LVU125
+ 496 000a 7047     		bx	lr
+ 497              	.L50:
+ 498              		.align	2
+ARM GAS  /tmp/ccnmeBnB.s 			page 14
+
+
+ 499              	.L49:
+ 500 000c 00000000 		.word	.LANCHOR0
+ 501 0010 00000000 		.word	.LANCHOR1
+ 502              		.cfi_endproc
+ 503              	.LFE14:
+ 505              		.section	.text.sched_main,"ax",%progbits
+ 506              		.align	1
+ 507              		.p2align 2,,3
+ 508              		.global	sched_main
+ 509              		.syntax unified
+ 510              		.thumb
+ 511              		.thumb_func
+ 512              		.fpu fpv4-sp-d16
+ 514              	sched_main:
+ 515              	.LFB15:
+ 163:src/sched.c   **** 
+ 164:src/sched.c   **** /**
+ 165:src/sched.c   ****  * @brief  调度器主循环
+ 166:src/sched.c   ****  * @note   处理到期的定时器回调
+ 167:src/sched.c   ****  */
+ 168:src/sched.c   **** void sched_main(void)
+ 169:src/sched.c   **** {
+ 516              		.loc 1 169 1 is_stmt 1 view -0
+ 517              		.cfi_startproc
+ 518              		@ args = 0, pretend = 0, frame = 0
+ 519              		@ frame_needed = 0, uses_anonymous_args = 0
+ 170:src/sched.c   ****     sched_timer_t* timer;
+ 520              		.loc 1 170 5 view .LVU127
+ 171:src/sched.c   ****     sched_time_t waketime;
+ 521              		.loc 1 171 5 view .LVU128
+ 172:src/sched.c   ****     sched_time_t next_waketime;
+ 522              		.loc 1 172 5 view .LVU129
+ 173:src/sched.c   ****     uint32_t flag;
+ 523              		.loc 1 173 5 view .LVU130
+ 174:src/sched.c   ****     
+ 175:src/sched.c   ****     /* 检查系统是否已关闭 */
+ 176:src/sched.c   ****     if (s_shutdown_flag) {
+ 524              		.loc 1 176 5 view .LVU131
+ 525              		.loc 1 176 9 is_stmt 0 view .LVU132
+ 526 0000 144B     		ldr	r3, .L62
+ 169:src/sched.c   ****     sched_timer_t* timer;
+ 527              		.loc 1 169 1 view .LVU133
+ 528 0002 2DE9F041 		push	{r4, r5, r6, r7, r8, lr}
+ 529              		.cfi_def_cfa_offset 24
+ 530              		.cfi_offset 4, -24
+ 531              		.cfi_offset 5, -20
+ 532              		.cfi_offset 6, -16
+ 533              		.cfi_offset 7, -12
+ 534              		.cfi_offset 8, -8
+ 535              		.cfi_offset 14, -4
+ 536              		.loc 1 176 9 view .LVU134
+ 537 0006 D3F80080 		ldr	r8, [r3]
+ 538              		.loc 1 176 8 view .LVU135
+ 539 000a B8F1000F 		cmp	r8, #0
+ 540 000e 19D1     		bne	.L51
+ 541 0010 114F     		ldr	r7, .L62+4
+ 542 0012 0FE0     		b	.L55
+ARM GAS  /tmp/ccnmeBnB.s 			page 15
+
+
+ 543              	.LVL28:
+ 544              	.L53:
+ 177:src/sched.c   ****         return;
+ 178:src/sched.c   ****     }
+ 179:src/sched.c   ****     
+ 180:src/sched.c   ****     /* 处理到期的定时器 */
+ 181:src/sched.c   ****     for (;;) {
+ 182:src/sched.c   ****         flag = sched_irq_save();
+ 183:src/sched.c   ****         
+ 184:src/sched.c   ****         timer = s_timer_list;
+ 185:src/sched.c   ****         if (timer == NULL) {
+ 186:src/sched.c   ****             sched_irq_restore(flag);
+ 187:src/sched.c   ****             break;
+ 188:src/sched.c   ****         }
+ 189:src/sched.c   ****         
+ 190:src/sched.c   ****         /* 检查是否到期 */
+ 191:src/sched.c   ****         if (!sched_is_before(timer->waketime)) {
+ 545              		.loc 1 191 14 view .LVU136
+ 546 0014 6668     		ldr	r6, [r4, #4]
+ 547              	.LVL29:
+ 548              	.LBB98:
+ 549              	.LBI98:
+  44:src/sched.c   **** {
+ 550              		.loc 1 44 5 is_stmt 1 view .LVU137
+ 551              	.LBB99:
+  46:src/sched.c   ****     return sched_time_diff(time, now) <= 0;
+ 552              		.loc 1 46 5 view .LVU138
+ 553              	.LBB100:
+ 554              	.LBI100:
+  31:src/sched.c   **** {
+ 555              		.loc 1 31 14 view .LVU139
+ 556              	.LBB101:
+  35:src/sched.c   ****     return timer_read_time();
+ 557              		.loc 1 35 5 view .LVU140
+  36:src/sched.c   **** }
+ 558              		.loc 1 36 5 view .LVU141
+  36:src/sched.c   **** }
+ 559              		.loc 1 36 12 is_stmt 0 view .LVU142
+ 560 0016 FFF7FEFF 		bl	timer_read_time
+ 561              	.LVL30:
+  36:src/sched.c   **** }
+ 562              		.loc 1 36 12 view .LVU143
+ 563              	.LBE101:
+ 564              	.LBE100:
+ 565              	.LBE99:
+ 566              	.LBE98:
+ 192:src/sched.c   ****             sched_irq_restore(flag);
+ 193:src/sched.c   ****             break;
+ 194:src/sched.c   ****         }
+ 195:src/sched.c   ****         
+ 196:src/sched.c   ****         /* 从链表移除 */
+ 197:src/sched.c   ****         s_timer_list = timer->next;
+ 567              		.loc 1 197 9 is_stmt 1 view .LVU144
+ 568              	.LBB105:
+ 569              	.LBB104:
+  47:src/sched.c   **** }
+ 570              		.loc 1 47 5 view .LVU145
+ARM GAS  /tmp/ccnmeBnB.s 			page 16
+
+
+ 571              	.LBB102:
+ 572              	.LBI102:
+  56:src/sched.c   **** {
+ 573              		.loc 1 56 9 view .LVU146
+ 574              	.LBB103:
+  58:src/sched.c   **** }
+ 575              		.loc 1 58 5 view .LVU147
+  58:src/sched.c   **** }
+ 576              		.loc 1 58 25 is_stmt 0 view .LVU148
+ 577 001a 301A     		subs	r0, r6, r0
+ 578              	.LVL31:
+  58:src/sched.c   **** }
+ 579              		.loc 1 58 25 view .LVU149
+ 580              	.LBE103:
+ 581              	.LBE102:
+ 582              	.LBE104:
+ 583              	.LBE105:
+ 191:src/sched.c   ****             sched_irq_restore(flag);
+ 584              		.loc 1 191 12 view .LVU150
+ 585 001c 0028     		cmp	r0, #0
+ 586 001e 0FDC     		bgt	.L60
+ 587              		.loc 1 197 22 view .LVU151
+ 588 0020 2368     		ldr	r3, [r4]
+ 589 0022 3B60     		str	r3, [r7]
+ 198:src/sched.c   ****         timer->next = NULL;
+ 590              		.loc 1 198 9 is_stmt 1 view .LVU152
+ 199:src/sched.c   ****         waketime = timer->waketime;
+ 591              		.loc 1 199 18 is_stmt 0 view .LVU153
+ 592 0024 6068     		ldr	r0, [r4, #4]
+ 198:src/sched.c   ****         timer->next = NULL;
+ 593              		.loc 1 198 21 view .LVU154
+ 594 0026 C4F80080 		str	r8, [r4]
+ 595              		.loc 1 199 9 is_stmt 1 view .LVU155
+ 596              	.LVL32:
+ 200:src/sched.c   ****         
+ 201:src/sched.c   ****         sched_irq_restore(flag);
+ 597              		.loc 1 201 9 view .LVU156
+ 598              	.LBB106:
+ 599              	.LBI106:
+  78:src/sched.c   **** {
+ 600              		.loc 1 78 6 view .LVU157
+ 601              	.LBB107:
+  81:src/sched.c   ****     irq_restore(flag);
+ 602              		.loc 1 81 5 view .LVU158
+  82:src/sched.c   **** }
+ 603              		.loc 1 82 5 view .LVU159
+ 604              	.LBB108:
+ 605              	.LBI108:
+  45:./board/irq.h **** {
+ 606              		.loc 2 45 20 view .LVU160
+ 607              	.LBB109:
+ 608              		.loc 2 47 5 view .LVU161
+ 609              		.syntax unified
+ 610              	@ 47 "./board/irq.h" 1
+ 611 002a 85F31088 		msr primask, r5
+ 612              	
+ 613              	@ 0 "" 2
+ARM GAS  /tmp/ccnmeBnB.s 			page 17
+
+
+ 614              	.LVL33:
+ 615              		.loc 2 47 5 is_stmt 0 view .LVU162
+ 616              		.thumb
+ 617              		.syntax unified
+ 618              	.LBE109:
+ 619              	.LBE108:
+ 620              	.LBE107:
+ 621              	.LBE106:
+ 202:src/sched.c   ****         
+ 203:src/sched.c   ****         /* 执行回调 */
+ 204:src/sched.c   ****         next_waketime = timer->func(waketime);
+ 622              		.loc 1 204 9 is_stmt 1 view .LVU163
+ 623              		.loc 1 204 25 is_stmt 0 view .LVU164
+ 624 002e A368     		ldr	r3, [r4, #8]
+ 625 0030 9847     		blx	r3
+ 626              	.LVL34:
+ 205:src/sched.c   ****         
+ 206:src/sched.c   ****         /* 如果返回非零，重新添加定时器 */
+ 207:src/sched.c   ****         if (next_waketime != 0) {
+ 627              		.loc 1 207 9 is_stmt 1 view .LVU165
+ 628              		.loc 1 207 12 is_stmt 0 view .LVU166
+ 629 0032 48B9     		cbnz	r0, .L61
+ 630              	.LVL35:
+ 631              	.L55:
+ 181:src/sched.c   ****         flag = sched_irq_save();
+ 632              		.loc 1 181 5 is_stmt 1 view .LVU167
+ 182:src/sched.c   ****         
+ 633              		.loc 1 182 9 view .LVU168
+ 634              	.LBB110:
+ 635              	.LBI110:
+  67:src/sched.c   **** {
+ 636              		.loc 1 67 10 view .LVU169
+ 637              	.LBB111:
+  70:src/sched.c   ****     return irq_save();
+ 638              		.loc 1 70 5 view .LVU170
+  71:src/sched.c   **** }
+ 639              		.loc 1 71 5 view .LVU171
+  71:src/sched.c   **** }
+ 640              		.loc 1 71 12 is_stmt 0 view .LVU172
+ 641 0034 FFF7FEFF 		bl	irq_save
+ 642              	.LVL36:
+ 643              	.LBE111:
+ 644              	.LBE110:
+ 191:src/sched.c   ****             sched_irq_restore(flag);
+ 645              		.loc 1 191 9 is_stmt 1 view .LVU173
+ 184:src/sched.c   ****         if (timer == NULL) {
+ 646              		.loc 1 184 15 is_stmt 0 view .LVU174
+ 647 0038 3C68     		ldr	r4, [r7]
+ 648              	.LBB113:
+ 649              	.LBB112:
+  71:src/sched.c   **** }
+ 650              		.loc 1 71 12 view .LVU175
+ 651 003a 0546     		mov	r5, r0
+ 652              	.LVL37:
+  71:src/sched.c   **** }
+ 653              		.loc 1 71 12 view .LVU176
+ 654              	.LBE112:
+ARM GAS  /tmp/ccnmeBnB.s 			page 18
+
+
+ 655              	.LBE113:
+ 184:src/sched.c   ****         if (timer == NULL) {
+ 656              		.loc 1 184 9 is_stmt 1 view .LVU177
+ 185:src/sched.c   ****             sched_irq_restore(flag);
+ 657              		.loc 1 185 9 view .LVU178
+ 185:src/sched.c   ****             sched_irq_restore(flag);
+ 658              		.loc 1 185 12 is_stmt 0 view .LVU179
+ 659 003c 002C     		cmp	r4, #0
+ 660 003e E9D1     		bne	.L53
+ 661              	.LVL38:
+ 662              	.L60:
+ 192:src/sched.c   ****             break;
+ 663              		.loc 1 192 13 is_stmt 1 view .LVU180
+ 664              	.LBB114:
+ 665              	.LBI114:
+  78:src/sched.c   **** {
+ 666              		.loc 1 78 6 view .LVU181
+ 667              	.LBB115:
+  81:src/sched.c   ****     irq_restore(flag);
+ 668              		.loc 1 81 5 view .LVU182
+  82:src/sched.c   **** }
+ 669              		.loc 1 82 5 view .LVU183
+ 670              	.LBB116:
+ 671              	.LBI116:
+  45:./board/irq.h **** {
+ 672              		.loc 2 45 20 view .LVU184
+ 673              	.LBB117:
+ 674              		.loc 2 47 5 view .LVU185
+ 675              		.syntax unified
+ 676              	@ 47 "./board/irq.h" 1
+ 677 0040 85F31088 		msr primask, r5
+ 678              	
+ 679              	@ 0 "" 2
+ 680              	.LVL39:
+ 681              		.thumb
+ 682              		.syntax unified
+ 683              	.L51:
+ 684              		.loc 2 47 5 is_stmt 0 view .LVU186
+ 685              	.LBE117:
+ 686              	.LBE116:
+ 687              	.LBE115:
+ 688              	.LBE114:
+ 208:src/sched.c   ****             timer->waketime = next_waketime;
+ 209:src/sched.c   ****             sched_add_timer(timer);
+ 210:src/sched.c   ****         }
+ 211:src/sched.c   ****     }
+ 212:src/sched.c   **** }
+ 689              		.loc 1 212 1 view .LVU187
+ 690 0044 BDE8F081 		pop	{r4, r5, r6, r7, r8, pc}
+ 691              	.LVL40:
+ 692              	.L61:
+ 208:src/sched.c   ****             timer->waketime = next_waketime;
+ 693              		.loc 1 208 13 is_stmt 1 view .LVU188
+ 208:src/sched.c   ****             timer->waketime = next_waketime;
+ 694              		.loc 1 208 29 is_stmt 0 view .LVU189
+ 695 0048 6060     		str	r0, [r4, #4]
+ 209:src/sched.c   ****         }
+ARM GAS  /tmp/ccnmeBnB.s 			page 19
+
+
+ 696              		.loc 1 209 13 is_stmt 1 view .LVU190
+ 697 004a 2046     		mov	r0, r4
+ 698              	.LVL41:
+ 209:src/sched.c   ****         }
+ 699              		.loc 1 209 13 is_stmt 0 view .LVU191
+ 700 004c FFF7FEFF 		bl	sched_add_timer
+ 701              	.LVL42:
+ 209:src/sched.c   ****         }
+ 702              		.loc 1 209 13 view .LVU192
+ 703 0050 F0E7     		b	.L55
+ 704              	.L63:
+ 705 0052 00BF     		.align	2
+ 706              	.L62:
+ 707 0054 00000000 		.word	.LANCHOR1
+ 708 0058 00000000 		.word	.LANCHOR0
+ 709              		.cfi_endproc
+ 710              	.LFE15:
+ 712              		.section	.text.sched_is_shutdown,"ax",%progbits
+ 713              		.align	1
+ 714              		.p2align 2,,3
+ 715              		.global	sched_is_shutdown
+ 716              		.syntax unified
+ 717              		.thumb
+ 718              		.thumb_func
+ 719              		.fpu fpv4-sp-d16
+ 721              	sched_is_shutdown:
+ 722              	.LFB16:
+ 213:src/sched.c   **** 
+ 214:src/sched.c   **** /* ========== 系统状态实现 ========== */
+ 215:src/sched.c   **** 
+ 216:src/sched.c   **** /**
+ 217:src/sched.c   ****  * @brief  检查系统是否已关闭
+ 218:src/sched.c   ****  * @retval 1 已关闭，0 运行中
+ 219:src/sched.c   ****  */
+ 220:src/sched.c   **** int sched_is_shutdown(void)
+ 221:src/sched.c   **** {
+ 723              		.loc 1 221 1 is_stmt 1 view -0
+ 724              		.cfi_startproc
+ 725              		@ args = 0, pretend = 0, frame = 0
+ 726              		@ frame_needed = 0, uses_anonymous_args = 0
+ 727              		@ link register save eliminated.
+ 222:src/sched.c   ****     return s_shutdown_flag;
+ 728              		.loc 1 222 5 view .LVU194
+ 729              		.loc 1 222 12 is_stmt 0 view .LVU195
+ 730 0000 014B     		ldr	r3, .L65
+ 731 0002 1868     		ldr	r0, [r3]
+ 223:src/sched.c   **** }
+ 732              		.loc 1 223 1 view .LVU196
+ 733 0004 7047     		bx	lr
+ 734              	.L66:
+ 735 0006 00BF     		.align	2
+ 736              	.L65:
+ 737 0008 00000000 		.word	.LANCHOR1
+ 738              		.cfi_endproc
+ 739              	.LFE16:
+ 741              		.section	.text.sched_shutdown,"ax",%progbits
+ 742              		.align	1
+ARM GAS  /tmp/ccnmeBnB.s 			page 20
+
+
+ 743              		.p2align 2,,3
+ 744              		.global	sched_shutdown
+ 745              		.syntax unified
+ 746              		.thumb
+ 747              		.thumb_func
+ 748              		.fpu fpv4-sp-d16
+ 750              	sched_shutdown:
+ 751              	.LVL43:
+ 752              	.LFB17:
+ 224:src/sched.c   **** 
+ 225:src/sched.c   **** /**
+ 226:src/sched.c   ****  * @brief  触发系统关闭
+ 227:src/sched.c   ****  * @param  reason 关闭原因字符串
+ 228:src/sched.c   ****  */
+ 229:src/sched.c   **** void sched_shutdown(const char* reason)
+ 230:src/sched.c   **** {
+ 753              		.loc 1 230 1 is_stmt 1 view -0
+ 754              		.cfi_startproc
+ 755              		@ args = 0, pretend = 0, frame = 0
+ 756              		@ frame_needed = 0, uses_anonymous_args = 0
+ 231:src/sched.c   ****     uint32_t flag;
+ 757              		.loc 1 231 5 view .LVU198
+ 232:src/sched.c   ****     
+ 233:src/sched.c   ****     flag = sched_irq_save();
+ 758              		.loc 1 233 5 view .LVU199
+ 759              	.LBB118:
+ 760              	.LBI118:
+  67:src/sched.c   **** {
+ 761              		.loc 1 67 10 view .LVU200
+ 762              	.LBB119:
+  70:src/sched.c   ****     return irq_save();
+ 763              		.loc 1 70 5 view .LVU201
+  71:src/sched.c   **** }
+ 764              		.loc 1 71 5 view .LVU202
+ 765              	.LBE119:
+ 766              	.LBE118:
+ 230:src/sched.c   ****     uint32_t flag;
+ 767              		.loc 1 230 1 is_stmt 0 view .LVU203
+ 768 0000 08B5     		push	{r3, lr}
+ 769              		.cfi_def_cfa_offset 8
+ 770              		.cfi_offset 3, -8
+ 771              		.cfi_offset 14, -4
+ 772              	.LBB121:
+ 773              	.LBB120:
+  71:src/sched.c   **** }
+ 774              		.loc 1 71 12 view .LVU204
+ 775 0002 FFF7FEFF 		bl	irq_save
+ 776              	.LVL44:
+  71:src/sched.c   **** }
+ 777              		.loc 1 71 12 view .LVU205
+ 778              	.LBE120:
+ 779              	.LBE121:
+ 234:src/sched.c   ****     
+ 235:src/sched.c   ****     if (!s_shutdown_flag) {
+ 780              		.loc 1 235 9 view .LVU206
+ 781 0006 044B     		ldr	r3, .L70
+ 782              	.LVL45:
+ARM GAS  /tmp/ccnmeBnB.s 			page 21
+
+
+ 783              		.loc 1 235 5 is_stmt 1 view .LVU207
+ 784              		.loc 1 235 9 is_stmt 0 view .LVU208
+ 785 0008 1A68     		ldr	r2, [r3]
+ 786              		.loc 1 235 8 view .LVU209
+ 787 000a 0AB9     		cbnz	r2, .L68
+ 236:src/sched.c   ****         s_shutdown_flag = 1;
+ 788              		.loc 1 236 9 is_stmt 1 view .LVU210
+ 789              		.loc 1 236 25 is_stmt 0 view .LVU211
+ 790 000c 0122     		movs	r2, #1
+ 791 000e 1A60     		str	r2, [r3]
+ 237:src/sched.c   ****         s_shutdown_reason = reason;
+ 792              		.loc 1 237 9 is_stmt 1 view .LVU212
+ 793              	.L68:
+ 238:src/sched.c   ****         
+ 239:src/sched.c   ****         /* TODO: 停止所有外设 */
+ 240:src/sched.c   ****         /* 禁用步进电机、加热器等 */
+ 241:src/sched.c   ****     }
+ 242:src/sched.c   ****     
+ 243:src/sched.c   ****     sched_irq_restore(flag);
+ 794              		.loc 1 243 5 view .LVU213
+ 795              	.LVL46:
+ 796              	.LBB122:
+ 797              	.LBI122:
+  78:src/sched.c   **** {
+ 798              		.loc 1 78 6 view .LVU214
+ 799              	.LBB123:
+  81:src/sched.c   ****     irq_restore(flag);
+ 800              		.loc 1 81 5 view .LVU215
+  82:src/sched.c   **** }
+ 801              		.loc 1 82 5 view .LVU216
+ 802              	.LBB124:
+ 803              	.LBI124:
+  45:./board/irq.h **** {
+ 804              		.loc 2 45 20 view .LVU217
+ 805              	.LBB125:
+ 806              		.loc 2 47 5 view .LVU218
+ 807              		.syntax unified
+ 808              	@ 47 "./board/irq.h" 1
+ 809 0010 80F31088 		msr primask, r0
+ 810              	
+ 811              	@ 0 "" 2
+ 812              	.LVL47:
+ 813              		.loc 2 47 5 is_stmt 0 view .LVU219
+ 814              		.thumb
+ 815              		.syntax unified
+ 816              	.LBE125:
+ 817              	.LBE124:
+ 818              	.LBE123:
+ 819              	.LBE122:
+ 244:src/sched.c   **** }
+ 820              		.loc 1 244 1 view .LVU220
+ 821 0014 08BD     		pop	{r3, pc}
+ 822              	.L71:
+ 823 0016 00BF     		.align	2
+ 824              	.L70:
+ 825 0018 00000000 		.word	.LANCHOR1
+ 826              		.cfi_endproc
+ARM GAS  /tmp/ccnmeBnB.s 			page 22
+
+
+ 827              	.LFE17:
+ 829              		.section	.bss.s_shutdown_flag,"aw",%nobits
+ 830              		.align	2
+ 831              		.set	.LANCHOR1,. + 0
+ 834              	s_shutdown_flag:
+ 835 0000 00000000 		.space	4
+ 836              		.section	.bss.s_timer_list,"aw",%nobits
+ 837              		.align	2
+ 838              		.set	.LANCHOR0,. + 0
+ 841              	s_timer_list:
+ 842 0000 00000000 		.space	4
+ 843              		.text
+ 844              	.Letext0:
+ 845              		.file 3 "/usr/lib/gcc/arm-none-eabi/10.3.1/include/stdint.h"
+ 846              		.file 4 "src/sched.h"
+ARM GAS  /tmp/ccnmeBnB.s 			page 23
+
+
+DEFINED SYMBOLS
+                            *ABS*:0000000000000000 sched.c
+     /tmp/ccnmeBnB.s:18     .text.sched_get_time:0000000000000000 $t
+     /tmp/ccnmeBnB.s:27     .text.sched_get_time:0000000000000000 sched_get_time
+     /tmp/ccnmeBnB.s:44     .text.sched_is_before:0000000000000000 $t
+     /tmp/ccnmeBnB.s:52     .text.sched_is_before:0000000000000000 sched_is_before
+     /tmp/ccnmeBnB.s:106    .text.sched_time_diff:0000000000000000 $t
+     /tmp/ccnmeBnB.s:114    .text.sched_time_diff:0000000000000000 sched_time_diff
+     /tmp/ccnmeBnB.s:132    .text.sched_irq_save:0000000000000000 $t
+     /tmp/ccnmeBnB.s:140    .text.sched_irq_save:0000000000000000 sched_irq_save
+     /tmp/ccnmeBnB.s:156    .text.sched_irq_restore:0000000000000000 $t
+     /tmp/ccnmeBnB.s:164    .text.sched_irq_restore:0000000000000000 sched_irq_restore
+     /tmp/ccnmeBnB.s:197    .text.sched_add_timer:0000000000000000 $t
+     /tmp/ccnmeBnB.s:205    .text.sched_add_timer:0000000000000000 sched_add_timer
+     /tmp/ccnmeBnB.s:339    .text.sched_add_timer:0000000000000034 $d
+     /tmp/ccnmeBnB.s:344    .text.sched_del_timer:0000000000000000 $t
+     /tmp/ccnmeBnB.s:352    .text.sched_del_timer:0000000000000000 sched_del_timer
+     /tmp/ccnmeBnB.s:462    .text.sched_del_timer:000000000000002c $d
+     /tmp/ccnmeBnB.s:467    .text.sched_init:0000000000000000 $t
+     /tmp/ccnmeBnB.s:475    .text.sched_init:0000000000000000 sched_init
+     /tmp/ccnmeBnB.s:500    .text.sched_init:000000000000000c $d
+     /tmp/ccnmeBnB.s:506    .text.sched_main:0000000000000000 $t
+     /tmp/ccnmeBnB.s:514    .text.sched_main:0000000000000000 sched_main
+     /tmp/ccnmeBnB.s:707    .text.sched_main:0000000000000054 $d
+     /tmp/ccnmeBnB.s:713    .text.sched_is_shutdown:0000000000000000 $t
+     /tmp/ccnmeBnB.s:721    .text.sched_is_shutdown:0000000000000000 sched_is_shutdown
+     /tmp/ccnmeBnB.s:737    .text.sched_is_shutdown:0000000000000008 $d
+     /tmp/ccnmeBnB.s:742    .text.sched_shutdown:0000000000000000 $t
+     /tmp/ccnmeBnB.s:750    .text.sched_shutdown:0000000000000000 sched_shutdown
+     /tmp/ccnmeBnB.s:825    .text.sched_shutdown:0000000000000018 $d
+     /tmp/ccnmeBnB.s:830    .bss.s_shutdown_flag:0000000000000000 $d
+     /tmp/ccnmeBnB.s:834    .bss.s_shutdown_flag:0000000000000000 s_shutdown_flag
+     /tmp/ccnmeBnB.s:837    .bss.s_timer_list:0000000000000000 $d
+     /tmp/ccnmeBnB.s:841    .bss.s_timer_list:0000000000000000 s_timer_list
+
+UNDEFINED SYMBOLS
+timer_read_time
+irq_save

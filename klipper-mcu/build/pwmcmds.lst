@@ -1,0 +1,1157 @@
+ARM GAS  /tmp/cc7454IN.s 			page 1
+
+
+   1              		.cpu cortex-m4
+   2              		.eabi_attribute 27, 1
+   3              		.eabi_attribute 28, 1
+   4              		.eabi_attribute 20, 1
+   5              		.eabi_attribute 21, 1
+   6              		.eabi_attribute 23, 3
+   7              		.eabi_attribute 24, 1
+   8              		.eabi_attribute 25, 1
+   9              		.eabi_attribute 26, 1
+  10              		.eabi_attribute 30, 2
+  11              		.eabi_attribute 34, 1
+  12              		.eabi_attribute 18, 4
+  13              		.file	"pwmcmds.c"
+  14              		.text
+  15              	.Ltext0:
+  16              		.cfi_sections	.debug_frame
+  17              		.section	.text.pwm_timer_callback,"ax",%progbits
+  18              		.align	1
+  19              		.p2align 2,,3
+  20              		.arch armv7e-m
+  21              		.syntax unified
+  22              		.thumb
+  23              		.thumb_func
+  24              		.fpu fpv4-sp-d16
+  26              	pwm_timer_callback:
+  27              	.LVL0:
+  28              	.LFB0:
+  29              		.file 1 "src/pwmcmds.c"
+   1:src/pwmcmds.c **** /**
+   2:src/pwmcmds.c ****  * @file    pwmcmds.c
+   3:src/pwmcmds.c ****  * @brief   PWM 命令处理实现
+   4:src/pwmcmds.c ****  * 
+   5:src/pwmcmds.c ****  * 复用自 Klipper src/pwmcmds.c
+   6:src/pwmcmds.c ****  * 提供 PWM 输出控制功能（用于加热器和风扇）
+   7:src/pwmcmds.c ****  */
+   8:src/pwmcmds.c **** 
+   9:src/pwmcmds.c **** #include "pwmcmds.h"
+  10:src/pwmcmds.c **** #include "sched.h"
+  11:src/pwmcmds.c **** #include <stddef.h>
+  12:src/pwmcmds.c **** 
+  13:src/pwmcmds.c **** /* ========== 私有类型定义 ========== */
+  14:src/pwmcmds.c **** 
+  15:src/pwmcmds.c **** /* PWM 通道状态 */
+  16:src/pwmcmds.c **** typedef struct {
+  17:src/pwmcmds.c ****     uint8_t pin;                /* GPIO 引脚 */
+  18:src/pwmcmds.c ****     uint8_t configured;         /* 是否已配置 */
+  19:src/pwmcmds.c ****     uint8_t enabled;            /* 是否启用 */
+  20:src/pwmcmds.c ****     uint16_t value;             /* 当前占空比值 */
+  21:src/pwmcmds.c ****     uint16_t max_value;         /* 最大值（分辨率） */
+  22:src/pwmcmds.c ****     uint32_t cycle_time;        /* PWM 周期（时钟周期） */
+  23:src/pwmcmds.c ****     uint8_t invert;             /* 输出反相 */
+  24:src/pwmcmds.c **** } pwm_state_t;
+  25:src/pwmcmds.c **** 
+  26:src/pwmcmds.c **** /* ========== 私有变量 ========== */
+  27:src/pwmcmds.c **** 
+  28:src/pwmcmds.c **** /* PWM 通道状态数组 */
+  29:src/pwmcmds.c **** static pwm_state_t s_pwm_channels[PWM_CHANNEL_COUNT];
+ARM GAS  /tmp/cc7454IN.s 			page 2
+
+
+  30:src/pwmcmds.c **** 
+  31:src/pwmcmds.c **** /* 软件 PWM 定时器 */
+  32:src/pwmcmds.c **** static sched_timer_t s_pwm_timer;
+  33:src/pwmcmds.c **** 
+  34:src/pwmcmds.c **** /* 软件 PWM 状态 */
+  35:src/pwmcmds.c **** static uint8_t s_soft_pwm_enabled = 0;
+  36:src/pwmcmds.c **** 
+  37:src/pwmcmds.c **** /* 默认 PWM 周期（约 1ms，1kHz） */
+  38:src/pwmcmds.c **** #define PWM_DEFAULT_CYCLE_TIME  1000
+  39:src/pwmcmds.c **** 
+  40:src/pwmcmds.c **** /* PWM 分辨率（8 位） */
+  41:src/pwmcmds.c **** #define PWM_RESOLUTION          8
+  42:src/pwmcmds.c **** #define PWM_MAX_VALUE           ((1 << PWM_RESOLUTION) - 1)
+  43:src/pwmcmds.c **** 
+  44:src/pwmcmds.c **** /* ========== HAL 接口 ========== */
+  45:src/pwmcmds.c **** 
+  46:src/pwmcmds.c **** /* TODO: 需要 HAL 层实现这些函数 */
+  47:src/pwmcmds.c **** extern void gpio_out_setup(uint8_t pin, uint8_t value);
+  48:src/pwmcmds.c **** extern void gpio_out_write(uint8_t pin, uint8_t value);
+  49:src/pwmcmds.c **** extern void pwm_setup(uint8_t pin, uint32_t cycle_time, uint8_t value);
+  50:src/pwmcmds.c **** extern void pwm_write(uint8_t pin, uint8_t value);
+  51:src/pwmcmds.c **** 
+  52:src/pwmcmds.c **** /* ========== 私有函数 ========== */
+  53:src/pwmcmds.c **** 
+  54:src/pwmcmds.c **** /**
+  55:src/pwmcmds.c ****  * @brief  软件 PWM 定时器回调
+  56:src/pwmcmds.c ****  * @param  waketime 唤醒时间
+  57:src/pwmcmds.c ****  * @retval 下次唤醒时间
+  58:src/pwmcmds.c ****  * @note   用于不支持硬件 PWM 的引脚
+  59:src/pwmcmds.c ****  */
+  60:src/pwmcmds.c **** static sched_time_t pwm_timer_callback(sched_time_t waketime)
+  61:src/pwmcmds.c **** {
+  30              		.loc 1 61 1 view -0
+  31              		.cfi_startproc
+  32              		@ args = 0, pretend = 0, frame = 0
+  33              		@ frame_needed = 0, uses_anonymous_args = 0
+  62:src/pwmcmds.c ****     int i;
+  34              		.loc 1 62 5 view .LVU1
+  63:src/pwmcmds.c ****     static uint8_t s_pwm_counter = 0;
+  35              		.loc 1 63 5 view .LVU2
+  64:src/pwmcmds.c ****     
+  65:src/pwmcmds.c ****     /* 更新 PWM 计数器 (自动溢出回绕) */
+  66:src/pwmcmds.c ****     s_pwm_counter++;
+  36              		.loc 1 66 5 view .LVU3
+  61:src/pwmcmds.c ****     int i;
+  37              		.loc 1 61 1 is_stmt 0 view .LVU4
+  38 0000 F8B5     		push	{r3, r4, r5, r6, r7, lr}
+  39              		.cfi_def_cfa_offset 24
+  40              		.cfi_offset 3, -24
+  41              		.cfi_offset 4, -20
+  42              		.cfi_offset 5, -16
+  43              		.cfi_offset 6, -12
+  44              		.cfi_offset 7, -8
+  45              		.cfi_offset 14, -4
+  46              		.loc 1 66 18 view .LVU5
+  47 0002 104E     		ldr	r6, .L15
+  48 0004 104C     		ldr	r4, .L15+4
+ARM GAS  /tmp/cc7454IN.s 			page 3
+
+
+  49 0006 3378     		ldrb	r3, [r6]	@ zero_extendqisi2
+  50 0008 0133     		adds	r3, r3, #1
+  61:src/pwmcmds.c ****     int i;
+  51              		.loc 1 61 1 view .LVU6
+  52 000a 0746     		mov	r7, r0
+  53              		.loc 1 66 18 view .LVU7
+  54 000c 3370     		strb	r3, [r6]
+  67:src/pwmcmds.c ****     
+  68:src/pwmcmds.c ****     /* 遍历所有 PWM 通道 */
+  69:src/pwmcmds.c ****     for (i = 0; i < PWM_CHANNEL_COUNT; i++) {
+  55              		.loc 1 69 5 is_stmt 1 view .LVU8
+  56              	.LVL1:
+  57              		.loc 1 69 17 view .LVU9
+  58 000e 04F14005 		add	r5, r4, #64
+  59              	.LVL2:
+  60              	.L5:
+  61              	.LBB4:
+  70:src/pwmcmds.c ****         pwm_state_t* pwm = &s_pwm_channels[i];
+  62              		.loc 1 70 9 view .LVU10
+  71:src/pwmcmds.c ****         uint8_t output;
+  63              		.loc 1 71 9 view .LVU11
+  72:src/pwmcmds.c ****         
+  73:src/pwmcmds.c ****         if (!pwm->configured || !pwm->enabled) {
+  64              		.loc 1 73 9 view .LVU12
+  74:src/pwmcmds.c ****             continue;
+  75:src/pwmcmds.c ****         }
+  76:src/pwmcmds.c ****         
+  77:src/pwmcmds.c ****         /* 计算输出电平 */
+  78:src/pwmcmds.c ****         output = (s_pwm_counter < pwm->value) ? 1 : 0;
+  65              		.loc 1 78 9 view .LVU13
+  73:src/pwmcmds.c ****             continue;
+  66              		.loc 1 73 12 is_stmt 0 view .LVU14
+  67 0012 6378     		ldrb	r3, [r4, #1]	@ zero_extendqisi2
+  68 0014 63B1     		cbz	r3, .L2
+  73:src/pwmcmds.c ****             continue;
+  69              		.loc 1 73 30 discriminator 1 view .LVU15
+  70 0016 A378     		ldrb	r3, [r4, #2]	@ zero_extendqisi2
+  71 0018 53B1     		cbz	r3, .L2
+  79:src/pwmcmds.c ****         
+  80:src/pwmcmds.c ****         if (pwm->invert) {
+  81:src/pwmcmds.c ****             output = !output;
+  72              		.loc 1 81 13 is_stmt 1 view .LVU16
+  80:src/pwmcmds.c ****             output = !output;
+  73              		.loc 1 80 12 is_stmt 0 view .LVU17
+  74 001a 237B     		ldrb	r3, [r4, #12]	@ zero_extendqisi2
+  78:src/pwmcmds.c ****         
+  75              		.loc 1 78 38 view .LVU18
+  76 001c A288     		ldrh	r2, [r4, #4]
+  78:src/pwmcmds.c ****         
+  77              		.loc 1 78 51 view .LVU19
+  78 001e 3178     		ldrb	r1, [r6]	@ zero_extendqisi2
+  79              	.LVL3:
+  80:src/pwmcmds.c ****             output = !output;
+  80              		.loc 1 80 9 is_stmt 1 view .LVU20
+  80:src/pwmcmds.c ****             output = !output;
+  81              		.loc 1 80 12 is_stmt 0 view .LVU21
+  82 0020 5BB9     		cbnz	r3, .L3
+ARM GAS  /tmp/cc7454IN.s 			page 4
+
+
+  78:src/pwmcmds.c ****         
+  83              		.loc 1 78 51 view .LVU22
+  84 0022 9142     		cmp	r1, r2
+  85 0024 2CBF     		ite	cs
+  86 0026 0021     		movcs	r1, #0
+  87              	.LVL4:
+  78:src/pwmcmds.c ****         
+  88              		.loc 1 78 51 view .LVU23
+  89 0028 0121     		movcc	r1, #1
+  90              	.LVL5:
+  91              	.L4:
+  82:src/pwmcmds.c ****         }
+  83:src/pwmcmds.c ****         
+  84:src/pwmcmds.c ****         gpio_out_write(pwm->pin, output);
+  92              		.loc 1 84 9 is_stmt 1 view .LVU24
+  93 002a 2078     		ldrb	r0, [r4]	@ zero_extendqisi2
+  94 002c FFF7FEFF 		bl	gpio_out_write
+  95              	.LVL6:
+  96              	.L2:
+  97              		.loc 1 84 9 is_stmt 0 view .LVU25
+  98              	.LBE4:
+  69:src/pwmcmds.c ****         pwm_state_t* pwm = &s_pwm_channels[i];
+  99              		.loc 1 69 40 is_stmt 1 discriminator 2 view .LVU26
+  69:src/pwmcmds.c ****         pwm_state_t* pwm = &s_pwm_channels[i];
+ 100              		.loc 1 69 17 discriminator 2 view .LVU27
+  69:src/pwmcmds.c ****         pwm_state_t* pwm = &s_pwm_channels[i];
+ 101              		.loc 1 69 5 is_stmt 0 discriminator 2 view .LVU28
+ 102 0030 1034     		adds	r4, r4, #16
+ 103 0032 AC42     		cmp	r4, r5
+ 104 0034 EDD1     		bne	.L5
+  85:src/pwmcmds.c ****     }
+  86:src/pwmcmds.c ****     
+  87:src/pwmcmds.c ****     /* 返回下次更新时间 */
+  88:src/pwmcmds.c ****     return waketime + (PWM_DEFAULT_CYCLE_TIME / PWM_MAX_VALUE);
+ 105              		.loc 1 88 5 is_stmt 1 view .LVU29
+  89:src/pwmcmds.c **** }
+ 106              		.loc 1 89 1 is_stmt 0 view .LVU30
+ 107 0036 F81C     		adds	r0, r7, #3
+ 108 0038 F8BD     		pop	{r3, r4, r5, r6, r7, pc}
+ 109              	.LVL7:
+ 110              	.L3:
+ 111              	.LBB5:
+  81:src/pwmcmds.c ****         }
+ 112              		.loc 1 81 22 view .LVU31
+ 113 003a 9142     		cmp	r1, r2
+ 114 003c 34BF     		ite	cc
+ 115 003e 0021     		movcc	r1, #0
+ 116              	.LVL8:
+  81:src/pwmcmds.c ****         }
+ 117              		.loc 1 81 22 view .LVU32
+ 118 0040 0121     		movcs	r1, #1
+ 119              	.LVL9:
+  81:src/pwmcmds.c ****         }
+ 120              		.loc 1 81 22 view .LVU33
+ 121 0042 F2E7     		b	.L4
+ 122              	.L16:
+ 123              		.align	2
+ARM GAS  /tmp/cc7454IN.s 			page 5
+
+
+ 124              	.L15:
+ 125 0044 00000000 		.word	.LANCHOR0
+ 126 0048 00000000 		.word	.LANCHOR1
+ 127              	.LBE5:
+ 128              		.cfi_endproc
+ 129              	.LFE0:
+ 131              		.section	.text.pwm_init,"ax",%progbits
+ 132              		.align	1
+ 133              		.p2align 2,,3
+ 134              		.global	pwm_init
+ 135              		.syntax unified
+ 136              		.thumb
+ 137              		.thumb_func
+ 138              		.fpu fpv4-sp-d16
+ 140              	pwm_init:
+ 141              	.LFB1:
+  90:src/pwmcmds.c **** 
+  91:src/pwmcmds.c **** /* ========== 公共接口实现 ========== */
+  92:src/pwmcmds.c **** 
+  93:src/pwmcmds.c **** /**
+  94:src/pwmcmds.c ****  * @brief  初始化 PWM 模块
+  95:src/pwmcmds.c ****  * @retval 0 成功，负数 失败
+  96:src/pwmcmds.c ****  */
+  97:src/pwmcmds.c **** int pwm_init(void)
+  98:src/pwmcmds.c **** {
+ 142              		.loc 1 98 1 is_stmt 1 view -0
+ 143              		.cfi_startproc
+ 144              		@ args = 0, pretend = 0, frame = 0
+ 145              		@ frame_needed = 0, uses_anonymous_args = 0
+ 146              		@ link register save eliminated.
+  99:src/pwmcmds.c ****     int i;
+ 147              		.loc 1 99 5 view .LVU35
+ 100:src/pwmcmds.c ****     
+ 101:src/pwmcmds.c ****     /* 清零所有状态 */
+ 102:src/pwmcmds.c ****     for (i = 0; i < PWM_CHANNEL_COUNT; i++) {
+ 148              		.loc 1 102 5 view .LVU36
+ 149              	.LVL10:
+ 150              		.loc 1 102 17 view .LVU37
+ 151 0000 0C4B     		ldr	r3, .L20
+ 103:src/pwmcmds.c ****         s_pwm_channels[i].pin = 0;
+ 152              		.loc 1 103 31 is_stmt 0 view .LVU38
+ 153 0002 0022     		movs	r2, #0
+ 154 0004 03F1400C 		add	ip, r3, #64
+ 104:src/pwmcmds.c ****         s_pwm_channels[i].configured = 0;
+ 105:src/pwmcmds.c ****         s_pwm_channels[i].enabled = 0;
+ 106:src/pwmcmds.c ****         s_pwm_channels[i].value = 0;
+ 107:src/pwmcmds.c ****         s_pwm_channels[i].max_value = PWM_MAX_VALUE;
+ 155              		.loc 1 107 37 view .LVU39
+ 156 0008 FF20     		movs	r0, #255
+ 108:src/pwmcmds.c ****         s_pwm_channels[i].cycle_time = PWM_DEFAULT_CYCLE_TIME;
+ 157              		.loc 1 108 38 view .LVU40
+ 158 000a 4FF47A71 		mov	r1, #1000
+ 159              	.LVL11:
+ 160              	.L18:
+ 103:src/pwmcmds.c ****         s_pwm_channels[i].pin = 0;
+ 161              		.loc 1 103 9 is_stmt 1 discriminator 3 view .LVU41
+ 103:src/pwmcmds.c ****         s_pwm_channels[i].pin = 0;
+ARM GAS  /tmp/cc7454IN.s 			page 6
+
+
+ 162              		.loc 1 103 31 is_stmt 0 discriminator 3 view .LVU42
+ 163 000e 1A70     		strb	r2, [r3]
+ 104:src/pwmcmds.c ****         s_pwm_channels[i].configured = 0;
+ 164              		.loc 1 104 9 is_stmt 1 discriminator 3 view .LVU43
+ 104:src/pwmcmds.c ****         s_pwm_channels[i].configured = 0;
+ 165              		.loc 1 104 38 is_stmt 0 discriminator 3 view .LVU44
+ 166 0010 5A70     		strb	r2, [r3, #1]
+ 105:src/pwmcmds.c ****         s_pwm_channels[i].value = 0;
+ 167              		.loc 1 105 9 is_stmt 1 discriminator 3 view .LVU45
+ 105:src/pwmcmds.c ****         s_pwm_channels[i].value = 0;
+ 168              		.loc 1 105 35 is_stmt 0 discriminator 3 view .LVU46
+ 169 0012 9A70     		strb	r2, [r3, #2]
+ 106:src/pwmcmds.c ****         s_pwm_channels[i].max_value = PWM_MAX_VALUE;
+ 170              		.loc 1 106 9 is_stmt 1 discriminator 3 view .LVU47
+ 106:src/pwmcmds.c ****         s_pwm_channels[i].max_value = PWM_MAX_VALUE;
+ 171              		.loc 1 106 33 is_stmt 0 discriminator 3 view .LVU48
+ 172 0014 9A80     		strh	r2, [r3, #4]	@ movhi
+ 107:src/pwmcmds.c ****         s_pwm_channels[i].cycle_time = PWM_DEFAULT_CYCLE_TIME;
+ 173              		.loc 1 107 9 is_stmt 1 discriminator 3 view .LVU49
+ 107:src/pwmcmds.c ****         s_pwm_channels[i].cycle_time = PWM_DEFAULT_CYCLE_TIME;
+ 174              		.loc 1 107 37 is_stmt 0 discriminator 3 view .LVU50
+ 175 0016 D880     		strh	r0, [r3, #6]	@ movhi
+ 176              		.loc 1 108 9 is_stmt 1 discriminator 3 view .LVU51
+ 177              		.loc 1 108 38 is_stmt 0 discriminator 3 view .LVU52
+ 178 0018 9960     		str	r1, [r3, #8]
+ 109:src/pwmcmds.c ****         s_pwm_channels[i].invert = 0;
+ 179              		.loc 1 109 9 is_stmt 1 discriminator 3 view .LVU53
+ 180              		.loc 1 109 34 is_stmt 0 discriminator 3 view .LVU54
+ 181 001a 1A73     		strb	r2, [r3, #12]
+ 102:src/pwmcmds.c ****         s_pwm_channels[i].pin = 0;
+ 182              		.loc 1 102 40 is_stmt 1 discriminator 3 view .LVU55
+ 102:src/pwmcmds.c ****         s_pwm_channels[i].pin = 0;
+ 183              		.loc 1 102 17 discriminator 3 view .LVU56
+ 102:src/pwmcmds.c ****         s_pwm_channels[i].pin = 0;
+ 184              		.loc 1 102 5 is_stmt 0 discriminator 3 view .LVU57
+ 185 001c 1033     		adds	r3, r3, #16
+ 186 001e 6345     		cmp	r3, ip
+ 187 0020 F5D1     		bne	.L18
+ 110:src/pwmcmds.c ****     }
+ 111:src/pwmcmds.c ****     
+ 112:src/pwmcmds.c ****     /* 初始化软件 PWM 定时器 */
+ 113:src/pwmcmds.c ****     s_pwm_timer.func = pwm_timer_callback;
+ 188              		.loc 1 113 5 is_stmt 1 view .LVU58
+ 189              		.loc 1 113 22 is_stmt 0 view .LVU59
+ 190 0022 054B     		ldr	r3, .L20+4
+ 114:src/pwmcmds.c ****     s_pwm_timer.waketime = 0;
+ 115:src/pwmcmds.c ****     s_pwm_timer.next = NULL;
+ 116:src/pwmcmds.c ****     s_soft_pwm_enabled = 0;
+ 191              		.loc 1 116 24 view .LVU60
+ 192 0024 0549     		ldr	r1, .L20+8
+ 113:src/pwmcmds.c ****     s_pwm_timer.waketime = 0;
+ 193              		.loc 1 113 22 view .LVU61
+ 194 0026 0648     		ldr	r0, .L20+12
+ 115:src/pwmcmds.c ****     s_soft_pwm_enabled = 0;
+ 195              		.loc 1 115 22 view .LVU62
+ 196 0028 1A60     		str	r2, [r3]
+ 114:src/pwmcmds.c ****     s_pwm_timer.waketime = 0;
+ARM GAS  /tmp/cc7454IN.s 			page 7
+
+
+ 197              		.loc 1 114 26 view .LVU63
+ 198 002a C3E90120 		strd	r2, r0, [r3, #4]
+ 115:src/pwmcmds.c ****     s_soft_pwm_enabled = 0;
+ 199              		.loc 1 115 5 is_stmt 1 view .LVU64
+ 200              		.loc 1 116 5 view .LVU65
+ 201              		.loc 1 116 24 is_stmt 0 view .LVU66
+ 202 002e 0A70     		strb	r2, [r1]
+ 117:src/pwmcmds.c ****     
+ 118:src/pwmcmds.c ****     return 0;
+ 203              		.loc 1 118 5 is_stmt 1 view .LVU67
+ 119:src/pwmcmds.c **** }
+ 204              		.loc 1 119 1 is_stmt 0 view .LVU68
+ 205 0030 0020     		movs	r0, #0
+ 206 0032 7047     		bx	lr
+ 207              	.L21:
+ 208              		.align	2
+ 209              	.L20:
+ 210 0034 00000000 		.word	.LANCHOR1
+ 211 0038 00000000 		.word	.LANCHOR2
+ 212 003c 00000000 		.word	.LANCHOR3
+ 213 0040 00000000 		.word	pwm_timer_callback
+ 214              		.cfi_endproc
+ 215              	.LFE1:
+ 217              		.section	.text.pwm_config,"ax",%progbits
+ 218              		.align	1
+ 219              		.p2align 2,,3
+ 220              		.global	pwm_config
+ 221              		.syntax unified
+ 222              		.thumb
+ 223              		.thumb_func
+ 224              		.fpu fpv4-sp-d16
+ 226              	pwm_config:
+ 227              	.LVL12:
+ 228              	.LFB2:
+ 120:src/pwmcmds.c **** 
+ 121:src/pwmcmds.c **** /**
+ 122:src/pwmcmds.c ****  * @brief  配置 PWM 通道
+ 123:src/pwmcmds.c ****  * @param  id PWM 通道 ID
+ 124:src/pwmcmds.c ****  * @param  config 配置参数
+ 125:src/pwmcmds.c ****  * @retval 0 成功，负数 失败
+ 126:src/pwmcmds.c ****  */
+ 127:src/pwmcmds.c **** int pwm_config(pwm_channel_t id, const pwm_config_t* config)
+ 128:src/pwmcmds.c **** {
+ 229              		.loc 1 128 1 is_stmt 1 view -0
+ 230              		.cfi_startproc
+ 231              		@ args = 0, pretend = 0, frame = 0
+ 232              		@ frame_needed = 0, uses_anonymous_args = 0
+ 129:src/pwmcmds.c ****     pwm_state_t* pwm;
+ 233              		.loc 1 129 5 view .LVU70
+ 130:src/pwmcmds.c ****     
+ 131:src/pwmcmds.c ****     if (id >= PWM_CHANNEL_COUNT || config == NULL) {
+ 234              		.loc 1 131 5 view .LVU71
+ 235              		.loc 1 131 8 is_stmt 0 view .LVU72
+ 236 0000 0328     		cmp	r0, #3
+ 237 0002 20D8     		bhi	.L24
+ 128:src/pwmcmds.c ****     pwm_state_t* pwm;
+ 238              		.loc 1 128 1 discriminator 1 view .LVU73
+ARM GAS  /tmp/cc7454IN.s 			page 8
+
+
+ 239 0004 10B5     		push	{r4, lr}
+ 240              		.cfi_def_cfa_offset 8
+ 241              		.cfi_offset 4, -8
+ 242              		.cfi_offset 14, -4
+ 243 0006 0C46     		mov	r4, r1
+ 244              		.loc 1 131 33 discriminator 1 view .LVU74
+ 245 0008 01B3     		cbz	r1, .L25
+ 132:src/pwmcmds.c ****         return -1;
+ 133:src/pwmcmds.c ****     }
+ 134:src/pwmcmds.c ****     
+ 135:src/pwmcmds.c ****     pwm = &s_pwm_channels[id];
+ 246              		.loc 1 135 5 is_stmt 1 view .LVU75
+ 247              	.LVL13:
+ 136:src/pwmcmds.c ****     pwm->pin = config->pin;
+ 248              		.loc 1 136 5 view .LVU76
+ 249              		.loc 1 136 14 is_stmt 0 view .LVU77
+ 250 000a 124A     		ldr	r2, .L32
+ 251 000c 0101     		lsls	r1, r0, #4
+ 252              	.LVL14:
+ 253              		.loc 1 136 14 view .LVU78
+ 254 000e 0346     		mov	r3, r0
+ 255 0010 02EB0313 		add	r3, r2, r3, lsl #4
+ 256              		.loc 1 136 22 view .LVU79
+ 257 0014 2078     		ldrb	r0, [r4]	@ zero_extendqisi2
+ 258              	.LVL15:
+ 259              		.loc 1 136 14 view .LVU80
+ 260 0016 5054     		strb	r0, [r2, r1]
+ 137:src/pwmcmds.c ****     pwm->cycle_time = config->cycle_time;
+ 261              		.loc 1 137 5 is_stmt 1 view .LVU81
+ 262              		.loc 1 137 21 is_stmt 0 view .LVU82
+ 263 0018 6168     		ldr	r1, [r4, #4]
+ 138:src/pwmcmds.c ****     pwm->max_value = config->max_value;
+ 264              		.loc 1 138 20 view .LVU83
+ 265 001a 2289     		ldrh	r2, [r4, #8]
+ 266 001c DA80     		strh	r2, [r3, #6]	@ movhi
+ 137:src/pwmcmds.c ****     pwm->cycle_time = config->cycle_time;
+ 267              		.loc 1 137 21 view .LVU84
+ 268 001e 9960     		str	r1, [r3, #8]
+ 269              		.loc 1 138 5 is_stmt 1 view .LVU85
+ 139:src/pwmcmds.c ****     pwm->invert = config->invert;
+ 270              		.loc 1 139 5 view .LVU86
+ 271              		.loc 1 139 25 is_stmt 0 view .LVU87
+ 272 0020 A17A     		ldrb	r1, [r4, #10]	@ zero_extendqisi2
+ 273              		.loc 1 139 17 view .LVU88
+ 274 0022 1973     		strb	r1, [r3, #12]
+ 140:src/pwmcmds.c ****     pwm->configured = 1;
+ 275              		.loc 1 140 5 is_stmt 1 view .LVU89
+ 276              		.loc 1 140 21 is_stmt 0 view .LVU90
+ 277 0024 0122     		movs	r2, #1
+ 141:src/pwmcmds.c ****     
+ 142:src/pwmcmds.c ****     /* 配置 GPIO 为输出 */
+ 143:src/pwmcmds.c ****     gpio_out_setup(config->pin, config->invert ? 1 : 0);
+ 278              		.loc 1 143 5 view .LVU91
+ 279 0026 0039     		subs	r1, r1, #0
+ 280 0028 18BF     		it	ne
+ 281 002a 0121     		movne	r1, #1
+ 140:src/pwmcmds.c ****     pwm->configured = 1;
+ARM GAS  /tmp/cc7454IN.s 			page 9
+
+
+ 282              		.loc 1 140 21 view .LVU92
+ 283 002c 5A70     		strb	r2, [r3, #1]
+ 284              		.loc 1 143 5 is_stmt 1 view .LVU93
+ 285 002e FFF7FEFF 		bl	gpio_out_setup
+ 286              	.LVL16:
+ 144:src/pwmcmds.c ****     
+ 145:src/pwmcmds.c ****     /* 如果支持硬件 PWM，配置硬件 */
+ 146:src/pwmcmds.c ****     if (config->use_hardware) {
+ 287              		.loc 1 146 5 view .LVU94
+ 288              		.loc 1 146 8 is_stmt 0 view .LVU95
+ 289 0032 E07A     		ldrb	r0, [r4, #11]	@ zero_extendqisi2
+ 290 0034 00B9     		cbnz	r0, .L31
+ 147:src/pwmcmds.c ****         pwm_setup(config->pin, config->cycle_time, 0);
+ 148:src/pwmcmds.c ****     }
+ 149:src/pwmcmds.c ****     
+ 150:src/pwmcmds.c ****     return 0;
+ 151:src/pwmcmds.c **** }
+ 291              		.loc 1 151 1 view .LVU96
+ 292 0036 10BD     		pop	{r4, pc}
+ 293              	.LVL17:
+ 294              	.L31:
+ 147:src/pwmcmds.c ****         pwm_setup(config->pin, config->cycle_time, 0);
+ 295              		.loc 1 147 9 is_stmt 1 view .LVU97
+ 296 0038 2078     		ldrb	r0, [r4]	@ zero_extendqisi2
+ 297 003a 6168     		ldr	r1, [r4, #4]
+ 298 003c 0022     		movs	r2, #0
+ 299 003e FFF7FEFF 		bl	pwm_setup
+ 300              	.LVL18:
+ 150:src/pwmcmds.c **** }
+ 301              		.loc 1 150 12 is_stmt 0 view .LVU98
+ 302 0042 0020     		movs	r0, #0
+ 303              		.loc 1 151 1 view .LVU99
+ 304 0044 10BD     		pop	{r4, pc}
+ 305              	.LVL19:
+ 306              	.L24:
+ 307              		.cfi_def_cfa_offset 0
+ 308              		.cfi_restore 4
+ 309              		.cfi_restore 14
+ 132:src/pwmcmds.c ****     }
+ 310              		.loc 1 132 16 view .LVU100
+ 311 0046 4FF0FF30 		mov	r0, #-1
+ 312              	.LVL20:
+ 313              		.loc 1 151 1 view .LVU101
+ 314 004a 7047     		bx	lr
+ 315              	.LVL21:
+ 316              	.L25:
+ 317              		.cfi_def_cfa_offset 8
+ 318              		.cfi_offset 4, -8
+ 319              		.cfi_offset 14, -4
+ 132:src/pwmcmds.c ****     }
+ 320              		.loc 1 132 16 view .LVU102
+ 321 004c 4FF0FF30 		mov	r0, #-1
+ 322              	.LVL22:
+ 323              		.loc 1 151 1 view .LVU103
+ 324 0050 10BD     		pop	{r4, pc}
+ 325              	.L33:
+ 326 0052 00BF     		.align	2
+ARM GAS  /tmp/cc7454IN.s 			page 10
+
+
+ 327              	.L32:
+ 328 0054 00000000 		.word	.LANCHOR1
+ 329              		.cfi_endproc
+ 330              	.LFE2:
+ 332              		.section	.text.pwm_enable,"ax",%progbits
+ 333              		.align	1
+ 334              		.p2align 2,,3
+ 335              		.global	pwm_enable
+ 336              		.syntax unified
+ 337              		.thumb
+ 338              		.thumb_func
+ 339              		.fpu fpv4-sp-d16
+ 341              	pwm_enable:
+ 342              	.LVL23:
+ 343              	.LFB3:
+ 152:src/pwmcmds.c **** 
+ 153:src/pwmcmds.c **** /**
+ 154:src/pwmcmds.c ****  * @brief  启用 PWM 通道
+ 155:src/pwmcmds.c ****  * @param  id PWM 通道 ID
+ 156:src/pwmcmds.c ****  * @param  enable 1 启用，0 禁用
+ 157:src/pwmcmds.c ****  */
+ 158:src/pwmcmds.c **** void pwm_enable(pwm_channel_t id, int enable)
+ 159:src/pwmcmds.c **** {
+ 344              		.loc 1 159 1 is_stmt 1 view -0
+ 345              		.cfi_startproc
+ 346              		@ args = 0, pretend = 0, frame = 0
+ 347              		@ frame_needed = 0, uses_anonymous_args = 0
+ 160:src/pwmcmds.c ****     pwm_state_t* pwm;
+ 348              		.loc 1 160 5 view .LVU105
+ 161:src/pwmcmds.c ****     
+ 162:src/pwmcmds.c ****     if (id >= PWM_CHANNEL_COUNT) {
+ 349              		.loc 1 162 5 view .LVU106
+ 350              		.loc 1 162 8 is_stmt 0 view .LVU107
+ 351 0000 0328     		cmp	r0, #3
+ 352 0002 18D8     		bhi	.L41
+ 163:src/pwmcmds.c ****         return;
+ 164:src/pwmcmds.c ****     }
+ 165:src/pwmcmds.c ****     
+ 166:src/pwmcmds.c ****     pwm = &s_pwm_channels[id];
+ 353              		.loc 1 166 5 is_stmt 1 view .LVU108
+ 354              	.LVL24:
+ 167:src/pwmcmds.c ****     pwm->enabled = enable ? 1 : 0;
+ 355              		.loc 1 167 5 view .LVU109
+ 159:src/pwmcmds.c ****     pwm_state_t* pwm;
+ 356              		.loc 1 159 1 is_stmt 0 view .LVU110
+ 357 0004 08B5     		push	{r3, lr}
+ 358              		.cfi_def_cfa_offset 8
+ 359              		.cfi_offset 3, -8
+ 360              		.cfi_offset 14, -4
+ 361              		.loc 1 167 18 view .LVU111
+ 362 0006 124B     		ldr	r3, .L45
+ 363              		.loc 1 167 31 view .LVU112
+ 364 0008 0029     		cmp	r1, #0
+ 365              		.loc 1 167 18 view .LVU113
+ 366 000a 03EB0012 		add	r2, r3, r0, lsl #4
+ 367              		.loc 1 167 31 view .LVU114
+ 368 000e 14BF     		ite	ne
+ARM GAS  /tmp/cc7454IN.s 			page 11
+
+
+ 369 0010 0121     		movne	r1, #1
+ 370              	.LVL25:
+ 371              		.loc 1 167 31 view .LVU115
+ 372 0012 0021     		moveq	r1, #0
+ 373              		.loc 1 167 18 view .LVU116
+ 374 0014 4FEA0010 		lsl	r0, r0, #4
+ 375              	.LVL26:
+ 376              		.loc 1 167 31 view .LVU117
+ 377 0018 9170     		strb	r1, [r2, #2]
+ 168:src/pwmcmds.c ****     
+ 169:src/pwmcmds.c ****     /* 如果禁用，输出低电平 */
+ 170:src/pwmcmds.c ****     if (!enable) {
+ 378              		.loc 1 170 5 is_stmt 1 view .LVU118
+ 379              		.loc 1 170 8 is_stmt 0 view .LVU119
+ 380 001a 03D0     		beq	.L44
+ 171:src/pwmcmds.c ****         gpio_out_write(pwm->pin, pwm->invert ? 1 : 0);
+ 172:src/pwmcmds.c ****     }
+ 173:src/pwmcmds.c ****     
+ 174:src/pwmcmds.c ****     /* 检查是否需要启动软件 PWM */
+ 175:src/pwmcmds.c ****     if (enable && !s_soft_pwm_enabled) {
+ 381              		.loc 1 175 5 is_stmt 1 view .LVU120
+ 382              		.loc 1 175 19 is_stmt 0 view .LVU121
+ 383 001c 0D4B     		ldr	r3, .L45+4
+ 384              		.loc 1 175 16 view .LVU122
+ 385 001e 1A78     		ldrb	r2, [r3]	@ zero_extendqisi2
+ 386 0020 52B1     		cbz	r2, .L38
+ 176:src/pwmcmds.c ****         s_soft_pwm_enabled = 1;
+ 177:src/pwmcmds.c ****         s_pwm_timer.waketime = sched_get_time() + 1;
+ 178:src/pwmcmds.c ****         sched_add_timer(&s_pwm_timer);
+ 179:src/pwmcmds.c ****     }
+ 180:src/pwmcmds.c **** }
+ 387              		.loc 1 180 1 view .LVU123
+ 388 0022 08BD     		pop	{r3, pc}
+ 389              	.L44:
+ 171:src/pwmcmds.c ****         gpio_out_write(pwm->pin, pwm->invert ? 1 : 0);
+ 390              		.loc 1 171 9 is_stmt 1 view .LVU124
+ 391 0024 117B     		ldrb	r1, [r2, #12]	@ zero_extendqisi2
+ 392 0026 185C     		ldrb	r0, [r3, r0]	@ zero_extendqisi2
+ 393 0028 0039     		subs	r1, r1, #0
+ 394              		.loc 1 180 1 is_stmt 0 view .LVU125
+ 395 002a BDE80840 		pop	{r3, lr}
+ 396              		.cfi_restore 14
+ 397              		.cfi_restore 3
+ 398              		.cfi_def_cfa_offset 0
+ 171:src/pwmcmds.c ****         gpio_out_write(pwm->pin, pwm->invert ? 1 : 0);
+ 399              		.loc 1 171 9 view .LVU126
+ 400 002e 18BF     		it	ne
+ 401 0030 0121     		movne	r1, #1
+ 402 0032 FFF7FEBF 		b	gpio_out_write
+ 403              	.LVL27:
+ 404              	.L41:
+ 171:src/pwmcmds.c ****         gpio_out_write(pwm->pin, pwm->invert ? 1 : 0);
+ 405              		.loc 1 171 9 view .LVU127
+ 406 0036 7047     		bx	lr
+ 407              	.LVL28:
+ 408              	.L38:
+ 409              		.cfi_def_cfa_offset 8
+ARM GAS  /tmp/cc7454IN.s 			page 12
+
+
+ 410              		.cfi_offset 3, -8
+ 411              		.cfi_offset 14, -4
+ 176:src/pwmcmds.c ****         s_soft_pwm_enabled = 1;
+ 412              		.loc 1 176 9 is_stmt 1 view .LVU128
+ 176:src/pwmcmds.c ****         s_soft_pwm_enabled = 1;
+ 413              		.loc 1 176 28 is_stmt 0 view .LVU129
+ 414 0038 0122     		movs	r2, #1
+ 415 003a 1A70     		strb	r2, [r3]
+ 177:src/pwmcmds.c ****         sched_add_timer(&s_pwm_timer);
+ 416              		.loc 1 177 9 is_stmt 1 view .LVU130
+ 177:src/pwmcmds.c ****         sched_add_timer(&s_pwm_timer);
+ 417              		.loc 1 177 32 is_stmt 0 view .LVU131
+ 418 003c FFF7FEFF 		bl	sched_get_time
+ 419              	.LVL29:
+ 177:src/pwmcmds.c ****         sched_add_timer(&s_pwm_timer);
+ 420              		.loc 1 177 30 view .LVU132
+ 421 0040 054A     		ldr	r2, .L45+8
+ 177:src/pwmcmds.c ****         sched_add_timer(&s_pwm_timer);
+ 422              		.loc 1 177 49 view .LVU133
+ 423 0042 431C     		adds	r3, r0, #1
+ 177:src/pwmcmds.c ****         sched_add_timer(&s_pwm_timer);
+ 424              		.loc 1 177 30 view .LVU134
+ 425 0044 5360     		str	r3, [r2, #4]
+ 178:src/pwmcmds.c ****     }
+ 426              		.loc 1 178 9 is_stmt 1 view .LVU135
+ 427 0046 1046     		mov	r0, r2
+ 428              		.loc 1 180 1 is_stmt 0 view .LVU136
+ 429 0048 BDE80840 		pop	{r3, lr}
+ 430              		.cfi_restore 14
+ 431              		.cfi_restore 3
+ 432              		.cfi_def_cfa_offset 0
+ 178:src/pwmcmds.c ****     }
+ 433              		.loc 1 178 9 view .LVU137
+ 434 004c FFF7FEBF 		b	sched_add_timer
+ 435              	.LVL30:
+ 436              	.L46:
+ 437              		.align	2
+ 438              	.L45:
+ 439 0050 00000000 		.word	.LANCHOR1
+ 440 0054 00000000 		.word	.LANCHOR3
+ 441 0058 00000000 		.word	.LANCHOR2
+ 442              		.cfi_endproc
+ 443              	.LFE3:
+ 445              		.section	.text.pwm_set_value,"ax",%progbits
+ 446              		.align	1
+ 447              		.p2align 2,,3
+ 448              		.global	pwm_set_value
+ 449              		.syntax unified
+ 450              		.thumb
+ 451              		.thumb_func
+ 452              		.fpu fpv4-sp-d16
+ 454              	pwm_set_value:
+ 455              	.LVL31:
+ 456              	.LFB4:
+ 181:src/pwmcmds.c **** 
+ 182:src/pwmcmds.c **** /**
+ 183:src/pwmcmds.c ****  * @brief  设置 PWM 占空比
+ARM GAS  /tmp/cc7454IN.s 			page 13
+
+
+ 184:src/pwmcmds.c ****  * @param  id PWM 通道 ID
+ 185:src/pwmcmds.c ****  * @param  value 占空比值（0-255）
+ 186:src/pwmcmds.c ****  */
+ 187:src/pwmcmds.c **** void pwm_set_value(pwm_channel_t id, uint16_t value)
+ 188:src/pwmcmds.c **** {
+ 457              		.loc 1 188 1 is_stmt 1 view -0
+ 458              		.cfi_startproc
+ 459              		@ args = 0, pretend = 0, frame = 0
+ 460              		@ frame_needed = 0, uses_anonymous_args = 0
+ 461              		@ link register save eliminated.
+ 189:src/pwmcmds.c ****     pwm_state_t* pwm;
+ 462              		.loc 1 189 5 view .LVU139
+ 190:src/pwmcmds.c ****     
+ 191:src/pwmcmds.c ****     if (id >= PWM_CHANNEL_COUNT) {
+ 463              		.loc 1 191 5 view .LVU140
+ 464              		.loc 1 191 8 is_stmt 0 view .LVU141
+ 465 0000 0328     		cmp	r0, #3
+ 466 0002 07D8     		bhi	.L47
+ 192:src/pwmcmds.c ****         return;
+ 193:src/pwmcmds.c ****     }
+ 194:src/pwmcmds.c ****     
+ 195:src/pwmcmds.c ****     pwm = &s_pwm_channels[id];
+ 467              		.loc 1 195 5 is_stmt 1 view .LVU142
+ 468              	.LVL32:
+ 196:src/pwmcmds.c ****     
+ 197:src/pwmcmds.c ****     /* 限幅 */
+ 198:src/pwmcmds.c ****     if (value > pwm->max_value) {
+ 469              		.loc 1 198 5 view .LVU143
+ 199:src/pwmcmds.c ****         value = pwm->max_value;
+ 200:src/pwmcmds.c ****     }
+ 201:src/pwmcmds.c ****     
+ 202:src/pwmcmds.c ****     pwm->value = value;
+ 470              		.loc 1 202 5 view .LVU144
+ 471              		.loc 1 202 16 is_stmt 0 view .LVU145
+ 472 0004 044B     		ldr	r3, .L49
+ 473 0006 03EB0010 		add	r0, r3, r0, lsl #4
+ 474              	.LVL33:
+ 475              		.loc 1 202 16 view .LVU146
+ 476 000a C388     		ldrh	r3, [r0, #6]
+ 477 000c 9942     		cmp	r1, r3
+ 478 000e 28BF     		it	cs
+ 479 0010 1946     		movcs	r1, r3
+ 480 0012 8180     		strh	r1, [r0, #4]	@ movhi
+ 481              	.L47:
+ 203:src/pwmcmds.c ****     
+ 204:src/pwmcmds.c ****     /* 如果使用硬件 PWM，直接写入 */
+ 205:src/pwmcmds.c ****     /* pwm_write(pwm->pin, value); */
+ 206:src/pwmcmds.c **** }
+ 482              		.loc 1 206 1 view .LVU147
+ 483 0014 7047     		bx	lr
+ 484              	.L50:
+ 485 0016 00BF     		.align	2
+ 486              	.L49:
+ 487 0018 00000000 		.word	.LANCHOR1
+ 488              		.cfi_endproc
+ 489              	.LFE4:
+ 491              		.section	.text.pwm_set_duty,"ax",%progbits
+ARM GAS  /tmp/cc7454IN.s 			page 14
+
+
+ 492              		.align	1
+ 493              		.p2align 2,,3
+ 494              		.global	pwm_set_duty
+ 495              		.syntax unified
+ 496              		.thumb
+ 497              		.thumb_func
+ 498              		.fpu fpv4-sp-d16
+ 500              	pwm_set_duty:
+ 501              	.LVL34:
+ 502              	.LFB5:
+ 207:src/pwmcmds.c **** 
+ 208:src/pwmcmds.c **** /**
+ 209:src/pwmcmds.c ****  * @brief  设置 PWM 占空比（浮点数）
+ 210:src/pwmcmds.c ****  * @param  id PWM 通道 ID
+ 211:src/pwmcmds.c ****  * @param  duty 占空比（0.0 - 1.0）
+ 212:src/pwmcmds.c ****  */
+ 213:src/pwmcmds.c **** void pwm_set_duty(pwm_channel_t id, float duty)
+ 214:src/pwmcmds.c **** {
+ 503              		.loc 1 214 1 is_stmt 1 view -0
+ 504              		.cfi_startproc
+ 505              		@ args = 0, pretend = 0, frame = 0
+ 506              		@ frame_needed = 0, uses_anonymous_args = 0
+ 507              		@ link register save eliminated.
+ 215:src/pwmcmds.c ****     pwm_state_t* pwm;
+ 508              		.loc 1 215 5 view .LVU149
+ 216:src/pwmcmds.c ****     uint16_t value;
+ 509              		.loc 1 216 5 view .LVU150
+ 217:src/pwmcmds.c ****     
+ 218:src/pwmcmds.c ****     if (id >= PWM_CHANNEL_COUNT) {
+ 510              		.loc 1 218 5 view .LVU151
+ 511              		.loc 1 218 8 is_stmt 0 view .LVU152
+ 512 0000 0328     		cmp	r0, #3
+ 513 0002 20D8     		bhi	.L51
+ 219:src/pwmcmds.c ****         return;
+ 220:src/pwmcmds.c ****     }
+ 221:src/pwmcmds.c ****     
+ 222:src/pwmcmds.c ****     pwm = &s_pwm_channels[id];
+ 514              		.loc 1 222 5 is_stmt 1 view .LVU153
+ 515              	.LVL35:
+ 223:src/pwmcmds.c ****     
+ 224:src/pwmcmds.c ****     /* 限幅 */
+ 225:src/pwmcmds.c ****     if (duty < 0.0f) {
+ 516              		.loc 1 225 5 view .LVU154
+ 517              		.loc 1 225 8 is_stmt 0 view .LVU155
+ 518 0004 B5EEC00A 		vcmpe.f32	s0, #0
+ 519 0008 F1EE10FA 		vmrs	APSR_nzcv, FPSCR
+ 520 000c 1CD4     		bmi	.L55
+ 226:src/pwmcmds.c ****         duty = 0.0f;
+ 227:src/pwmcmds.c ****     } else if (duty > 1.0f) {
+ 521              		.loc 1 227 12 is_stmt 1 view .LVU156
+ 522              		.loc 1 227 15 is_stmt 0 view .LVU157
+ 523 000e F7EE007A 		vmov.f32	s15, #1.0e+0
+ 228:src/pwmcmds.c ****         duty = 1.0f;
+ 524              		.loc 1 228 14 view .LVU158
+ 525 0012 B4EE670A 		vcmp.f32	s0, s15
+ 526 0016 F1EE10FA 		vmrs	APSR_nzcv, FPSCR
+ 527 001a C8BF     		it	gt
+ARM GAS  /tmp/cc7454IN.s 			page 15
+
+
+ 528 001c B0EE670A 		vmovgt.f32	s0, s15
+ 529              	.LVL36:
+ 530              	.L53:
+ 229:src/pwmcmds.c ****     }
+ 230:src/pwmcmds.c ****     
+ 231:src/pwmcmds.c ****     /* 转换为整数值 */
+ 232:src/pwmcmds.c ****     value = (uint16_t)(duty * pwm->max_value);
+ 531              		.loc 1 232 5 is_stmt 1 view .LVU159
+ 532              		.loc 1 232 34 is_stmt 0 view .LVU160
+ 533 0020 0B4B     		ldr	r3, .L57
+ 534 0022 03EB0010 		add	r0, r3, r0, lsl #4
+ 535              	.LVL37:
+ 536              		.loc 1 232 34 view .LVU161
+ 537 0026 C388     		ldrh	r3, [r0, #6]
+ 538              	.LVL38:
+ 233:src/pwmcmds.c ****     
+ 234:src/pwmcmds.c ****     pwm_set_value(id, value);
+ 539              		.loc 1 234 5 is_stmt 1 view .LVU162
+ 540              	.LBB6:
+ 541              	.LBI6:
+ 187:src/pwmcmds.c **** {
+ 542              		.loc 1 187 6 view .LVU163
+ 543              	.LBB7:
+ 189:src/pwmcmds.c ****     
+ 544              		.loc 1 189 5 view .LVU164
+ 191:src/pwmcmds.c ****         return;
+ 545              		.loc 1 191 5 view .LVU165
+ 195:src/pwmcmds.c ****     
+ 546              		.loc 1 195 5 view .LVU166
+ 198:src/pwmcmds.c ****         value = pwm->max_value;
+ 547              		.loc 1 198 5 view .LVU167
+ 202:src/pwmcmds.c ****     
+ 548              		.loc 1 202 5 view .LVU168
+ 549              	.LBE7:
+ 550              	.LBE6:
+ 232:src/pwmcmds.c ****     
+ 551              		.loc 1 232 29 is_stmt 0 view .LVU169
+ 552 0028 07EE903A 		vmov	s15, r3	@ int
+ 553 002c F8EEE77A 		vcvt.f32.s32	s15, s15
+ 554 0030 27EE800A 		vmul.f32	s0, s15, s0
+ 555              	.LVL39:
+ 232:src/pwmcmds.c ****     
+ 556              		.loc 1 232 11 view .LVU170
+ 557 0034 BCEEC00A 		vcvt.u32.f32	s0, s0
+ 558              	.LBB9:
+ 559              	.LBB8:
+ 202:src/pwmcmds.c ****     
+ 560              		.loc 1 202 16 view .LVU171
+ 561 0038 10EE102A 		vmov	r2, s0	@ int
+ 562 003c 92B2     		uxth	r2, r2
+ 563 003e 9342     		cmp	r3, r2
+ 564 0040 28BF     		it	cs
+ 565 0042 1346     		movcs	r3, r2
+ 202:src/pwmcmds.c ****     
+ 566              		.loc 1 202 16 view .LVU172
+ 567 0044 8380     		strh	r3, [r0, #4]	@ movhi
+ 568              	.L51:
+ARM GAS  /tmp/cc7454IN.s 			page 16
+
+
+ 202:src/pwmcmds.c ****     
+ 569              		.loc 1 202 16 view .LVU173
+ 570              	.LBE8:
+ 571              	.LBE9:
+ 235:src/pwmcmds.c **** }
+ 572              		.loc 1 235 1 view .LVU174
+ 573 0046 7047     		bx	lr
+ 574              	.LVL40:
+ 575              	.L55:
+ 226:src/pwmcmds.c ****     } else if (duty > 1.0f) {
+ 576              		.loc 1 226 14 view .LVU175
+ 577 0048 9FED020A 		vldr.32	s0, .L57+4
+ 578              	.LVL41:
+ 226:src/pwmcmds.c ****     } else if (duty > 1.0f) {
+ 579              		.loc 1 226 14 view .LVU176
+ 580 004c E8E7     		b	.L53
+ 581              	.L58:
+ 582 004e 00BF     		.align	2
+ 583              	.L57:
+ 584 0050 00000000 		.word	.LANCHOR1
+ 585 0054 00000000 		.word	0
+ 586              		.cfi_endproc
+ 587              	.LFE5:
+ 589              		.section	.text.pwm_get_value,"ax",%progbits
+ 590              		.align	1
+ 591              		.p2align 2,,3
+ 592              		.global	pwm_get_value
+ 593              		.syntax unified
+ 594              		.thumb
+ 595              		.thumb_func
+ 596              		.fpu fpv4-sp-d16
+ 598              	pwm_get_value:
+ 599              	.LVL42:
+ 600              	.LFB6:
+ 236:src/pwmcmds.c **** 
+ 237:src/pwmcmds.c **** /**
+ 238:src/pwmcmds.c ****  * @brief  获取 PWM 当前值
+ 239:src/pwmcmds.c ****  * @param  id PWM 通道 ID
+ 240:src/pwmcmds.c ****  * @retval 当前占空比值，负数表示错误
+ 241:src/pwmcmds.c ****  */
+ 242:src/pwmcmds.c **** int32_t pwm_get_value(pwm_channel_t id)
+ 243:src/pwmcmds.c **** {
+ 601              		.loc 1 243 1 is_stmt 1 view -0
+ 602              		.cfi_startproc
+ 603              		@ args = 0, pretend = 0, frame = 0
+ 604              		@ frame_needed = 0, uses_anonymous_args = 0
+ 605              		@ link register save eliminated.
+ 244:src/pwmcmds.c ****     if (id >= PWM_CHANNEL_COUNT) {
+ 606              		.loc 1 244 5 view .LVU178
+ 607              		.loc 1 244 8 is_stmt 0 view .LVU179
+ 608 0000 0328     		cmp	r0, #3
+ 609 0002 06D8     		bhi	.L61
+ 245:src/pwmcmds.c ****         return -1;
+ 246:src/pwmcmds.c ****     }
+ 247:src/pwmcmds.c ****     
+ 248:src/pwmcmds.c ****     if (!s_pwm_channels[id].configured) {
+ 610              		.loc 1 248 5 is_stmt 1 view .LVU180
+ARM GAS  /tmp/cc7454IN.s 			page 17
+
+
+ 611              		.loc 1 248 28 is_stmt 0 view .LVU181
+ 612 0004 064B     		ldr	r3, .L63
+ 613 0006 03EB0010 		add	r0, r3, r0, lsl #4
+ 614              	.LVL43:
+ 615              		.loc 1 248 8 view .LVU182
+ 616 000a 4378     		ldrb	r3, [r0, #1]	@ zero_extendqisi2
+ 617 000c 23B1     		cbz	r3, .L62
+ 249:src/pwmcmds.c ****         return -2;
+ 250:src/pwmcmds.c ****     }
+ 251:src/pwmcmds.c ****     
+ 252:src/pwmcmds.c ****     return s_pwm_channels[id].value;
+ 618              		.loc 1 252 5 is_stmt 1 view .LVU183
+ 619              		.loc 1 252 30 is_stmt 0 view .LVU184
+ 620 000e 8088     		ldrh	r0, [r0, #4]
+ 621 0010 7047     		bx	lr
+ 622              	.LVL44:
+ 623              	.L61:
+ 245:src/pwmcmds.c ****         return -1;
+ 624              		.loc 1 245 16 view .LVU185
+ 625 0012 4FF0FF30 		mov	r0, #-1
+ 626              	.LVL45:
+ 245:src/pwmcmds.c ****         return -1;
+ 627              		.loc 1 245 16 view .LVU186
+ 628 0016 7047     		bx	lr
+ 629              	.L62:
+ 249:src/pwmcmds.c ****         return -2;
+ 630              		.loc 1 249 16 view .LVU187
+ 631 0018 6FF00100 		mvn	r0, #1
+ 253:src/pwmcmds.c **** }
+ 632              		.loc 1 253 1 view .LVU188
+ 633 001c 7047     		bx	lr
+ 634              	.L64:
+ 635 001e 00BF     		.align	2
+ 636              	.L63:
+ 637 0020 00000000 		.word	.LANCHOR1
+ 638              		.cfi_endproc
+ 639              	.LFE6:
+ 641              		.section	.text.pwm_get_duty,"ax",%progbits
+ 642              		.align	1
+ 643              		.p2align 2,,3
+ 644              		.global	pwm_get_duty
+ 645              		.syntax unified
+ 646              		.thumb
+ 647              		.thumb_func
+ 648              		.fpu fpv4-sp-d16
+ 650              	pwm_get_duty:
+ 651              	.LVL46:
+ 652              	.LFB7:
+ 254:src/pwmcmds.c **** 
+ 255:src/pwmcmds.c **** /**
+ 256:src/pwmcmds.c ****  * @brief  获取 PWM 占空比（浮点数）
+ 257:src/pwmcmds.c ****  * @param  id PWM 通道 ID
+ 258:src/pwmcmds.c ****  * @retval 占空比（0.0 - 1.0），负数表示错误
+ 259:src/pwmcmds.c ****  */
+ 260:src/pwmcmds.c **** float pwm_get_duty(pwm_channel_t id)
+ 261:src/pwmcmds.c **** {
+ 653              		.loc 1 261 1 is_stmt 1 view -0
+ARM GAS  /tmp/cc7454IN.s 			page 18
+
+
+ 654              		.cfi_startproc
+ 655              		@ args = 0, pretend = 0, frame = 0
+ 656              		@ frame_needed = 0, uses_anonymous_args = 0
+ 657              		@ link register save eliminated.
+ 262:src/pwmcmds.c ****     pwm_state_t* pwm;
+ 658              		.loc 1 262 5 view .LVU190
+ 263:src/pwmcmds.c ****     
+ 264:src/pwmcmds.c ****     if (id >= PWM_CHANNEL_COUNT) {
+ 659              		.loc 1 264 5 view .LVU191
+ 660              		.loc 1 264 8 is_stmt 0 view .LVU192
+ 661 0000 0328     		cmp	r0, #3
+ 662 0002 11D8     		bhi	.L68
+ 265:src/pwmcmds.c ****         return -1.0f;
+ 266:src/pwmcmds.c ****     }
+ 267:src/pwmcmds.c ****     
+ 268:src/pwmcmds.c ****     pwm = &s_pwm_channels[id];
+ 663              		.loc 1 268 5 is_stmt 1 view .LVU193
+ 664              	.LVL47:
+ 269:src/pwmcmds.c ****     if (!pwm->configured) {
+ 665              		.loc 1 269 5 view .LVU194
+ 666              		.loc 1 269 13 is_stmt 0 view .LVU195
+ 667 0004 0A4B     		ldr	r3, .L69
+ 668 0006 03EB0010 		add	r0, r3, r0, lsl #4
+ 669              	.LVL48:
+ 670              		.loc 1 269 8 view .LVU196
+ 671 000a 4378     		ldrb	r3, [r0, #1]	@ zero_extendqisi2
+ 672 000c 63B1     		cbz	r3, .L68
+ 270:src/pwmcmds.c ****         return -1.0f;
+ 271:src/pwmcmds.c ****     }
+ 272:src/pwmcmds.c ****     
+ 273:src/pwmcmds.c ****     return (float)pwm->value / (float)pwm->max_value;
+ 673              		.loc 1 273 5 is_stmt 1 view .LVU197
+ 674              		.loc 1 273 12 is_stmt 0 view .LVU198
+ 675 000e 8388     		ldrh	r3, [r0, #4]
+ 676 0010 07EE103A 		vmov	s14, r3	@ int
+ 677              		.loc 1 273 32 view .LVU199
+ 678 0014 C388     		ldrh	r3, [r0, #6]
+ 679 0016 07EE903A 		vmov	s15, r3	@ int
+ 680              		.loc 1 273 12 view .LVU200
+ 681 001a B8EE477A 		vcvt.f32.u32	s14, s14
+ 682              		.loc 1 273 32 view .LVU201
+ 683 001e F8EE677A 		vcvt.f32.u32	s15, s15
+ 684              		.loc 1 273 30 view .LVU202
+ 685 0022 87EE270A 		vdiv.f32	s0, s14, s15
+ 686 0026 7047     		bx	lr
+ 687              	.L68:
+ 265:src/pwmcmds.c ****     }
+ 688              		.loc 1 265 16 view .LVU203
+ 689 0028 BFEE000A 		vmov.f32	s0, #-1.0e+0
+ 274:src/pwmcmds.c **** }
+ 690              		.loc 1 274 1 view .LVU204
+ 691 002c 7047     		bx	lr
+ 692              	.L70:
+ 693 002e 00BF     		.align	2
+ 694              	.L69:
+ 695 0030 00000000 		.word	.LANCHOR1
+ 696              		.cfi_endproc
+ARM GAS  /tmp/cc7454IN.s 			page 19
+
+
+ 697              	.LFE7:
+ 699              		.section	.bss.s_pwm_channels,"aw",%nobits
+ 700              		.align	2
+ 701              		.set	.LANCHOR1,. + 0
+ 704              	s_pwm_channels:
+ 705 0000 00000000 		.space	64
+ 705      00000000 
+ 705      00000000 
+ 705      00000000 
+ 705      00000000 
+ 706              		.section	.bss.s_pwm_counter.0,"aw",%nobits
+ 707              		.set	.LANCHOR0,. + 0
+ 710              	s_pwm_counter.0:
+ 711 0000 00       		.space	1
+ 712              		.section	.bss.s_pwm_timer,"aw",%nobits
+ 713              		.align	2
+ 714              		.set	.LANCHOR2,. + 0
+ 717              	s_pwm_timer:
+ 718 0000 00000000 		.space	12
+ 718      00000000 
+ 718      00000000 
+ 719              		.section	.bss.s_soft_pwm_enabled,"aw",%nobits
+ 720              		.set	.LANCHOR3,. + 0
+ 723              	s_soft_pwm_enabled:
+ 724 0000 00       		.space	1
+ 725              		.text
+ 726              	.Letext0:
+ 727              		.file 2 "/usr/lib/gcc/arm-none-eabi/10.3.1/include/stdint.h"
+ 728              		.file 3 "src/pwmcmds.h"
+ 729              		.file 4 "src/sched.h"
+ARM GAS  /tmp/cc7454IN.s 			page 20
+
+
+DEFINED SYMBOLS
+                            *ABS*:0000000000000000 pwmcmds.c
+     /tmp/cc7454IN.s:18     .text.pwm_timer_callback:0000000000000000 $t
+     /tmp/cc7454IN.s:26     .text.pwm_timer_callback:0000000000000000 pwm_timer_callback
+     /tmp/cc7454IN.s:125    .text.pwm_timer_callback:0000000000000044 $d
+     /tmp/cc7454IN.s:132    .text.pwm_init:0000000000000000 $t
+     /tmp/cc7454IN.s:140    .text.pwm_init:0000000000000000 pwm_init
+     /tmp/cc7454IN.s:210    .text.pwm_init:0000000000000034 $d
+     /tmp/cc7454IN.s:218    .text.pwm_config:0000000000000000 $t
+     /tmp/cc7454IN.s:226    .text.pwm_config:0000000000000000 pwm_config
+     /tmp/cc7454IN.s:328    .text.pwm_config:0000000000000054 $d
+     /tmp/cc7454IN.s:333    .text.pwm_enable:0000000000000000 $t
+     /tmp/cc7454IN.s:341    .text.pwm_enable:0000000000000000 pwm_enable
+     /tmp/cc7454IN.s:439    .text.pwm_enable:0000000000000050 $d
+     /tmp/cc7454IN.s:446    .text.pwm_set_value:0000000000000000 $t
+     /tmp/cc7454IN.s:454    .text.pwm_set_value:0000000000000000 pwm_set_value
+     /tmp/cc7454IN.s:487    .text.pwm_set_value:0000000000000018 $d
+     /tmp/cc7454IN.s:492    .text.pwm_set_duty:0000000000000000 $t
+     /tmp/cc7454IN.s:500    .text.pwm_set_duty:0000000000000000 pwm_set_duty
+     /tmp/cc7454IN.s:584    .text.pwm_set_duty:0000000000000050 $d
+     /tmp/cc7454IN.s:590    .text.pwm_get_value:0000000000000000 $t
+     /tmp/cc7454IN.s:598    .text.pwm_get_value:0000000000000000 pwm_get_value
+     /tmp/cc7454IN.s:637    .text.pwm_get_value:0000000000000020 $d
+     /tmp/cc7454IN.s:642    .text.pwm_get_duty:0000000000000000 $t
+     /tmp/cc7454IN.s:650    .text.pwm_get_duty:0000000000000000 pwm_get_duty
+     /tmp/cc7454IN.s:695    .text.pwm_get_duty:0000000000000030 $d
+     /tmp/cc7454IN.s:700    .bss.s_pwm_channels:0000000000000000 $d
+     /tmp/cc7454IN.s:704    .bss.s_pwm_channels:0000000000000000 s_pwm_channels
+     /tmp/cc7454IN.s:710    .bss.s_pwm_counter.0:0000000000000000 s_pwm_counter.0
+     /tmp/cc7454IN.s:711    .bss.s_pwm_counter.0:0000000000000000 $d
+     /tmp/cc7454IN.s:713    .bss.s_pwm_timer:0000000000000000 $d
+     /tmp/cc7454IN.s:717    .bss.s_pwm_timer:0000000000000000 s_pwm_timer
+     /tmp/cc7454IN.s:723    .bss.s_soft_pwm_enabled:0000000000000000 s_soft_pwm_enabled
+     /tmp/cc7454IN.s:724    .bss.s_soft_pwm_enabled:0000000000000000 $d
+
+UNDEFINED SYMBOLS
+gpio_out_write
+gpio_out_setup
+pwm_setup
+sched_get_time
+sched_add_timer

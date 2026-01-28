@@ -1,0 +1,2067 @@
+ARM GAS  /tmp/ccnwlPWk.s 			page 1
+
+
+   1              		.cpu cortex-m4
+   2              		.eabi_attribute 27, 1
+   3              		.eabi_attribute 28, 1
+   4              		.eabi_attribute 20, 1
+   5              		.eabi_attribute 21, 1
+   6              		.eabi_attribute 23, 3
+   7              		.eabi_attribute 24, 1
+   8              		.eabi_attribute 25, 1
+   9              		.eabi_attribute 26, 1
+  10              		.eabi_attribute 30, 2
+  11              		.eabi_attribute 34, 1
+  12              		.eabi_attribute 18, 4
+  13              		.file	"stepper.c"
+  14              		.text
+  15              	.Ltext0:
+  16              		.cfi_sections	.debug_frame
+  17              		.section	.text.stepper_do_step.part.0,"ax",%progbits
+  18              		.align	1
+  19              		.p2align 2,,3
+  20              		.arch armv7e-m
+  21              		.syntax unified
+  22              		.thumb
+  23              		.thumb_func
+  24              		.fpu fpv4-sp-d16
+  26              	stepper_do_step.part.0:
+  27              	.LVL0:
+  28              	.LFB13:
+  29              		.file 1 "src/stepper.c"
+   1:src/stepper.c **** /**
+   2:src/stepper.c ****  * @file    stepper.c
+   3:src/stepper.c ****  * @brief   步进电机驱动实现
+   4:src/stepper.c ****  * 
+   5:src/stepper.c ****  * 复用自 Klipper src/stepper.c
+   6:src/stepper.c ****  * 提供步进脉冲生成和电机控制功能
+   7:src/stepper.c ****  */
+   8:src/stepper.c **** 
+   9:src/stepper.c **** #include "stepper.h"
+  10:src/stepper.c **** #include "sched.h"
+  11:src/stepper.c **** #include <stddef.h>
+  12:src/stepper.c **** 
+  13:src/stepper.c **** /* ========== 私有类型定义 ========== */
+  14:src/stepper.c **** 
+  15:src/stepper.c **** /* 步进电机状态 */
+  16:src/stepper.c **** typedef struct {
+  17:src/stepper.c ****     stepper_config_t config;    /* 配置参数 */
+  18:src/stepper.c ****     int32_t position;           /* 当前位置（步数） */
+  19:src/stepper.c ****     int8_t dir;                 /* 当前方向 */
+  20:src/stepper.c ****     uint8_t enabled;            /* 使能状态 */
+  21:src/stepper.c ****     uint8_t configured;         /* 是否已配置 */
+  22:src/stepper.c ****     
+  23:src/stepper.c ****     /* 运动队列 */
+  24:src/stepper.c ****     uint32_t interval;          /* 步进间隔 */
+  25:src/stepper.c ****     uint32_t count;             /* 剩余步数 */
+  26:src/stepper.c ****     sched_time_t next_step_time; /* 下次步进时间 */
+  27:src/stepper.c **** } stepper_state_t;
+  28:src/stepper.c **** 
+  29:src/stepper.c **** /* ========== 私有变量 ========== */
+ARM GAS  /tmp/ccnwlPWk.s 			page 2
+
+
+  30:src/stepper.c **** 
+  31:src/stepper.c **** /* 步进电机状态数组 */
+  32:src/stepper.c **** static stepper_state_t s_steppers[STEPPER_COUNT];
+  33:src/stepper.c **** 
+  34:src/stepper.c **** /* 步进定时器 */
+  35:src/stepper.c **** static sched_timer_t s_stepper_timer;
+  36:src/stepper.c **** 
+  37:src/stepper.c **** /* 最小步进间隔（防止过快） */
+  38:src/stepper.c **** #define MIN_STEP_INTERVAL   100     /* 时钟周期 */
+  39:src/stepper.c **** 
+  40:src/stepper.c **** /* 步进脉冲宽度 */
+  41:src/stepper.c **** #define STEP_PULSE_WIDTH    2       /* 微秒 */
+  42:src/stepper.c **** 
+  43:src/stepper.c **** /* ========== GPIO 操作宏 ========== */
+  44:src/stepper.c **** 
+  45:src/stepper.c **** /* TODO: 需要 HAL 层实现这些函数 */
+  46:src/stepper.c **** extern void gpio_out_write(uint8_t pin, uint8_t value);
+  47:src/stepper.c **** extern uint8_t gpio_in_read(uint8_t pin);
+  48:src/stepper.c **** 
+  49:src/stepper.c **** /* ========== 私有函数 ========== */
+  50:src/stepper.c **** 
+  51:src/stepper.c **** /**
+  52:src/stepper.c ****  * @brief  输出步进脉冲
+  53:src/stepper.c ****  * @param  stepper 步进电机状态指针
+  54:src/stepper.c ****  */
+  55:src/stepper.c **** static void stepper_do_step(stepper_state_t* stepper)
+  30              		.loc 1 55 13 view -0
+  31              		.cfi_startproc
+  32              		@ args = 0, pretend = 0, frame = 8
+  33              		@ frame_needed = 0, uses_anonymous_args = 0
+  56:src/stepper.c **** {
+  57:src/stepper.c ****     uint8_t step_value;
+  58:src/stepper.c ****     
+  59:src/stepper.c ****     if (stepper == NULL || !stepper->configured || !stepper->enabled) {
+  60:src/stepper.c ****         return;
+  61:src/stepper.c ****     }
+  62:src/stepper.c ****     
+  63:src/stepper.c ****     /* 计算脉冲电平 */
+  64:src/stepper.c ****     step_value = stepper->config.invert_step ? 0 : 1;
+  34              		.loc 1 64 5 view .LVU1
+  55:src/stepper.c **** {
+  35              		.loc 1 55 13 is_stmt 0 view .LVU2
+  36 0000 30B5     		push	{r4, r5, lr}
+  37              		.cfi_def_cfa_offset 12
+  38              		.cfi_offset 4, -12
+  39              		.cfi_offset 5, -8
+  40              		.cfi_offset 14, -4
+  41              		.loc 1 64 33 view .LVU3
+  42 0002 C578     		ldrb	r5, [r0, #3]	@ zero_extendqisi2
+  43              	.LVL1:
+  65:src/stepper.c ****     
+  66:src/stepper.c ****     /* 输出高电平 */
+  67:src/stepper.c ****     gpio_out_write(stepper->config.step_pin, step_value);
+  44              		.loc 1 67 5 is_stmt 1 view .LVU4
+  45 0004 B5FA85F1 		clz	r1, r5
+  55:src/stepper.c **** {
+  46              		.loc 1 55 13 is_stmt 0 view .LVU5
+ARM GAS  /tmp/ccnwlPWk.s 			page 3
+
+
+  47 0008 83B0     		sub	sp, sp, #12
+  48              		.cfi_def_cfa_offset 24
+  55:src/stepper.c **** {
+  49              		.loc 1 55 13 view .LVU6
+  50 000a 0446     		mov	r4, r0
+  51              		.loc 1 67 5 view .LVU7
+  52 000c 4909     		lsrs	r1, r1, #5
+  53 000e 0078     		ldrb	r0, [r0]	@ zero_extendqisi2
+  54              	.LVL2:
+  55              		.loc 1 67 5 view .LVU8
+  56 0010 FFF7FEFF 		bl	gpio_out_write
+  57              	.LVL3:
+  68:src/stepper.c ****     
+  69:src/stepper.c ****     /* 简单延时（实际应使用定时器） */
+  70:src/stepper.c ****     /* TODO: 使用精确延时 */
+  71:src/stepper.c ****     volatile int i;
+  58              		.loc 1 71 5 is_stmt 1 view .LVU9
+  72:src/stepper.c ****     for (i = 0; i < 10; i++) {
+  59              		.loc 1 72 5 view .LVU10
+  60              		.loc 1 72 12 is_stmt 0 view .LVU11
+  61 0014 0023     		movs	r3, #0
+  62 0016 0193     		str	r3, [sp, #4]
+  63              		.loc 1 72 17 is_stmt 1 view .LVU12
+  64              		.loc 1 72 19 is_stmt 0 view .LVU13
+  65 0018 019B     		ldr	r3, [sp, #4]
+  66              		.loc 1 72 5 view .LVU14
+  67 001a 092B     		cmp	r3, #9
+  68 001c 05DC     		bgt	.L2
+  69              	.L3:
+  73:src/stepper.c ****         /* 空循环延时 */
+  74:src/stepper.c ****     }
+  70              		.loc 1 74 5 is_stmt 1 view .LVU15
+  72:src/stepper.c ****     for (i = 0; i < 10; i++) {
+  71              		.loc 1 72 25 view .LVU16
+  72:src/stepper.c ****     for (i = 0; i < 10; i++) {
+  72              		.loc 1 72 26 is_stmt 0 view .LVU17
+  73 001e 019B     		ldr	r3, [sp, #4]
+  74 0020 0133     		adds	r3, r3, #1
+  75 0022 0193     		str	r3, [sp, #4]
+  72:src/stepper.c ****     for (i = 0; i < 10; i++) {
+  76              		.loc 1 72 17 is_stmt 1 view .LVU18
+  72:src/stepper.c ****     for (i = 0; i < 10; i++) {
+  77              		.loc 1 72 19 is_stmt 0 view .LVU19
+  78 0024 019B     		ldr	r3, [sp, #4]
+  72:src/stepper.c ****     for (i = 0; i < 10; i++) {
+  79              		.loc 1 72 5 view .LVU20
+  80 0026 092B     		cmp	r3, #9
+  81 0028 F9DD     		ble	.L3
+  82              	.L2:
+  75:src/stepper.c ****     
+  76:src/stepper.c ****     /* 输出低电平 */
+  77:src/stepper.c ****     gpio_out_write(stepper->config.step_pin, !step_value);
+  83              		.loc 1 77 5 is_stmt 1 view .LVU21
+  84 002a 291E     		subs	r1, r5, #0
+  85 002c 2078     		ldrb	r0, [r4]	@ zero_extendqisi2
+  86 002e 18BF     		it	ne
+  87 0030 0121     		movne	r1, #1
+ARM GAS  /tmp/ccnwlPWk.s 			page 4
+
+
+  88 0032 FFF7FEFF 		bl	gpio_out_write
+  89              	.LVL4:
+  78:src/stepper.c ****     
+  79:src/stepper.c ****     /* 更新位置 */
+  80:src/stepper.c ****     if (stepper->dir == STEPPER_DIR_FORWARD) {
+  90              		.loc 1 80 5 view .LVU22
+  91              		.loc 1 80 8 is_stmt 0 view .LVU23
+  92 0036 94F90C30 		ldrsb	r3, [r4, #12]
+  93 003a 23B9     		cbnz	r3, .L4
+  81:src/stepper.c ****         stepper->position++;
+  94              		.loc 1 81 9 is_stmt 1 view .LVU24
+  95              		.loc 1 81 26 is_stmt 0 view .LVU25
+  96 003c A368     		ldr	r3, [r4, #8]
+  97 003e 0133     		adds	r3, r3, #1
+  98 0040 A360     		str	r3, [r4, #8]
+  82:src/stepper.c ****     } else {
+  83:src/stepper.c ****         stepper->position--;
+  84:src/stepper.c ****     }
+  85:src/stepper.c **** }
+  99              		.loc 1 85 1 view .LVU26
+ 100 0042 03B0     		add	sp, sp, #12
+ 101              		.cfi_remember_state
+ 102              		.cfi_def_cfa_offset 12
+ 103              		@ sp needed
+ 104 0044 30BD     		pop	{r4, r5, pc}
+ 105              	.LVL5:
+ 106              	.L4:
+ 107              		.cfi_restore_state
+  83:src/stepper.c ****     }
+ 108              		.loc 1 83 9 is_stmt 1 view .LVU27
+  83:src/stepper.c ****     }
+ 109              		.loc 1 83 26 is_stmt 0 view .LVU28
+ 110 0046 A368     		ldr	r3, [r4, #8]
+ 111 0048 013B     		subs	r3, r3, #1
+ 112 004a A360     		str	r3, [r4, #8]
+ 113              		.loc 1 85 1 view .LVU29
+ 114 004c 03B0     		add	sp, sp, #12
+ 115              		.cfi_def_cfa_offset 12
+ 116              		@ sp needed
+ 117 004e 30BD     		pop	{r4, r5, pc}
+ 118              		.loc 1 85 1 view .LVU30
+ 119              		.cfi_endproc
+ 120              	.LFE13:
+ 122              		.section	.text.stepper_timer_callback,"ax",%progbits
+ 123              		.align	1
+ 124              		.p2align 2,,3
+ 125              		.global	stepper_timer_callback
+ 126              		.syntax unified
+ 127              		.thumb
+ 128              		.thumb_func
+ 129              		.fpu fpv4-sp-d16
+ 131              	stepper_timer_callback:
+ 132              	.LVL6:
+ 133              	.LFB12:
+  86:src/stepper.c **** 
+  87:src/stepper.c **** /* ========== 公共接口实现 ========== */
+  88:src/stepper.c **** 
+ARM GAS  /tmp/ccnwlPWk.s 			page 5
+
+
+  89:src/stepper.c **** /**
+  90:src/stepper.c ****  * @brief  初始化步进电机模块
+  91:src/stepper.c ****  * @retval 0 成功，负数 失败
+  92:src/stepper.c ****  */
+  93:src/stepper.c **** int stepper_init(void)
+  94:src/stepper.c **** {
+  95:src/stepper.c ****     int i;
+  96:src/stepper.c ****     
+  97:src/stepper.c ****     /* 清零所有状态 */
+  98:src/stepper.c ****     for (i = 0; i < STEPPER_COUNT; i++) {
+  99:src/stepper.c ****         s_steppers[i].position = 0;
+ 100:src/stepper.c ****         s_steppers[i].dir = STEPPER_DIR_FORWARD;
+ 101:src/stepper.c ****         s_steppers[i].enabled = 0;
+ 102:src/stepper.c ****         s_steppers[i].configured = 0;
+ 103:src/stepper.c ****         s_steppers[i].interval = 0;
+ 104:src/stepper.c ****         s_steppers[i].count = 0;
+ 105:src/stepper.c ****         s_steppers[i].next_step_time = 0;
+ 106:src/stepper.c ****     }
+ 107:src/stepper.c ****     
+ 108:src/stepper.c ****     /* 初始化定时器 */
+ 109:src/stepper.c ****     s_stepper_timer.func = stepper_timer_callback;
+ 110:src/stepper.c ****     s_stepper_timer.waketime = 0;
+ 111:src/stepper.c ****     s_stepper_timer.next = NULL;
+ 112:src/stepper.c ****     
+ 113:src/stepper.c ****     return 0;
+ 114:src/stepper.c **** }
+ 115:src/stepper.c **** 
+ 116:src/stepper.c **** /**
+ 117:src/stepper.c ****  * @brief  配置单个步进电机
+ 118:src/stepper.c ****  * @param  id 电机 ID
+ 119:src/stepper.c ****  * @param  config 配置参数
+ 120:src/stepper.c ****  * @retval 0 成功，负数 失败
+ 121:src/stepper.c ****  */
+ 122:src/stepper.c **** int stepper_config(stepper_id_t id, const stepper_config_t* config)
+ 123:src/stepper.c **** {
+ 124:src/stepper.c ****     stepper_state_t* stepper;
+ 125:src/stepper.c ****     
+ 126:src/stepper.c ****     if (id >= STEPPER_COUNT || config == NULL) {
+ 127:src/stepper.c ****         return -1;
+ 128:src/stepper.c ****     }
+ 129:src/stepper.c ****     
+ 130:src/stepper.c ****     stepper = &s_steppers[id];
+ 131:src/stepper.c ****     stepper->config = *config;
+ 132:src/stepper.c ****     stepper->configured = 1;
+ 133:src/stepper.c ****     
+ 134:src/stepper.c ****     /* 配置 GPIO 引脚 */
+ 135:src/stepper.c ****     /* TODO: 需要 HAL 层实现 gpio_out_setup() */
+ 136:src/stepper.c ****     extern void gpio_out_setup(uint8_t pin, uint8_t value);
+ 137:src/stepper.c ****     
+ 138:src/stepper.c ****     /* 步进引脚初始化为低电平 */
+ 139:src/stepper.c ****     gpio_out_setup(config->step_pin, config->invert_step ? 1 : 0);
+ 140:src/stepper.c ****     
+ 141:src/stepper.c ****     /* 方向引脚初始化 */
+ 142:src/stepper.c ****     gpio_out_setup(config->dir_pin, config->invert_dir ? 1 : 0);
+ 143:src/stepper.c ****     
+ 144:src/stepper.c ****     /* 使能引脚初始化为禁用状态 */
+ 145:src/stepper.c ****     gpio_out_setup(config->enable_pin, config->invert_enable ? 0 : 1);
+ARM GAS  /tmp/ccnwlPWk.s 			page 6
+
+
+ 146:src/stepper.c ****     
+ 147:src/stepper.c ****     return 0;
+ 148:src/stepper.c **** }
+ 149:src/stepper.c **** 
+ 150:src/stepper.c **** /**
+ 151:src/stepper.c ****  * @brief  使能步进电机
+ 152:src/stepper.c ****  * @param  id 电机 ID
+ 153:src/stepper.c ****  * @param  enable 1 使能，0 禁用
+ 154:src/stepper.c ****  */
+ 155:src/stepper.c **** void stepper_enable(stepper_id_t id, int enable)
+ 156:src/stepper.c **** {
+ 157:src/stepper.c ****     stepper_state_t* stepper;
+ 158:src/stepper.c ****     uint8_t pin_value;
+ 159:src/stepper.c ****     
+ 160:src/stepper.c ****     if (id >= STEPPER_COUNT) {
+ 161:src/stepper.c ****         return;
+ 162:src/stepper.c ****     }
+ 163:src/stepper.c ****     
+ 164:src/stepper.c ****     stepper = &s_steppers[id];
+ 165:src/stepper.c ****     if (!stepper->configured) {
+ 166:src/stepper.c ****         return;
+ 167:src/stepper.c ****     }
+ 168:src/stepper.c ****     
+ 169:src/stepper.c ****     stepper->enabled = enable ? 1 : 0;
+ 170:src/stepper.c ****     
+ 171:src/stepper.c ****     /* 计算使能引脚电平 */
+ 172:src/stepper.c ****     pin_value = enable ? 0 : 1;
+ 173:src/stepper.c ****     if (stepper->config.invert_enable) {
+ 174:src/stepper.c ****         pin_value = !pin_value;
+ 175:src/stepper.c ****     }
+ 176:src/stepper.c ****     
+ 177:src/stepper.c ****     gpio_out_write(stepper->config.enable_pin, pin_value);
+ 178:src/stepper.c **** }
+ 179:src/stepper.c **** 
+ 180:src/stepper.c **** /**
+ 181:src/stepper.c ****  * @brief  设置步进方向
+ 182:src/stepper.c ****  * @param  id 电机 ID
+ 183:src/stepper.c ****  * @param  dir 方向
+ 184:src/stepper.c ****  */
+ 185:src/stepper.c **** void stepper_set_dir(stepper_id_t id, stepper_dir_t dir)
+ 186:src/stepper.c **** {
+ 187:src/stepper.c ****     stepper_state_t* stepper;
+ 188:src/stepper.c ****     uint8_t pin_value;
+ 189:src/stepper.c ****     
+ 190:src/stepper.c ****     if (id >= STEPPER_COUNT) {
+ 191:src/stepper.c ****         return;
+ 192:src/stepper.c ****     }
+ 193:src/stepper.c ****     
+ 194:src/stepper.c ****     stepper = &s_steppers[id];
+ 195:src/stepper.c ****     if (!stepper->configured) {
+ 196:src/stepper.c ****         return;
+ 197:src/stepper.c ****     }
+ 198:src/stepper.c ****     
+ 199:src/stepper.c ****     stepper->dir = dir;
+ 200:src/stepper.c ****     
+ 201:src/stepper.c ****     /* 计算方向引脚电平 */
+ 202:src/stepper.c ****     pin_value = (dir == STEPPER_DIR_FORWARD) ? 0 : 1;
+ARM GAS  /tmp/ccnwlPWk.s 			page 7
+
+
+ 203:src/stepper.c ****     if (stepper->config.invert_dir) {
+ 204:src/stepper.c ****         pin_value = !pin_value;
+ 205:src/stepper.c ****     }
+ 206:src/stepper.c ****     
+ 207:src/stepper.c ****     gpio_out_write(stepper->config.dir_pin, pin_value);
+ 208:src/stepper.c **** }
+ 209:src/stepper.c **** 
+ 210:src/stepper.c **** /**
+ 211:src/stepper.c ****  * @brief  产生一个步进脉冲
+ 212:src/stepper.c ****  * @param  id 电机 ID
+ 213:src/stepper.c ****  */
+ 214:src/stepper.c **** void stepper_step(stepper_id_t id)
+ 215:src/stepper.c **** {
+ 216:src/stepper.c ****     if (id >= STEPPER_COUNT) {
+ 217:src/stepper.c ****         return;
+ 218:src/stepper.c ****     }
+ 219:src/stepper.c ****     
+ 220:src/stepper.c ****     stepper_do_step(&s_steppers[id]);
+ 221:src/stepper.c **** }
+ 222:src/stepper.c **** 
+ 223:src/stepper.c **** /**
+ 224:src/stepper.c ****  * @brief  获取当前位置（步数）
+ 225:src/stepper.c ****  * @param  id 电机 ID
+ 226:src/stepper.c ****  * @retval 当前位置
+ 227:src/stepper.c ****  */
+ 228:src/stepper.c **** int32_t stepper_get_position(stepper_id_t id)
+ 229:src/stepper.c **** {
+ 230:src/stepper.c ****     if (id >= STEPPER_COUNT) {
+ 231:src/stepper.c ****         return 0;
+ 232:src/stepper.c ****     }
+ 233:src/stepper.c ****     
+ 234:src/stepper.c ****     return s_steppers[id].position;
+ 235:src/stepper.c **** }
+ 236:src/stepper.c **** 
+ 237:src/stepper.c **** /**
+ 238:src/stepper.c ****  * @brief  设置当前位置（步数）
+ 239:src/stepper.c ****  * @param  id 电机 ID
+ 240:src/stepper.c ****  * @param  position 位置值
+ 241:src/stepper.c ****  */
+ 242:src/stepper.c **** void stepper_set_position(stepper_id_t id, int32_t position)
+ 243:src/stepper.c **** {
+ 244:src/stepper.c ****     if (id >= STEPPER_COUNT) {
+ 245:src/stepper.c ****         return;
+ 246:src/stepper.c ****     }
+ 247:src/stepper.c ****     
+ 248:src/stepper.c ****     s_steppers[id].position = position;
+ 249:src/stepper.c **** }
+ 250:src/stepper.c **** 
+ 251:src/stepper.c **** /**
+ 252:src/stepper.c ****  * @brief  添加步进运动
+ 253:src/stepper.c ****  * @param  id 电机 ID
+ 254:src/stepper.c ****  * @param  move 运动参数
+ 255:src/stepper.c ****  * @retval 0 成功，负数 失败
+ 256:src/stepper.c ****  */
+ 257:src/stepper.c **** int stepper_add_move(stepper_id_t id, const stepper_move_t* move)
+ 258:src/stepper.c **** {
+ 259:src/stepper.c ****     stepper_state_t* stepper;
+ARM GAS  /tmp/ccnwlPWk.s 			page 8
+
+
+ 260:src/stepper.c ****     
+ 261:src/stepper.c ****     if (id >= STEPPER_COUNT || move == NULL) {
+ 262:src/stepper.c ****         return -1;
+ 263:src/stepper.c ****     }
+ 264:src/stepper.c ****     
+ 265:src/stepper.c ****     stepper = &s_steppers[id];
+ 266:src/stepper.c ****     if (!stepper->configured) {
+ 267:src/stepper.c ****         return -2;
+ 268:src/stepper.c ****     }
+ 269:src/stepper.c ****     
+ 270:src/stepper.c ****     /* 设置运动参数 */
+ 271:src/stepper.c ****     stepper->interval = move->interval;
+ 272:src/stepper.c ****     stepper->count = move->count;
+ 273:src/stepper.c ****     
+ 274:src/stepper.c ****     /* 设置方向 */
+ 275:src/stepper.c ****     if (move->dir >= 0) {
+ 276:src/stepper.c ****         stepper_set_dir(id, STEPPER_DIR_FORWARD);
+ 277:src/stepper.c ****     } else {
+ 278:src/stepper.c ****         stepper_set_dir(id, STEPPER_DIR_BACKWARD);
+ 279:src/stepper.c ****     }
+ 280:src/stepper.c ****     
+ 281:src/stepper.c ****     /* 设置下次步进时间 */
+ 282:src/stepper.c ****     stepper->next_step_time = sched_get_time() + stepper->interval;
+ 283:src/stepper.c ****     
+ 284:src/stepper.c ****     /* 添加定时器 */
+ 285:src/stepper.c ****     s_stepper_timer.waketime = stepper->next_step_time;
+ 286:src/stepper.c ****     sched_add_timer(&s_stepper_timer);
+ 287:src/stepper.c ****     
+ 288:src/stepper.c ****     return 0;
+ 289:src/stepper.c **** }
+ 290:src/stepper.c **** 
+ 291:src/stepper.c **** /**
+ 292:src/stepper.c ****  * @brief  停止步进电机
+ 293:src/stepper.c ****  * @param  id 电机 ID
+ 294:src/stepper.c ****  */
+ 295:src/stepper.c **** void stepper_stop(stepper_id_t id)
+ 296:src/stepper.c **** {
+ 297:src/stepper.c ****     if (id >= STEPPER_COUNT) {
+ 298:src/stepper.c ****         return;
+ 299:src/stepper.c ****     }
+ 300:src/stepper.c ****     
+ 301:src/stepper.c ****     s_steppers[id].count = 0;
+ 302:src/stepper.c ****     s_steppers[id].interval = 0;
+ 303:src/stepper.c **** }
+ 304:src/stepper.c **** 
+ 305:src/stepper.c **** /**
+ 306:src/stepper.c ****  * @brief  停止所有步进电机
+ 307:src/stepper.c ****  */
+ 308:src/stepper.c **** void stepper_stop_all(void)
+ 309:src/stepper.c **** {
+ 310:src/stepper.c ****     int i;
+ 311:src/stepper.c ****     
+ 312:src/stepper.c ****     for (i = 0; i < STEPPER_COUNT; i++) {
+ 313:src/stepper.c ****         stepper_stop((stepper_id_t)i);
+ 314:src/stepper.c ****     }
+ 315:src/stepper.c ****     
+ 316:src/stepper.c ****     /* 移除定时器 */
+ARM GAS  /tmp/ccnwlPWk.s 			page 9
+
+
+ 317:src/stepper.c ****     sched_del_timer(&s_stepper_timer);
+ 318:src/stepper.c **** }
+ 319:src/stepper.c **** 
+ 320:src/stepper.c **** /**
+ 321:src/stepper.c ****  * @brief  检查步进电机是否在运动
+ 322:src/stepper.c ****  * @param  id 电机 ID
+ 323:src/stepper.c ****  * @retval 1 运动中，0 停止
+ 324:src/stepper.c ****  */
+ 325:src/stepper.c **** int stepper_is_moving(stepper_id_t id)
+ 326:src/stepper.c **** {
+ 327:src/stepper.c ****     if (id >= STEPPER_COUNT) {
+ 328:src/stepper.c ****         return 0;
+ 329:src/stepper.c ****     }
+ 330:src/stepper.c ****     
+ 331:src/stepper.c ****     return s_steppers[id].count > 0 ? 1 : 0;
+ 332:src/stepper.c **** }
+ 333:src/stepper.c **** 
+ 334:src/stepper.c **** /**
+ 335:src/stepper.c ****  * @brief  步进电机定时器回调
+ 336:src/stepper.c ****  * @param  waketime 唤醒时间
+ 337:src/stepper.c ****  * @retval 下次唤醒时间，0 表示不再调度
+ 338:src/stepper.c ****  */
+ 339:src/stepper.c **** sched_time_t stepper_timer_callback(sched_time_t waketime)
+ 340:src/stepper.c **** {
+ 134              		.loc 1 340 1 is_stmt 1 view -0
+ 135              		.cfi_startproc
+ 136              		@ args = 0, pretend = 0, frame = 0
+ 137              		@ frame_needed = 0, uses_anonymous_args = 0
+ 341:src/stepper.c ****     int i;
+ 138              		.loc 1 341 5 view .LVU32
+ 342:src/stepper.c ****     sched_time_t next_time = 0;
+ 139              		.loc 1 342 5 view .LVU33
+ 343:src/stepper.c ****     sched_time_t min_next_time = 0;
+ 140              		.loc 1 343 5 view .LVU34
+ 344:src/stepper.c ****     int has_active = 0;
+ 141              		.loc 1 344 5 view .LVU35
+ 345:src/stepper.c ****     
+ 346:src/stepper.c ****     (void)waketime;
+ 142              		.loc 1 346 5 view .LVU36
+ 347:src/stepper.c ****     
+ 348:src/stepper.c ****     /* 遍历所有步进电机 */
+ 349:src/stepper.c ****     for (i = 0; i < STEPPER_COUNT; i++) {
+ 143              		.loc 1 349 5 view .LVU37
+ 144              		.loc 1 349 17 view .LVU38
+ 340:src/stepper.c ****     int i;
+ 145              		.loc 1 340 1 is_stmt 0 view .LVU39
+ 146 0000 2DE9F041 		push	{r4, r5, r6, r7, r8, lr}
+ 147              		.cfi_def_cfa_offset 24
+ 148              		.cfi_offset 4, -24
+ 149              		.cfi_offset 5, -20
+ 150              		.cfi_offset 6, -16
+ 151              		.cfi_offset 7, -12
+ 152              		.cfi_offset 8, -8
+ 153              		.cfi_offset 14, -4
+ 154 0004 1E4C     		ldr	r4, .L38
+ 344:src/stepper.c ****     
+ 155              		.loc 1 344 9 view .LVU40
+ARM GAS  /tmp/ccnwlPWk.s 			page 10
+
+
+ 156 0006 0026     		movs	r6, #0
+ 157 0008 04F17005 		add	r5, r4, #112
+ 343:src/stepper.c ****     int has_active = 0;
+ 158              		.loc 1 343 18 view .LVU41
+ 159 000c 3746     		mov	r7, r6
+ 160              	.LVL7:
+ 161              	.L14:
+ 162              	.LBB11:
+ 350:src/stepper.c ****         stepper_state_t* stepper = &s_steppers[i];
+ 163              		.loc 1 350 9 is_stmt 1 view .LVU42
+ 351:src/stepper.c ****         
+ 352:src/stepper.c ****         if (stepper->count == 0) {
+ 164              		.loc 1 352 9 view .LVU43
+ 165              		.loc 1 352 12 is_stmt 0 view .LVU44
+ 166 000e 6369     		ldr	r3, [r4, #20]
+ 167 0010 53B1     		cbz	r3, .L10
+ 353:src/stepper.c ****             continue;
+ 354:src/stepper.c ****         }
+ 355:src/stepper.c ****         
+ 356:src/stepper.c ****         /* 检查是否到达步进时间 */
+ 357:src/stepper.c ****         if (sched_is_before(stepper->next_step_time)) {
+ 168              		.loc 1 357 9 is_stmt 1 view .LVU45
+ 169              		.loc 1 357 13 is_stmt 0 view .LVU46
+ 170 0012 A069     		ldr	r0, [r4, #24]
+ 171 0014 FFF7FEFF 		bl	sched_is_before
+ 172              	.LVL8:
+ 173              		.loc 1 357 12 view .LVU47
+ 174 0018 78B9     		cbnz	r0, .L34
+ 358:src/stepper.c ****             /* 执行步进 */
+ 359:src/stepper.c ****             stepper_do_step(stepper);
+ 360:src/stepper.c ****             stepper->count--;
+ 361:src/stepper.c ****             
+ 362:src/stepper.c ****             if (stepper->count > 0) {
+ 363:src/stepper.c ****                 stepper->next_step_time += stepper->interval;
+ 364:src/stepper.c ****             }
+ 365:src/stepper.c ****         }
+ 366:src/stepper.c ****         
+ 367:src/stepper.c ****         /* 计算下次唤醒时间 */
+ 368:src/stepper.c ****         if (stepper->count > 0) {
+ 175              		.loc 1 368 9 is_stmt 1 view .LVU48
+ 176              		.loc 1 368 12 is_stmt 0 view .LVU49
+ 177 001a 6369     		ldr	r3, [r4, #20]
+ 178 001c 23B1     		cbz	r3, .L10
+ 369:src/stepper.c ****             next_time = stepper->next_step_time;
+ 179              		.loc 1 369 13 is_stmt 1 view .LVU50
+ 370:src/stepper.c ****             if (!has_active || sched_time_diff(next_time, min_next_time) < 0) {
+ 180              		.loc 1 370 13 view .LVU51
+ 369:src/stepper.c ****             next_time = stepper->next_step_time;
+ 181              		.loc 1 369 23 is_stmt 0 view .LVU52
+ 182 001e D4F81880 		ldr	r8, [r4, #24]
+ 183              		.loc 1 370 16 view .LVU53
+ 184 0022 DEB9     		cbnz	r6, .L35
+ 185              	.L16:
+ 371:src/stepper.c ****                 min_next_time = next_time;
+ 186              		.loc 1 371 31 view .LVU54
+ 187 0024 4746     		mov	r7, r8
+ 188              	.LVL9:
+ARM GAS  /tmp/ccnwlPWk.s 			page 11
+
+
+ 372:src/stepper.c ****             }
+ 373:src/stepper.c ****             has_active = 1;
+ 189              		.loc 1 373 24 view .LVU55
+ 190 0026 0126     		movs	r6, #1
+ 191              	.LVL10:
+ 192              	.L10:
+ 193              		.loc 1 373 24 view .LVU56
+ 194              	.LBE11:
+ 349:src/stepper.c ****         stepper_state_t* stepper = &s_steppers[i];
+ 195              		.loc 1 349 36 is_stmt 1 discriminator 2 view .LVU57
+ 349:src/stepper.c ****         stepper_state_t* stepper = &s_steppers[i];
+ 196              		.loc 1 349 17 discriminator 2 view .LVU58
+ 349:src/stepper.c ****         stepper_state_t* stepper = &s_steppers[i];
+ 197              		.loc 1 349 5 is_stmt 0 discriminator 2 view .LVU59
+ 198 0028 1C34     		adds	r4, r4, #28
+ 199 002a AC42     		cmp	r4, r5
+ 200 002c EFD1     		bne	.L14
+ 374:src/stepper.c ****         }
+ 375:src/stepper.c ****     }
+ 376:src/stepper.c ****     
+ 377:src/stepper.c ****     return has_active ? min_next_time : 0;
+ 201              		.loc 1 377 5 is_stmt 1 view .LVU60
+ 202              		.loc 1 377 39 is_stmt 0 view .LVU61
+ 203 002e 002E     		cmp	r6, #0
+ 378:src/stepper.c **** }
+ 204              		.loc 1 378 1 view .LVU62
+ 205 0030 14BF     		ite	ne
+ 206 0032 3846     		movne	r0, r7
+ 207 0034 0020     		moveq	r0, #0
+ 208 0036 BDE8F081 		pop	{r4, r5, r6, r7, r8, pc}
+ 209              	.LVL11:
+ 210              	.L34:
+ 211              	.LBB16:
+ 359:src/stepper.c ****             stepper->count--;
+ 212              		.loc 1 359 13 is_stmt 1 view .LVU63
+ 213              	.LBB12:
+ 214              	.LBI12:
+  55:src/stepper.c **** {
+ 215              		.loc 1 55 13 view .LVU64
+ 216              	.LBB13:
+  57:src/stepper.c ****     
+ 217              		.loc 1 57 5 view .LVU65
+  59:src/stepper.c ****         return;
+ 218              		.loc 1 59 5 view .LVU66
+  59:src/stepper.c ****         return;
+ 219              		.loc 1 59 25 is_stmt 0 view .LVU67
+ 220 003a A37B     		ldrb	r3, [r4, #14]	@ zero_extendqisi2
+ 221 003c 0BB1     		cbz	r3, .L12
+  59:src/stepper.c ****         return;
+ 222              		.loc 1 59 49 view .LVU68
+ 223 003e 637B     		ldrb	r3, [r4, #13]	@ zero_extendqisi2
+ 224 0040 ABB9     		cbnz	r3, .L36
+ 225              	.L12:
+  59:src/stepper.c ****         return;
+ 226              		.loc 1 59 49 view .LVU69
+ 227              	.LBE13:
+ 228              	.LBE12:
+ARM GAS  /tmp/ccnwlPWk.s 			page 12
+
+
+ 360:src/stepper.c ****             
+ 229              		.loc 1 360 13 is_stmt 1 view .LVU70
+ 360:src/stepper.c ****             
+ 230              		.loc 1 360 27 is_stmt 0 view .LVU71
+ 231 0042 6369     		ldr	r3, [r4, #20]
+ 232 0044 013B     		subs	r3, r3, #1
+ 233 0046 6361     		str	r3, [r4, #20]
+ 362:src/stepper.c ****                 stepper->next_step_time += stepper->interval;
+ 234              		.loc 1 362 13 is_stmt 1 view .LVU72
+ 362:src/stepper.c ****                 stepper->next_step_time += stepper->interval;
+ 235              		.loc 1 362 16 is_stmt 0 view .LVU73
+ 236 0048 002B     		cmp	r3, #0
+ 237 004a EDD0     		beq	.L10
+ 238              	.L37:
+ 363:src/stepper.c ****             }
+ 239              		.loc 1 363 17 is_stmt 1 view .LVU74
+ 363:src/stepper.c ****             }
+ 240              		.loc 1 363 41 is_stmt 0 view .LVU75
+ 241 004c A369     		ldr	r3, [r4, #24]
+ 242 004e 2269     		ldr	r2, [r4, #16]
+ 243 0050 03EB0208 		add	r8, r3, r2
+ 244 0054 C4F81880 		str	r8, [r4, #24]
+ 368:src/stepper.c ****             next_time = stepper->next_step_time;
+ 245              		.loc 1 368 9 is_stmt 1 view .LVU76
+ 369:src/stepper.c ****             if (!has_active || sched_time_diff(next_time, min_next_time) < 0) {
+ 246              		.loc 1 369 13 view .LVU77
+ 370:src/stepper.c ****                 min_next_time = next_time;
+ 247              		.loc 1 370 13 view .LVU78
+ 370:src/stepper.c ****                 min_next_time = next_time;
+ 248              		.loc 1 370 16 is_stmt 0 view .LVU79
+ 249 0058 002E     		cmp	r6, #0
+ 250 005a E3D0     		beq	.L16
+ 251              	.L35:
+ 370:src/stepper.c ****                 min_next_time = next_time;
+ 252              		.loc 1 370 32 discriminator 1 view .LVU80
+ 253 005c 3946     		mov	r1, r7
+ 254 005e 4046     		mov	r0, r8
+ 255 0060 FFF7FEFF 		bl	sched_time_diff
+ 256              	.LVL12:
+ 371:src/stepper.c ****             }
+ 257              		.loc 1 371 31 discriminator 1 view .LVU81
+ 258 0064 37EA2007 		bics	r7, r7, r0, asr #32
+ 259 0068 28BF     		it	cs
+ 260 006a 4746     		movcs	r7, r8
+ 261              	.LVL13:
+ 371:src/stepper.c ****             }
+ 262              		.loc 1 371 31 discriminator 1 view .LVU82
+ 263 006c DCE7     		b	.L10
+ 264              	.LVL14:
+ 265              	.L36:
+ 266              	.LBB15:
+ 267              	.LBB14:
+ 371:src/stepper.c ****             }
+ 268              		.loc 1 371 31 discriminator 1 view .LVU83
+ 269 006e 2046     		mov	r0, r4
+ 270 0070 FFF7FEFF 		bl	stepper_do_step.part.0
+ 271              	.LVL15:
+ARM GAS  /tmp/ccnwlPWk.s 			page 13
+
+
+ 371:src/stepper.c ****             }
+ 272              		.loc 1 371 31 discriminator 1 view .LVU84
+ 273              	.LBE14:
+ 274              	.LBE15:
+ 360:src/stepper.c ****             
+ 275              		.loc 1 360 13 is_stmt 1 view .LVU85
+ 360:src/stepper.c ****             
+ 276              		.loc 1 360 27 is_stmt 0 view .LVU86
+ 277 0074 6369     		ldr	r3, [r4, #20]
+ 278 0076 013B     		subs	r3, r3, #1
+ 279 0078 6361     		str	r3, [r4, #20]
+ 362:src/stepper.c ****                 stepper->next_step_time += stepper->interval;
+ 280              		.loc 1 362 13 is_stmt 1 view .LVU87
+ 362:src/stepper.c ****                 stepper->next_step_time += stepper->interval;
+ 281              		.loc 1 362 16 is_stmt 0 view .LVU88
+ 282 007a 002B     		cmp	r3, #0
+ 283 007c D4D0     		beq	.L10
+ 284 007e E5E7     		b	.L37
+ 285              	.L39:
+ 286              		.align	2
+ 287              	.L38:
+ 288 0080 00000000 		.word	.LANCHOR0
+ 289              	.LBE16:
+ 290              		.cfi_endproc
+ 291              	.LFE12:
+ 293              		.section	.text.stepper_init,"ax",%progbits
+ 294              		.align	1
+ 295              		.p2align 2,,3
+ 296              		.global	stepper_init
+ 297              		.syntax unified
+ 298              		.thumb
+ 299              		.thumb_func
+ 300              		.fpu fpv4-sp-d16
+ 302              	stepper_init:
+ 303              	.LFB1:
+  94:src/stepper.c ****     int i;
+ 304              		.loc 1 94 1 is_stmt 1 view -0
+ 305              		.cfi_startproc
+ 306              		@ args = 0, pretend = 0, frame = 0
+ 307              		@ frame_needed = 0, uses_anonymous_args = 0
+ 308              		@ link register save eliminated.
+  95:src/stepper.c ****     
+ 309              		.loc 1 95 5 view .LVU90
+  98:src/stepper.c ****         s_steppers[i].position = 0;
+ 310              		.loc 1 98 5 view .LVU91
+ 311              	.LVL16:
+  98:src/stepper.c ****         s_steppers[i].position = 0;
+ 312              		.loc 1 98 17 view .LVU92
+ 313 0000 0A4B     		ldr	r3, .L43
+  99:src/stepper.c ****         s_steppers[i].dir = STEPPER_DIR_FORWARD;
+ 314              		.loc 1 99 32 is_stmt 0 view .LVU93
+ 315 0002 0022     		movs	r2, #0
+ 316 0004 03F17001 		add	r1, r3, #112
+ 317              	.LVL17:
+ 318              	.L41:
+  99:src/stepper.c ****         s_steppers[i].dir = STEPPER_DIR_FORWARD;
+ 319              		.loc 1 99 9 is_stmt 1 discriminator 3 view .LVU94
+ARM GAS  /tmp/ccnwlPWk.s 			page 14
+
+
+  99:src/stepper.c ****         s_steppers[i].dir = STEPPER_DIR_FORWARD;
+ 320              		.loc 1 99 32 is_stmt 0 discriminator 3 view .LVU95
+ 321 0008 9A60     		str	r2, [r3, #8]
+ 100:src/stepper.c ****         s_steppers[i].enabled = 0;
+ 322              		.loc 1 100 9 is_stmt 1 discriminator 3 view .LVU96
+ 100:src/stepper.c ****         s_steppers[i].enabled = 0;
+ 323              		.loc 1 100 27 is_stmt 0 discriminator 3 view .LVU97
+ 324 000a 1A73     		strb	r2, [r3, #12]
+ 101:src/stepper.c ****         s_steppers[i].configured = 0;
+ 325              		.loc 1 101 9 is_stmt 1 discriminator 3 view .LVU98
+ 101:src/stepper.c ****         s_steppers[i].configured = 0;
+ 326              		.loc 1 101 31 is_stmt 0 discriminator 3 view .LVU99
+ 327 000c 5A73     		strb	r2, [r3, #13]
+ 102:src/stepper.c ****         s_steppers[i].interval = 0;
+ 328              		.loc 1 102 9 is_stmt 1 discriminator 3 view .LVU100
+ 102:src/stepper.c ****         s_steppers[i].interval = 0;
+ 329              		.loc 1 102 34 is_stmt 0 discriminator 3 view .LVU101
+ 330 000e 9A73     		strb	r2, [r3, #14]
+ 103:src/stepper.c ****         s_steppers[i].count = 0;
+ 331              		.loc 1 103 9 is_stmt 1 discriminator 3 view .LVU102
+ 105:src/stepper.c ****     }
+ 332              		.loc 1 105 38 is_stmt 0 discriminator 3 view .LVU103
+ 333 0010 9A61     		str	r2, [r3, #24]
+ 104:src/stepper.c ****         s_steppers[i].next_step_time = 0;
+ 334              		.loc 1 104 29 discriminator 3 view .LVU104
+ 335 0012 C3E90422 		strd	r2, r2, [r3, #16]
+ 105:src/stepper.c ****     }
+ 336              		.loc 1 105 9 is_stmt 1 discriminator 3 view .LVU105
+  98:src/stepper.c ****         s_steppers[i].position = 0;
+ 337              		.loc 1 98 36 discriminator 3 view .LVU106
+  98:src/stepper.c ****         s_steppers[i].position = 0;
+ 338              		.loc 1 98 17 discriminator 3 view .LVU107
+  98:src/stepper.c ****         s_steppers[i].position = 0;
+ 339              		.loc 1 98 5 is_stmt 0 discriminator 3 view .LVU108
+ 340 0016 1C33     		adds	r3, r3, #28
+ 341 0018 8B42     		cmp	r3, r1
+ 342 001a F5D1     		bne	.L41
+ 109:src/stepper.c ****     s_stepper_timer.waketime = 0;
+ 343              		.loc 1 109 5 is_stmt 1 view .LVU109
+ 109:src/stepper.c ****     s_stepper_timer.waketime = 0;
+ 344              		.loc 1 109 26 is_stmt 0 view .LVU110
+ 345 001c 044B     		ldr	r3, .L43+4
+ 346 001e 0549     		ldr	r1, .L43+8
+ 111:src/stepper.c ****     
+ 347              		.loc 1 111 26 view .LVU111
+ 348 0020 1A60     		str	r2, [r3]
+ 110:src/stepper.c ****     s_stepper_timer.next = NULL;
+ 349              		.loc 1 110 30 view .LVU112
+ 350 0022 C3E90121 		strd	r2, r1, [r3, #4]
+ 111:src/stepper.c ****     
+ 351              		.loc 1 111 5 is_stmt 1 view .LVU113
+ 113:src/stepper.c **** }
+ 352              		.loc 1 113 5 view .LVU114
+ 114:src/stepper.c **** 
+ 353              		.loc 1 114 1 is_stmt 0 view .LVU115
+ 354 0026 0020     		movs	r0, #0
+ 355 0028 7047     		bx	lr
+ARM GAS  /tmp/ccnwlPWk.s 			page 15
+
+
+ 356              	.L44:
+ 357 002a 00BF     		.align	2
+ 358              	.L43:
+ 359 002c 00000000 		.word	.LANCHOR0
+ 360 0030 00000000 		.word	.LANCHOR1
+ 361 0034 00000000 		.word	stepper_timer_callback
+ 362              		.cfi_endproc
+ 363              	.LFE1:
+ 365              		.section	.text.stepper_config,"ax",%progbits
+ 366              		.align	1
+ 367              		.p2align 2,,3
+ 368              		.global	stepper_config
+ 369              		.syntax unified
+ 370              		.thumb
+ 371              		.thumb_func
+ 372              		.fpu fpv4-sp-d16
+ 374              	stepper_config:
+ 375              	.LVL18:
+ 376              	.LFB2:
+ 123:src/stepper.c ****     stepper_state_t* stepper;
+ 377              		.loc 1 123 1 is_stmt 1 view -0
+ 378              		.cfi_startproc
+ 379              		@ args = 0, pretend = 0, frame = 0
+ 380              		@ frame_needed = 0, uses_anonymous_args = 0
+ 124:src/stepper.c ****     
+ 381              		.loc 1 124 5 view .LVU117
+ 126:src/stepper.c ****         return -1;
+ 382              		.loc 1 126 5 view .LVU118
+ 126:src/stepper.c ****         return -1;
+ 383              		.loc 1 126 8 is_stmt 0 view .LVU119
+ 384 0000 0328     		cmp	r0, #3
+ 385 0002 25D8     		bhi	.L47
+ 123:src/stepper.c ****     stepper_state_t* stepper;
+ 386              		.loc 1 123 1 discriminator 1 view .LVU120
+ 387 0004 10B5     		push	{r4, lr}
+ 388              		.cfi_def_cfa_offset 8
+ 389              		.cfi_offset 4, -8
+ 390              		.cfi_offset 14, -4
+ 391 0006 0C46     		mov	r4, r1
+ 126:src/stepper.c ****         return -1;
+ 392              		.loc 1 126 29 discriminator 1 view .LVU121
+ 393 0008 29B3     		cbz	r1, .L48
+ 130:src/stepper.c ****     stepper->config = *config;
+ 394              		.loc 1 130 5 is_stmt 1 view .LVU122
+ 395              	.LVL19:
+ 131:src/stepper.c ****     stepper->configured = 1;
+ 396              		.loc 1 131 5 view .LVU123
+ 131:src/stepper.c ****     stepper->configured = 1;
+ 397              		.loc 1 131 21 is_stmt 0 view .LVU124
+ 398 000a C0EBC003 		rsb	r3, r0, r0, lsl #3
+ 399 000e 134A     		ldr	r2, .L53
+ 400 0010 0868     		ldr	r0, [r1]	@ unaligned
+ 401              	.LVL20:
+ 131:src/stepper.c ****     stepper->configured = 1;
+ 402              		.loc 1 131 21 view .LVU125
+ 403 0012 42F82300 		str	r0, [r2, r3, lsl #2]
+ 404 0016 02EB8300 		add	r0, r2, r3, lsl #2
+ARM GAS  /tmp/ccnwlPWk.s 			page 16
+
+
+ 405 001a 8A88     		ldrh	r2, [r1, #4]	@ unaligned
+ 406 001c 8280     		strh	r2, [r0, #4]	@ unaligned
+ 132:src/stepper.c ****     
+ 407              		.loc 1 132 5 is_stmt 1 view .LVU126
+ 132:src/stepper.c ****     
+ 408              		.loc 1 132 25 is_stmt 0 view .LVU127
+ 409 001e 0123     		movs	r3, #1
+ 410 0020 8373     		strb	r3, [r0, #14]
+ 136:src/stepper.c ****     
+ 411              		.loc 1 136 5 is_stmt 1 view .LVU128
+ 139:src/stepper.c ****     
+ 412              		.loc 1 139 5 view .LVU129
+ 413 0022 C978     		ldrb	r1, [r1, #3]	@ zero_extendqisi2
+ 414              	.LVL21:
+ 139:src/stepper.c ****     
+ 415              		.loc 1 139 5 is_stmt 0 view .LVU130
+ 416 0024 2078     		ldrb	r0, [r4]	@ zero_extendqisi2
+ 417 0026 0039     		subs	r1, r1, #0
+ 418 0028 18BF     		it	ne
+ 419 002a 0121     		movne	r1, #1
+ 420 002c FFF7FEFF 		bl	gpio_out_setup
+ 421              	.LVL22:
+ 142:src/stepper.c ****     
+ 422              		.loc 1 142 5 is_stmt 1 view .LVU131
+ 423 0030 2179     		ldrb	r1, [r4, #4]	@ zero_extendqisi2
+ 424 0032 6078     		ldrb	r0, [r4, #1]	@ zero_extendqisi2
+ 425 0034 0039     		subs	r1, r1, #0
+ 426 0036 18BF     		it	ne
+ 427 0038 0121     		movne	r1, #1
+ 428 003a FFF7FEFF 		bl	gpio_out_setup
+ 429              	.LVL23:
+ 145:src/stepper.c ****     
+ 430              		.loc 1 145 5 view .LVU132
+ 431 003e 6179     		ldrb	r1, [r4, #5]	@ zero_extendqisi2
+ 432 0040 A078     		ldrb	r0, [r4, #2]	@ zero_extendqisi2
+ 433 0042 B1FA81F1 		clz	r1, r1
+ 434 0046 4909     		lsrs	r1, r1, #5
+ 435 0048 FFF7FEFF 		bl	gpio_out_setup
+ 436              	.LVL24:
+ 147:src/stepper.c **** }
+ 437              		.loc 1 147 5 view .LVU133
+ 147:src/stepper.c **** }
+ 438              		.loc 1 147 12 is_stmt 0 view .LVU134
+ 439 004c 0020     		movs	r0, #0
+ 148:src/stepper.c **** 
+ 440              		.loc 1 148 1 view .LVU135
+ 441 004e 10BD     		pop	{r4, pc}
+ 442              	.LVL25:
+ 443              	.L47:
+ 444              		.cfi_def_cfa_offset 0
+ 445              		.cfi_restore 4
+ 446              		.cfi_restore 14
+ 127:src/stepper.c ****     }
+ 447              		.loc 1 127 16 view .LVU136
+ 448 0050 4FF0FF30 		mov	r0, #-1
+ 449              	.LVL26:
+ 148:src/stepper.c **** 
+ARM GAS  /tmp/ccnwlPWk.s 			page 17
+
+
+ 450              		.loc 1 148 1 view .LVU137
+ 451 0054 7047     		bx	lr
+ 452              	.LVL27:
+ 453              	.L48:
+ 454              		.cfi_def_cfa_offset 8
+ 455              		.cfi_offset 4, -8
+ 456              		.cfi_offset 14, -4
+ 127:src/stepper.c ****     }
+ 457              		.loc 1 127 16 view .LVU138
+ 458 0056 4FF0FF30 		mov	r0, #-1
+ 459              	.LVL28:
+ 148:src/stepper.c **** 
+ 460              		.loc 1 148 1 view .LVU139
+ 461 005a 10BD     		pop	{r4, pc}
+ 462              	.L54:
+ 463              		.align	2
+ 464              	.L53:
+ 465 005c 00000000 		.word	.LANCHOR0
+ 466              		.cfi_endproc
+ 467              	.LFE2:
+ 469              		.section	.text.stepper_enable,"ax",%progbits
+ 470              		.align	1
+ 471              		.p2align 2,,3
+ 472              		.global	stepper_enable
+ 473              		.syntax unified
+ 474              		.thumb
+ 475              		.thumb_func
+ 476              		.fpu fpv4-sp-d16
+ 478              	stepper_enable:
+ 479              	.LVL29:
+ 480              	.LFB3:
+ 156:src/stepper.c ****     stepper_state_t* stepper;
+ 481              		.loc 1 156 1 is_stmt 1 view -0
+ 482              		.cfi_startproc
+ 483              		@ args = 0, pretend = 0, frame = 0
+ 484              		@ frame_needed = 0, uses_anonymous_args = 0
+ 157:src/stepper.c ****     uint8_t pin_value;
+ 485              		.loc 1 157 5 view .LVU141
+ 158:src/stepper.c ****     
+ 486              		.loc 1 158 5 view .LVU142
+ 160:src/stepper.c ****         return;
+ 487              		.loc 1 160 5 view .LVU143
+ 160:src/stepper.c ****         return;
+ 488              		.loc 1 160 8 is_stmt 0 view .LVU144
+ 489 0000 0328     		cmp	r0, #3
+ 490 0002 21D8     		bhi	.L62
+ 164:src/stepper.c ****     if (!stepper->configured) {
+ 491              		.loc 1 164 5 is_stmt 1 view .LVU145
+ 492              	.LVL30:
+ 165:src/stepper.c ****         return;
+ 493              		.loc 1 165 5 view .LVU146
+ 165:src/stepper.c ****         return;
+ 494              		.loc 1 165 17 is_stmt 0 view .LVU147
+ 495 0004 114A     		ldr	r2, .L65
+ 496 0006 C0EBC003 		rsb	r3, r0, r0, lsl #3
+ 497 000a 02EB8303 		add	r3, r2, r3, lsl #2
+ 156:src/stepper.c ****     stepper_state_t* stepper;
+ARM GAS  /tmp/ccnwlPWk.s 			page 18
+
+
+ 498              		.loc 1 156 1 view .LVU148
+ 499 000e 10B5     		push	{r4, lr}
+ 500              		.cfi_def_cfa_offset 8
+ 501              		.cfi_offset 4, -8
+ 502              		.cfi_offset 14, -4
+ 165:src/stepper.c ****         return;
+ 503              		.loc 1 165 8 view .LVU149
+ 504 0010 9C7B     		ldrb	r4, [r3, #14]	@ zero_extendqisi2
+ 165:src/stepper.c ****         return;
+ 505              		.loc 1 165 17 view .LVU150
+ 506 0012 4FEAC00C 		lsl	ip, r0, #3
+ 165:src/stepper.c ****         return;
+ 507              		.loc 1 165 8 view .LVU151
+ 508 0016 B4B1     		cbz	r4, .L55
+ 169:src/stepper.c ****     
+ 509              		.loc 1 169 5 is_stmt 1 view .LVU152
+ 169:src/stepper.c ****     
+ 510              		.loc 1 169 35 is_stmt 0 view .LVU153
+ 511 0018 B1F1000E 		subs	lr, r1, #0
+ 173:src/stepper.c ****         pin_value = !pin_value;
+ 512              		.loc 1 173 8 view .LVU154
+ 513 001c 5C79     		ldrb	r4, [r3, #5]	@ zero_extendqisi2
+ 169:src/stepper.c ****     
+ 514              		.loc 1 169 35 view .LVU155
+ 515 001e 18BF     		it	ne
+ 516 0020 4FF0010E 		movne	lr, #1
+ 169:src/stepper.c ****     
+ 517              		.loc 1 169 22 view .LVU156
+ 518 0024 83F80DE0 		strb	lr, [r3, #13]
+ 172:src/stepper.c ****     if (stepper->config.invert_enable) {
+ 519              		.loc 1 172 5 is_stmt 1 view .LVU157
+ 520              	.LVL31:
+ 173:src/stepper.c ****         pin_value = !pin_value;
+ 521              		.loc 1 173 5 view .LVU158
+ 173:src/stepper.c ****         pin_value = !pin_value;
+ 522              		.loc 1 173 8 is_stmt 0 view .LVU159
+ 523 0028 1CB9     		cbnz	r4, .L57
+ 172:src/stepper.c ****     if (stepper->config.invert_enable) {
+ 524              		.loc 1 172 15 view .LVU160
+ 525 002a B1FA81FE 		clz	lr, r1
+ 526 002e 4FEA5E1E 		lsr	lr, lr, #5
+ 527              	.L57:
+ 528              	.LVL32:
+ 177:src/stepper.c **** }
+ 529              		.loc 1 177 5 is_stmt 1 view .LVU161
+ 530 0032 ACEB0000 		sub	r0, ip, r0
+ 531              	.LVL33:
+ 177:src/stepper.c **** }
+ 532              		.loc 1 177 5 is_stmt 0 view .LVU162
+ 533 0036 02EB8002 		add	r2, r2, r0, lsl #2
+ 534 003a 7146     		mov	r1, lr
+ 535              	.LVL34:
+ 177:src/stepper.c **** }
+ 536              		.loc 1 177 5 view .LVU163
+ 537 003c 9078     		ldrb	r0, [r2, #2]	@ zero_extendqisi2
+ 178:src/stepper.c **** 
+ 538              		.loc 1 178 1 view .LVU164
+ARM GAS  /tmp/ccnwlPWk.s 			page 19
+
+
+ 539 003e BDE81040 		pop	{r4, lr}
+ 540              		.cfi_remember_state
+ 541              		.cfi_restore 14
+ 542              		.cfi_restore 4
+ 543              		.cfi_def_cfa_offset 0
+ 544              	.LVL35:
+ 177:src/stepper.c **** }
+ 545              		.loc 1 177 5 view .LVU165
+ 546 0042 FFF7FEBF 		b	gpio_out_write
+ 547              	.LVL36:
+ 548              	.L55:
+ 549              		.cfi_restore_state
+ 178:src/stepper.c **** 
+ 550              		.loc 1 178 1 view .LVU166
+ 551 0046 10BD     		pop	{r4, pc}
+ 552              	.LVL37:
+ 553              	.L62:
+ 554              		.cfi_def_cfa_offset 0
+ 555              		.cfi_restore 4
+ 556              		.cfi_restore 14
+ 178:src/stepper.c **** 
+ 557              		.loc 1 178 1 view .LVU167
+ 558 0048 7047     		bx	lr
+ 559              	.L66:
+ 560 004a 00BF     		.align	2
+ 561              	.L65:
+ 562 004c 00000000 		.word	.LANCHOR0
+ 563              		.cfi_endproc
+ 564              	.LFE3:
+ 566              		.section	.text.stepper_set_dir,"ax",%progbits
+ 567              		.align	1
+ 568              		.p2align 2,,3
+ 569              		.global	stepper_set_dir
+ 570              		.syntax unified
+ 571              		.thumb
+ 572              		.thumb_func
+ 573              		.fpu fpv4-sp-d16
+ 575              	stepper_set_dir:
+ 576              	.LVL38:
+ 577              	.LFB4:
+ 186:src/stepper.c ****     stepper_state_t* stepper;
+ 578              		.loc 1 186 1 is_stmt 1 view -0
+ 579              		.cfi_startproc
+ 580              		@ args = 0, pretend = 0, frame = 0
+ 581              		@ frame_needed = 0, uses_anonymous_args = 0
+ 582              		@ link register save eliminated.
+ 187:src/stepper.c ****     uint8_t pin_value;
+ 583              		.loc 1 187 5 view .LVU169
+ 188:src/stepper.c ****     
+ 584              		.loc 1 188 5 view .LVU170
+ 190:src/stepper.c ****         return;
+ 585              		.loc 1 190 5 view .LVU171
+ 190:src/stepper.c ****         return;
+ 586              		.loc 1 190 8 is_stmt 0 view .LVU172
+ 587 0000 0328     		cmp	r0, #3
+ 588 0002 1FD8     		bhi	.L75
+ 589              	.LVL39:
+ARM GAS  /tmp/ccnwlPWk.s 			page 20
+
+
+ 590              	.LBB19:
+ 591              	.LBI19:
+ 185:src/stepper.c **** {
+ 592              		.loc 1 185 6 is_stmt 1 view .LVU173
+ 593              	.LBB20:
+ 194:src/stepper.c ****     if (!stepper->configured) {
+ 594              		.loc 1 194 5 view .LVU174
+ 195:src/stepper.c ****         return;
+ 595              		.loc 1 195 5 view .LVU175
+ 195:src/stepper.c ****         return;
+ 596              		.loc 1 195 17 is_stmt 0 view .LVU176
+ 597 0004 104A     		ldr	r2, .L78
+ 598 0006 C0EBC003 		rsb	r3, r0, r0, lsl #3
+ 599 000a 02EB8303 		add	r3, r2, r3, lsl #2
+ 600              	.LBE20:
+ 601              	.LBE19:
+ 186:src/stepper.c ****     stepper_state_t* stepper;
+ 602              		.loc 1 186 1 view .LVU177
+ 603 000e 10B4     		push	{r4}
+ 604              		.cfi_def_cfa_offset 4
+ 605              		.cfi_offset 4, -4
+ 606              	.LBB24:
+ 607              	.LBB21:
+ 195:src/stepper.c ****         return;
+ 608              		.loc 1 195 8 view .LVU178
+ 609 0010 9C7B     		ldrb	r4, [r3, #14]	@ zero_extendqisi2
+ 195:src/stepper.c ****         return;
+ 610              		.loc 1 195 17 view .LVU179
+ 611 0012 4FEAC00C 		lsl	ip, r0, #3
+ 195:src/stepper.c ****         return;
+ 612              		.loc 1 195 8 view .LVU180
+ 613 0016 74B1     		cbz	r4, .L67
+ 199:src/stepper.c ****     
+ 614              		.loc 1 199 5 is_stmt 1 view .LVU181
+ 199:src/stepper.c ****     
+ 615              		.loc 1 199 18 is_stmt 0 view .LVU182
+ 616 0018 1973     		strb	r1, [r3, #12]
+ 202:src/stepper.c ****     if (stepper->config.invert_dir) {
+ 617              		.loc 1 202 5 is_stmt 1 view .LVU183
+ 618              	.LVL40:
+ 203:src/stepper.c ****         pin_value = !pin_value;
+ 619              		.loc 1 203 5 view .LVU184
+ 203:src/stepper.c ****         pin_value = !pin_value;
+ 620              		.loc 1 203 8 is_stmt 0 view .LVU185
+ 621 001a 1B79     		ldrb	r3, [r3, #4]	@ zero_extendqisi2
+ 622 001c 73B9     		cbnz	r3, .L69
+ 202:src/stepper.c ****     if (stepper->config.invert_dir) {
+ 623              		.loc 1 202 50 view .LVU186
+ 624 001e 0039     		subs	r1, r1, #0
+ 625              	.LVL41:
+ 202:src/stepper.c ****     if (stepper->config.invert_dir) {
+ 626              		.loc 1 202 50 view .LVU187
+ 627 0020 18BF     		it	ne
+ 628 0022 0121     		movne	r1, #1
+ 629              	.LVL42:
+ 630              	.L70:
+ 207:src/stepper.c **** }
+ARM GAS  /tmp/ccnwlPWk.s 			page 21
+
+
+ 631              		.loc 1 207 5 is_stmt 1 view .LVU188
+ 632 0024 ACEB0000 		sub	r0, ip, r0
+ 633              	.LVL43:
+ 207:src/stepper.c **** }
+ 634              		.loc 1 207 5 is_stmt 0 view .LVU189
+ 635 0028 02EB8002 		add	r2, r2, r0, lsl #2
+ 636              	.LBE21:
+ 637              	.LBE24:
+ 208:src/stepper.c **** 
+ 638              		.loc 1 208 1 view .LVU190
+ 639 002c 5DF8044B 		ldr	r4, [sp], #4
+ 640              		.cfi_remember_state
+ 641              		.cfi_restore 4
+ 642              		.cfi_def_cfa_offset 0
+ 643              	.LBB25:
+ 644              	.LBB22:
+ 207:src/stepper.c **** }
+ 645              		.loc 1 207 5 view .LVU191
+ 646 0030 5078     		ldrb	r0, [r2, #1]	@ zero_extendqisi2
+ 647 0032 FFF7FEBF 		b	gpio_out_write
+ 648              	.LVL44:
+ 649              	.L67:
+ 650              		.cfi_restore_state
+ 207:src/stepper.c **** }
+ 651              		.loc 1 207 5 view .LVU192
+ 652              	.LBE22:
+ 653              	.LBE25:
+ 208:src/stepper.c **** 
+ 654              		.loc 1 208 1 view .LVU193
+ 655 0036 5DF8044B 		ldr	r4, [sp], #4
+ 656              		.cfi_remember_state
+ 657              		.cfi_restore 4
+ 658              		.cfi_def_cfa_offset 0
+ 659 003a 7047     		bx	lr
+ 660              	.LVL45:
+ 661              	.L69:
+ 662              		.cfi_restore_state
+ 663              	.LBB26:
+ 664              	.LBB23:
+ 204:src/stepper.c ****     }
+ 665              		.loc 1 204 9 is_stmt 1 view .LVU194
+ 204:src/stepper.c ****     }
+ 666              		.loc 1 204 21 is_stmt 0 view .LVU195
+ 667 003c B1FA81F1 		clz	r1, r1
+ 668              	.LVL46:
+ 204:src/stepper.c ****     }
+ 669              		.loc 1 204 21 view .LVU196
+ 670 0040 4909     		lsrs	r1, r1, #5
+ 671              	.LVL47:
+ 204:src/stepper.c ****     }
+ 672              		.loc 1 204 21 view .LVU197
+ 673 0042 EFE7     		b	.L70
+ 674              	.LVL48:
+ 675              	.L75:
+ 676              		.cfi_def_cfa_offset 0
+ 677              		.cfi_restore 4
+ 204:src/stepper.c ****     }
+ARM GAS  /tmp/ccnwlPWk.s 			page 22
+
+
+ 678              		.loc 1 204 21 view .LVU198
+ 679 0044 7047     		bx	lr
+ 680              	.L79:
+ 681 0046 00BF     		.align	2
+ 682              	.L78:
+ 683 0048 00000000 		.word	.LANCHOR0
+ 684              	.LBE23:
+ 685              	.LBE26:
+ 686              		.cfi_endproc
+ 687              	.LFE4:
+ 689              		.section	.text.stepper_step,"ax",%progbits
+ 690              		.align	1
+ 691              		.p2align 2,,3
+ 692              		.global	stepper_step
+ 693              		.syntax unified
+ 694              		.thumb
+ 695              		.thumb_func
+ 696              		.fpu fpv4-sp-d16
+ 698              	stepper_step:
+ 699              	.LVL49:
+ 700              	.LFB5:
+ 215:src/stepper.c ****     if (id >= STEPPER_COUNT) {
+ 701              		.loc 1 215 1 is_stmt 1 view -0
+ 702              		.cfi_startproc
+ 703              		@ args = 0, pretend = 0, frame = 0
+ 704              		@ frame_needed = 0, uses_anonymous_args = 0
+ 705              		@ link register save eliminated.
+ 216:src/stepper.c ****         return;
+ 706              		.loc 1 216 5 view .LVU200
+ 216:src/stepper.c ****         return;
+ 707              		.loc 1 216 8 is_stmt 0 view .LVU201
+ 708 0000 0328     		cmp	r0, #3
+ 709 0002 00D9     		bls	.L88
+ 710              	.LVL50:
+ 711              	.L80:
+ 221:src/stepper.c **** 
+ 712              		.loc 1 221 1 view .LVU202
+ 713 0004 7047     		bx	lr
+ 714              	.LVL51:
+ 715              	.L88:
+ 220:src/stepper.c **** }
+ 716              		.loc 1 220 5 is_stmt 1 view .LVU203
+ 717              	.LBB29:
+ 718              	.LBI29:
+  55:src/stepper.c **** {
+ 719              		.loc 1 55 13 view .LVU204
+ 720              	.LBB30:
+  57:src/stepper.c ****     
+ 721              		.loc 1 57 5 view .LVU205
+  59:src/stepper.c ****         return;
+ 722              		.loc 1 59 5 view .LVU206
+  59:src/stepper.c ****         return;
+ 723              		.loc 1 59 36 is_stmt 0 view .LVU207
+ 724 0006 064B     		ldr	r3, .L89
+ 725 0008 C0EBC000 		rsb	r0, r0, r0, lsl #3
+ 726              	.LVL52:
+  59:src/stepper.c ****         return;
+ARM GAS  /tmp/ccnwlPWk.s 			page 23
+
+
+ 727              		.loc 1 59 36 view .LVU208
+ 728 000c 03EB8000 		add	r0, r3, r0, lsl #2
+  59:src/stepper.c ****         return;
+ 729              		.loc 1 59 25 view .LVU209
+ 730 0010 837B     		ldrb	r3, [r0, #14]	@ zero_extendqisi2
+ 731 0012 002B     		cmp	r3, #0
+ 732 0014 F6D0     		beq	.L80
+  59:src/stepper.c ****         return;
+ 733              		.loc 1 59 49 view .LVU210
+ 734 0016 437B     		ldrb	r3, [r0, #13]	@ zero_extendqisi2
+ 735 0018 002B     		cmp	r3, #0
+ 736 001a F3D0     		beq	.L80
+ 737 001c FFF7FEBF 		b	stepper_do_step.part.0
+ 738              	.LVL53:
+ 739              	.L90:
+ 740              		.align	2
+ 741              	.L89:
+ 742 0020 00000000 		.word	.LANCHOR0
+ 743              	.LBE30:
+ 744              	.LBE29:
+ 745              		.cfi_endproc
+ 746              	.LFE5:
+ 748              		.section	.text.stepper_get_position,"ax",%progbits
+ 749              		.align	1
+ 750              		.p2align 2,,3
+ 751              		.global	stepper_get_position
+ 752              		.syntax unified
+ 753              		.thumb
+ 754              		.thumb_func
+ 755              		.fpu fpv4-sp-d16
+ 757              	stepper_get_position:
+ 758              	.LVL54:
+ 759              	.LFB6:
+ 229:src/stepper.c ****     if (id >= STEPPER_COUNT) {
+ 760              		.loc 1 229 1 is_stmt 1 view -0
+ 761              		.cfi_startproc
+ 762              		@ args = 0, pretend = 0, frame = 0
+ 763              		@ frame_needed = 0, uses_anonymous_args = 0
+ 764              		@ link register save eliminated.
+ 230:src/stepper.c ****         return 0;
+ 765              		.loc 1 230 5 view .LVU212
+ 230:src/stepper.c ****         return 0;
+ 766              		.loc 1 230 8 is_stmt 0 view .LVU213
+ 767 0000 0328     		cmp	r0, #3
+ 768 0002 06D8     		bhi	.L93
+ 234:src/stepper.c **** }
+ 769              		.loc 1 234 5 is_stmt 1 view .LVU214
+ 234:src/stepper.c **** }
+ 770              		.loc 1 234 26 is_stmt 0 view .LVU215
+ 771 0004 044B     		ldr	r3, .L94
+ 772 0006 C0EBC000 		rsb	r0, r0, r0, lsl #3
+ 773              	.LVL55:
+ 234:src/stepper.c **** }
+ 774              		.loc 1 234 26 view .LVU216
+ 775 000a 03EB8000 		add	r0, r3, r0, lsl #2
+ 776 000e 8068     		ldr	r0, [r0, #8]
+ 777 0010 7047     		bx	lr
+ARM GAS  /tmp/ccnwlPWk.s 			page 24
+
+
+ 778              	.LVL56:
+ 779              	.L93:
+ 231:src/stepper.c ****     }
+ 780              		.loc 1 231 16 view .LVU217
+ 781 0012 0020     		movs	r0, #0
+ 782              	.LVL57:
+ 235:src/stepper.c **** 
+ 783              		.loc 1 235 1 view .LVU218
+ 784 0014 7047     		bx	lr
+ 785              	.L95:
+ 786 0016 00BF     		.align	2
+ 787              	.L94:
+ 788 0018 00000000 		.word	.LANCHOR0
+ 789              		.cfi_endproc
+ 790              	.LFE6:
+ 792              		.section	.text.stepper_set_position,"ax",%progbits
+ 793              		.align	1
+ 794              		.p2align 2,,3
+ 795              		.global	stepper_set_position
+ 796              		.syntax unified
+ 797              		.thumb
+ 798              		.thumb_func
+ 799              		.fpu fpv4-sp-d16
+ 801              	stepper_set_position:
+ 802              	.LVL58:
+ 803              	.LFB7:
+ 243:src/stepper.c ****     if (id >= STEPPER_COUNT) {
+ 804              		.loc 1 243 1 is_stmt 1 view -0
+ 805              		.cfi_startproc
+ 806              		@ args = 0, pretend = 0, frame = 0
+ 807              		@ frame_needed = 0, uses_anonymous_args = 0
+ 808              		@ link register save eliminated.
+ 244:src/stepper.c ****         return;
+ 809              		.loc 1 244 5 view .LVU220
+ 244:src/stepper.c ****         return;
+ 810              		.loc 1 244 8 is_stmt 0 view .LVU221
+ 811 0000 0328     		cmp	r0, #3
+ 812 0002 05D8     		bhi	.L96
+ 248:src/stepper.c **** }
+ 813              		.loc 1 248 5 is_stmt 1 view .LVU222
+ 248:src/stepper.c **** }
+ 814              		.loc 1 248 29 is_stmt 0 view .LVU223
+ 815 0004 034B     		ldr	r3, .L98
+ 816 0006 C0EBC000 		rsb	r0, r0, r0, lsl #3
+ 817              	.LVL59:
+ 248:src/stepper.c **** }
+ 818              		.loc 1 248 29 view .LVU224
+ 819 000a 03EB8000 		add	r0, r3, r0, lsl #2
+ 820 000e 8160     		str	r1, [r0, #8]
+ 821              	.L96:
+ 249:src/stepper.c **** 
+ 822              		.loc 1 249 1 view .LVU225
+ 823 0010 7047     		bx	lr
+ 824              	.L99:
+ 825 0012 00BF     		.align	2
+ 826              	.L98:
+ 827 0014 00000000 		.word	.LANCHOR0
+ARM GAS  /tmp/ccnwlPWk.s 			page 25
+
+
+ 828              		.cfi_endproc
+ 829              	.LFE7:
+ 831              		.section	.text.stepper_add_move,"ax",%progbits
+ 832              		.align	1
+ 833              		.p2align 2,,3
+ 834              		.global	stepper_add_move
+ 835              		.syntax unified
+ 836              		.thumb
+ 837              		.thumb_func
+ 838              		.fpu fpv4-sp-d16
+ 840              	stepper_add_move:
+ 841              	.LVL60:
+ 842              	.LFB8:
+ 258:src/stepper.c ****     stepper_state_t* stepper;
+ 843              		.loc 1 258 1 is_stmt 1 view -0
+ 844              		.cfi_startproc
+ 845              		@ args = 0, pretend = 0, frame = 0
+ 846              		@ frame_needed = 0, uses_anonymous_args = 0
+ 259:src/stepper.c ****     
+ 847              		.loc 1 259 5 view .LVU227
+ 261:src/stepper.c ****         return -1;
+ 848              		.loc 1 261 5 view .LVU228
+ 261:src/stepper.c ****         return -1;
+ 849              		.loc 1 261 8 is_stmt 0 view .LVU229
+ 850 0000 0328     		cmp	r0, #3
+ 851 0002 35D8     		bhi	.L105
+ 261:src/stepper.c ****         return -1;
+ 852              		.loc 1 261 29 discriminator 1 view .LVU230
+ 853 0004 0029     		cmp	r1, #0
+ 854 0006 33D0     		beq	.L105
+ 265:src/stepper.c ****     if (!stepper->configured) {
+ 855              		.loc 1 265 5 is_stmt 1 view .LVU231
+ 856              	.LVL61:
+ 266:src/stepper.c ****         return -2;
+ 857              		.loc 1 266 5 view .LVU232
+ 258:src/stepper.c ****     stepper_state_t* stepper;
+ 858              		.loc 1 258 1 is_stmt 0 view .LVU233
+ 859 0008 70B5     		push	{r4, r5, r6, lr}
+ 860              		.cfi_def_cfa_offset 16
+ 861              		.cfi_offset 4, -16
+ 862              		.cfi_offset 5, -12
+ 863              		.cfi_offset 6, -8
+ 864              		.cfi_offset 14, -4
+ 266:src/stepper.c ****         return -2;
+ 865              		.loc 1 266 17 view .LVU234
+ 866 000a 1C4E     		ldr	r6, .L111
+ 867 000c C0EBC003 		rsb	r3, r0, r0, lsl #3
+ 868 0010 06EB8303 		add	r3, r6, r3, lsl #2
+ 869 0014 0446     		mov	r4, r0
+ 266:src/stepper.c ****         return -2;
+ 870              		.loc 1 266 8 view .LVU235
+ 871 0016 9A7B     		ldrb	r2, [r3, #14]	@ zero_extendqisi2
+ 266:src/stepper.c ****         return -2;
+ 872              		.loc 1 266 17 view .LVU236
+ 873 0018 C500     		lsls	r5, r0, #3
+ 266:src/stepper.c ****         return -2;
+ 874              		.loc 1 266 8 view .LVU237
+ARM GAS  /tmp/ccnwlPWk.s 			page 26
+
+
+ 875 001a 62B3     		cbz	r2, .L106
+ 271:src/stepper.c ****     stepper->count = move->count;
+ 876              		.loc 1 271 5 is_stmt 1 view .LVU238
+ 271:src/stepper.c ****     stepper->count = move->count;
+ 877              		.loc 1 271 23 is_stmt 0 view .LVU239
+ 878 001c 8A68     		ldr	r2, [r1, #8]
+ 879 001e 1A61     		str	r2, [r3, #16]
+ 272:src/stepper.c ****     
+ 880              		.loc 1 272 5 is_stmt 1 view .LVU240
+ 272:src/stepper.c ****     
+ 881              		.loc 1 272 20 is_stmt 0 view .LVU241
+ 882 0020 CA68     		ldr	r2, [r1, #12]
+ 883 0022 5A61     		str	r2, [r3, #20]
+ 275:src/stepper.c ****         stepper_set_dir(id, STEPPER_DIR_FORWARD);
+ 884              		.loc 1 275 5 is_stmt 1 view .LVU242
+ 275:src/stepper.c ****         stepper_set_dir(id, STEPPER_DIR_FORWARD);
+ 885              		.loc 1 275 8 is_stmt 0 view .LVU243
+ 886 0024 91F91020 		ldrsb	r2, [r1, #16]
+ 887 0028 002A     		cmp	r2, #0
+ 888 002a 17DB     		blt	.L102
+ 276:src/stepper.c ****     } else {
+ 889              		.loc 1 276 9 is_stmt 1 view .LVU244
+ 890              	.LVL62:
+ 891              	.LBB39:
+ 892              	.LBI39:
+ 185:src/stepper.c **** {
+ 893              		.loc 1 185 6 view .LVU245
+ 894              	.LBB40:
+ 187:src/stepper.c ****     uint8_t pin_value;
+ 895              		.loc 1 187 5 view .LVU246
+ 188:src/stepper.c ****     
+ 896              		.loc 1 188 5 view .LVU247
+ 190:src/stepper.c ****         return;
+ 897              		.loc 1 190 5 view .LVU248
+ 898              	.LBB41:
+ 899              	.LBI41:
+ 185:src/stepper.c **** {
+ 900              		.loc 1 185 6 view .LVU249
+ 901              	.LBB42:
+ 194:src/stepper.c ****     if (!stepper->configured) {
+ 902              		.loc 1 194 5 view .LVU250
+ 195:src/stepper.c ****         return;
+ 903              		.loc 1 195 5 view .LVU251
+ 199:src/stepper.c ****     
+ 904              		.loc 1 199 5 view .LVU252
+ 203:src/stepper.c ****         pin_value = !pin_value;
+ 905              		.loc 1 203 8 is_stmt 0 view .LVU253
+ 906 002c 1979     		ldrb	r1, [r3, #4]	@ zero_extendqisi2
+ 907              	.LVL63:
+ 207:src/stepper.c **** }
+ 908              		.loc 1 207 5 view .LVU254
+ 909 002e 5878     		ldrb	r0, [r3, #1]	@ zero_extendqisi2
+ 910              	.LVL64:
+ 199:src/stepper.c ****     
+ 911              		.loc 1 199 18 view .LVU255
+ 912 0030 0022     		movs	r2, #0
+ 207:src/stepper.c **** }
+ARM GAS  /tmp/ccnwlPWk.s 			page 27
+
+
+ 913              		.loc 1 207 5 view .LVU256
+ 914 0032 891A     		subs	r1, r1, r2
+ 199:src/stepper.c ****     
+ 915              		.loc 1 199 18 view .LVU257
+ 916 0034 1A73     		strb	r2, [r3, #12]
+ 202:src/stepper.c ****     if (stepper->config.invert_dir) {
+ 917              		.loc 1 202 5 is_stmt 1 view .LVU258
+ 918              	.LVL65:
+ 203:src/stepper.c ****         pin_value = !pin_value;
+ 919              		.loc 1 203 5 view .LVU259
+ 207:src/stepper.c **** }
+ 920              		.loc 1 207 5 view .LVU260
+ 921 0036 18BF     		it	ne
+ 922 0038 0121     		movne	r1, #1
+ 923 003a FFF7FEFF 		bl	gpio_out_write
+ 924              	.LVL66:
+ 925              	.L103:
+ 207:src/stepper.c **** }
+ 926              		.loc 1 207 5 is_stmt 0 view .LVU261
+ 927              	.LBE42:
+ 928              	.LBE41:
+ 929              	.LBE40:
+ 930              	.LBE39:
+ 282:src/stepper.c ****     
+ 931              		.loc 1 282 5 is_stmt 1 view .LVU262
+ 282:src/stepper.c ****     
+ 932              		.loc 1 282 57 is_stmt 0 view .LVU263
+ 933 003e 2C1B     		subs	r4, r5, r4
+ 934              	.LVL67:
+ 282:src/stepper.c ****     
+ 935              		.loc 1 282 31 view .LVU264
+ 936 0040 FFF7FEFF 		bl	sched_get_time
+ 937              	.LVL68:
+ 282:src/stepper.c ****     
+ 938              		.loc 1 282 57 view .LVU265
+ 939 0044 06EB8404 		add	r4, r6, r4, lsl #2
+ 282:src/stepper.c ****     
+ 940              		.loc 1 282 31 view .LVU266
+ 941 0048 0346     		mov	r3, r0
+ 282:src/stepper.c ****     
+ 942              		.loc 1 282 48 view .LVU267
+ 943 004a 2269     		ldr	r2, [r4, #16]
+ 285:src/stepper.c ****     sched_add_timer(&s_stepper_timer);
+ 944              		.loc 1 285 30 view .LVU268
+ 945 004c 0C48     		ldr	r0, .L111+4
+ 282:src/stepper.c ****     
+ 946              		.loc 1 282 48 view .LVU269
+ 947 004e 1344     		add	r3, r3, r2
+ 282:src/stepper.c ****     
+ 948              		.loc 1 282 29 view .LVU270
+ 949 0050 A361     		str	r3, [r4, #24]
+ 285:src/stepper.c ****     sched_add_timer(&s_stepper_timer);
+ 950              		.loc 1 285 5 is_stmt 1 view .LVU271
+ 285:src/stepper.c ****     sched_add_timer(&s_stepper_timer);
+ 951              		.loc 1 285 30 is_stmt 0 view .LVU272
+ 952 0052 4360     		str	r3, [r0, #4]
+ 286:src/stepper.c ****     
+ARM GAS  /tmp/ccnwlPWk.s 			page 28
+
+
+ 953              		.loc 1 286 5 is_stmt 1 view .LVU273
+ 954 0054 FFF7FEFF 		bl	sched_add_timer
+ 955              	.LVL69:
+ 288:src/stepper.c **** }
+ 956              		.loc 1 288 5 view .LVU274
+ 288:src/stepper.c **** }
+ 957              		.loc 1 288 12 is_stmt 0 view .LVU275
+ 958 0058 0020     		movs	r0, #0
+ 289:src/stepper.c **** 
+ 959              		.loc 1 289 1 view .LVU276
+ 960 005a 70BD     		pop	{r4, r5, r6, pc}
+ 961              	.LVL70:
+ 962              	.L102:
+ 278:src/stepper.c ****     }
+ 963              		.loc 1 278 9 is_stmt 1 view .LVU277
+ 964              	.LBB43:
+ 965              	.LBI43:
+ 185:src/stepper.c **** {
+ 966              		.loc 1 185 6 view .LVU278
+ 967              	.LBB44:
+ 187:src/stepper.c ****     uint8_t pin_value;
+ 968              		.loc 1 187 5 view .LVU279
+ 188:src/stepper.c ****     
+ 969              		.loc 1 188 5 view .LVU280
+ 190:src/stepper.c ****         return;
+ 970              		.loc 1 190 5 view .LVU281
+ 971              	.LBB45:
+ 972              	.LBI45:
+ 185:src/stepper.c **** {
+ 973              		.loc 1 185 6 view .LVU282
+ 974              	.LBB46:
+ 194:src/stepper.c ****     if (!stepper->configured) {
+ 975              		.loc 1 194 5 view .LVU283
+ 195:src/stepper.c ****         return;
+ 976              		.loc 1 195 5 view .LVU284
+ 199:src/stepper.c ****     
+ 977              		.loc 1 199 5 view .LVU285
+ 203:src/stepper.c ****         pin_value = !pin_value;
+ 978              		.loc 1 203 8 is_stmt 0 view .LVU286
+ 979 005c 1979     		ldrb	r1, [r3, #4]	@ zero_extendqisi2
+ 980              	.LVL71:
+ 207:src/stepper.c **** }
+ 981              		.loc 1 207 5 view .LVU287
+ 982 005e 5878     		ldrb	r0, [r3, #1]	@ zero_extendqisi2
+ 983              	.LVL72:
+ 199:src/stepper.c ****     
+ 984              		.loc 1 199 18 view .LVU288
+ 985 0060 0122     		movs	r2, #1
+ 207:src/stepper.c **** }
+ 986              		.loc 1 207 5 view .LVU289
+ 987 0062 B1FA81F1 		clz	r1, r1
+ 199:src/stepper.c ****     
+ 988              		.loc 1 199 18 view .LVU290
+ 989 0066 1A73     		strb	r2, [r3, #12]
+ 202:src/stepper.c ****     if (stepper->config.invert_dir) {
+ 990              		.loc 1 202 5 is_stmt 1 view .LVU291
+ 991              	.LVL73:
+ARM GAS  /tmp/ccnwlPWk.s 			page 29
+
+
+ 203:src/stepper.c ****         pin_value = !pin_value;
+ 992              		.loc 1 203 5 view .LVU292
+ 207:src/stepper.c **** }
+ 993              		.loc 1 207 5 view .LVU293
+ 994 0068 4909     		lsrs	r1, r1, #5
+ 995 006a FFF7FEFF 		bl	gpio_out_write
+ 996              	.LVL74:
+ 207:src/stepper.c **** }
+ 997              		.loc 1 207 5 is_stmt 0 view .LVU294
+ 998 006e E6E7     		b	.L103
+ 999              	.LVL75:
+ 1000              	.L105:
+ 1001              		.cfi_def_cfa_offset 0
+ 1002              		.cfi_restore 4
+ 1003              		.cfi_restore 5
+ 1004              		.cfi_restore 6
+ 1005              		.cfi_restore 14
+ 207:src/stepper.c **** }
+ 1006              		.loc 1 207 5 view .LVU295
+ 1007              	.LBE46:
+ 1008              	.LBE45:
+ 1009              	.LBE44:
+ 1010              	.LBE43:
+ 262:src/stepper.c ****     }
+ 1011              		.loc 1 262 16 view .LVU296
+ 1012 0070 4FF0FF30 		mov	r0, #-1
+ 1013              	.LVL76:
+ 289:src/stepper.c **** 
+ 1014              		.loc 1 289 1 view .LVU297
+ 1015 0074 7047     		bx	lr
+ 1016              	.LVL77:
+ 1017              	.L106:
+ 1018              		.cfi_def_cfa_offset 16
+ 1019              		.cfi_offset 4, -16
+ 1020              		.cfi_offset 5, -12
+ 1021              		.cfi_offset 6, -8
+ 1022              		.cfi_offset 14, -4
+ 267:src/stepper.c ****     }
+ 1023              		.loc 1 267 16 view .LVU298
+ 1024 0076 6FF00100 		mvn	r0, #1
+ 1025              	.LVL78:
+ 289:src/stepper.c **** 
+ 1026              		.loc 1 289 1 view .LVU299
+ 1027 007a 70BD     		pop	{r4, r5, r6, pc}
+ 1028              	.LVL79:
+ 1029              	.L112:
+ 289:src/stepper.c **** 
+ 1030              		.loc 1 289 1 view .LVU300
+ 1031              		.align	2
+ 1032              	.L111:
+ 1033 007c 00000000 		.word	.LANCHOR0
+ 1034 0080 00000000 		.word	.LANCHOR1
+ 1035              		.cfi_endproc
+ 1036              	.LFE8:
+ 1038              		.section	.text.stepper_stop,"ax",%progbits
+ 1039              		.align	1
+ 1040              		.p2align 2,,3
+ARM GAS  /tmp/ccnwlPWk.s 			page 30
+
+
+ 1041              		.global	stepper_stop
+ 1042              		.syntax unified
+ 1043              		.thumb
+ 1044              		.thumb_func
+ 1045              		.fpu fpv4-sp-d16
+ 1047              	stepper_stop:
+ 1048              	.LVL80:
+ 1049              	.LFB9:
+ 296:src/stepper.c ****     if (id >= STEPPER_COUNT) {
+ 1050              		.loc 1 296 1 is_stmt 1 view -0
+ 1051              		.cfi_startproc
+ 1052              		@ args = 0, pretend = 0, frame = 0
+ 1053              		@ frame_needed = 0, uses_anonymous_args = 0
+ 1054              		@ link register save eliminated.
+ 297:src/stepper.c ****         return;
+ 1055              		.loc 1 297 5 view .LVU302
+ 297:src/stepper.c ****         return;
+ 1056              		.loc 1 297 8 is_stmt 0 view .LVU303
+ 1057 0000 0328     		cmp	r0, #3
+ 1058 0002 07D8     		bhi	.L113
+ 301:src/stepper.c ****     s_steppers[id].interval = 0;
+ 1059              		.loc 1 301 5 is_stmt 1 view .LVU304
+ 301:src/stepper.c ****     s_steppers[id].interval = 0;
+ 1060              		.loc 1 301 26 is_stmt 0 view .LVU305
+ 1061 0004 044B     		ldr	r3, .L115
+ 1062 0006 C0EBC000 		rsb	r0, r0, r0, lsl #3
+ 1063              	.LVL81:
+ 301:src/stepper.c ****     s_steppers[id].interval = 0;
+ 1064              		.loc 1 301 26 view .LVU306
+ 1065 000a 03EB8000 		add	r0, r3, r0, lsl #2
+ 1066 000e 0023     		movs	r3, #0
+ 302:src/stepper.c **** }
+ 1067              		.loc 1 302 29 view .LVU307
+ 1068 0010 C0E90433 		strd	r3, r3, [r0, #16]
+ 1069              	.L113:
+ 303:src/stepper.c **** 
+ 1070              		.loc 1 303 1 view .LVU308
+ 1071 0014 7047     		bx	lr
+ 1072              	.L116:
+ 1073 0016 00BF     		.align	2
+ 1074              	.L115:
+ 1075 0018 00000000 		.word	.LANCHOR0
+ 1076              		.cfi_endproc
+ 1077              	.LFE9:
+ 1079              		.section	.text.stepper_stop_all,"ax",%progbits
+ 1080              		.align	1
+ 1081              		.p2align 2,,3
+ 1082              		.global	stepper_stop_all
+ 1083              		.syntax unified
+ 1084              		.thumb
+ 1085              		.thumb_func
+ 1086              		.fpu fpv4-sp-d16
+ 1088              	stepper_stop_all:
+ 1089              	.LFB10:
+ 309:src/stepper.c ****     int i;
+ 1090              		.loc 1 309 1 is_stmt 1 view -0
+ 1091              		.cfi_startproc
+ARM GAS  /tmp/ccnwlPWk.s 			page 31
+
+
+ 1092              		@ args = 0, pretend = 0, frame = 0
+ 1093              		@ frame_needed = 0, uses_anonymous_args = 0
+ 1094              		@ link register save eliminated.
+ 310:src/stepper.c ****     
+ 1095              		.loc 1 310 5 view .LVU310
+ 312:src/stepper.c ****         stepper_stop((stepper_id_t)i);
+ 1096              		.loc 1 312 5 view .LVU311
+ 1097              	.LVL82:
+ 312:src/stepper.c ****         stepper_stop((stepper_id_t)i);
+ 1098              		.loc 1 312 17 view .LVU312
+ 313:src/stepper.c ****     }
+ 1099              		.loc 1 313 9 view .LVU313
+ 1100              	.LBB47:
+ 1101              	.LBI47:
+ 295:src/stepper.c **** {
+ 1102              		.loc 1 295 6 view .LVU314
+ 1103              	.LBB48:
+ 297:src/stepper.c ****         return;
+ 1104              		.loc 1 297 5 view .LVU315
+ 301:src/stepper.c ****     s_steppers[id].interval = 0;
+ 1105              		.loc 1 301 5 view .LVU316
+ 301:src/stepper.c ****     s_steppers[id].interval = 0;
+ 1106              		.loc 1 301 26 is_stmt 0 view .LVU317
+ 1107 0000 064B     		ldr	r3, .L118
+ 1108              	.LBE48:
+ 1109              	.LBE47:
+ 317:src/stepper.c **** }
+ 1110              		.loc 1 317 5 view .LVU318
+ 1111 0002 0748     		ldr	r0, .L118+4
+ 1112              	.LBB53:
+ 1113              	.LBB49:
+ 301:src/stepper.c ****     s_steppers[id].interval = 0;
+ 1114              		.loc 1 301 26 view .LVU319
+ 1115 0004 0022     		movs	r2, #0
+ 302:src/stepper.c **** }
+ 1116              		.loc 1 302 29 view .LVU320
+ 1117 0006 C3E90422 		strd	r2, r2, [r3, #16]
+ 1118              	.LVL83:
+ 302:src/stepper.c **** }
+ 1119              		.loc 1 302 29 view .LVU321
+ 1120              	.LBE49:
+ 1121              	.LBE53:
+ 312:src/stepper.c ****         stepper_stop((stepper_id_t)i);
+ 1122              		.loc 1 312 36 is_stmt 1 view .LVU322
+ 312:src/stepper.c ****         stepper_stop((stepper_id_t)i);
+ 1123              		.loc 1 312 17 view .LVU323
+ 313:src/stepper.c ****     }
+ 1124              		.loc 1 313 9 view .LVU324
+ 1125              	.LBB54:
+ 295:src/stepper.c **** {
+ 1126              		.loc 1 295 6 view .LVU325
+ 1127              	.LBB50:
+ 297:src/stepper.c ****         return;
+ 1128              		.loc 1 297 5 view .LVU326
+ 301:src/stepper.c ****     s_steppers[id].interval = 0;
+ 1129              		.loc 1 301 5 view .LVU327
+ 302:src/stepper.c **** }
+ARM GAS  /tmp/ccnwlPWk.s 			page 32
+
+
+ 1130              		.loc 1 302 29 is_stmt 0 view .LVU328
+ 1131 000a C3E90B22 		strd	r2, r2, [r3, #44]
+ 1132              	.LVL84:
+ 302:src/stepper.c **** }
+ 1133              		.loc 1 302 29 view .LVU329
+ 1134              	.LBE50:
+ 1135              	.LBE54:
+ 312:src/stepper.c ****         stepper_stop((stepper_id_t)i);
+ 1136              		.loc 1 312 36 is_stmt 1 view .LVU330
+ 312:src/stepper.c ****         stepper_stop((stepper_id_t)i);
+ 1137              		.loc 1 312 17 view .LVU331
+ 313:src/stepper.c ****     }
+ 1138              		.loc 1 313 9 view .LVU332
+ 1139              	.LBB55:
+ 295:src/stepper.c **** {
+ 1140              		.loc 1 295 6 view .LVU333
+ 1141              	.LBB51:
+ 297:src/stepper.c ****         return;
+ 1142              		.loc 1 297 5 view .LVU334
+ 301:src/stepper.c ****     s_steppers[id].interval = 0;
+ 1143              		.loc 1 301 5 view .LVU335
+ 302:src/stepper.c **** }
+ 1144              		.loc 1 302 29 is_stmt 0 view .LVU336
+ 1145 000e C3E91222 		strd	r2, r2, [r3, #72]
+ 1146              	.LVL85:
+ 302:src/stepper.c **** }
+ 1147              		.loc 1 302 29 view .LVU337
+ 1148              	.LBE51:
+ 1149              	.LBE55:
+ 312:src/stepper.c ****         stepper_stop((stepper_id_t)i);
+ 1150              		.loc 1 312 36 is_stmt 1 view .LVU338
+ 312:src/stepper.c ****         stepper_stop((stepper_id_t)i);
+ 1151              		.loc 1 312 17 view .LVU339
+ 313:src/stepper.c ****     }
+ 1152              		.loc 1 313 9 view .LVU340
+ 1153              	.LBB56:
+ 295:src/stepper.c **** {
+ 1154              		.loc 1 295 6 view .LVU341
+ 1155              	.LBB52:
+ 297:src/stepper.c ****         return;
+ 1156              		.loc 1 297 5 view .LVU342
+ 301:src/stepper.c ****     s_steppers[id].interval = 0;
+ 1157              		.loc 1 301 5 view .LVU343
+ 302:src/stepper.c **** }
+ 1158              		.loc 1 302 29 is_stmt 0 view .LVU344
+ 1159 0012 C3E91922 		strd	r2, r2, [r3, #100]
+ 1160              	.LVL86:
+ 302:src/stepper.c **** }
+ 1161              		.loc 1 302 29 view .LVU345
+ 1162              	.LBE52:
+ 1163              	.LBE56:
+ 312:src/stepper.c ****         stepper_stop((stepper_id_t)i);
+ 1164              		.loc 1 312 36 is_stmt 1 view .LVU346
+ 312:src/stepper.c ****         stepper_stop((stepper_id_t)i);
+ 1165              		.loc 1 312 17 view .LVU347
+ 317:src/stepper.c **** }
+ 1166              		.loc 1 317 5 view .LVU348
+ARM GAS  /tmp/ccnwlPWk.s 			page 33
+
+
+ 1167 0016 FFF7FEBF 		b	sched_del_timer
+ 1168              	.LVL87:
+ 1169              	.L119:
+ 1170 001a 00BF     		.align	2
+ 1171              	.L118:
+ 1172 001c 00000000 		.word	.LANCHOR0
+ 1173 0020 00000000 		.word	.LANCHOR1
+ 1174              		.cfi_endproc
+ 1175              	.LFE10:
+ 1177              		.section	.text.stepper_is_moving,"ax",%progbits
+ 1178              		.align	1
+ 1179              		.p2align 2,,3
+ 1180              		.global	stepper_is_moving
+ 1181              		.syntax unified
+ 1182              		.thumb
+ 1183              		.thumb_func
+ 1184              		.fpu fpv4-sp-d16
+ 1186              	stepper_is_moving:
+ 1187              	.LVL88:
+ 1188              	.LFB11:
+ 326:src/stepper.c ****     if (id >= STEPPER_COUNT) {
+ 1189              		.loc 1 326 1 view -0
+ 1190              		.cfi_startproc
+ 1191              		@ args = 0, pretend = 0, frame = 0
+ 1192              		@ frame_needed = 0, uses_anonymous_args = 0
+ 1193              		@ link register save eliminated.
+ 327:src/stepper.c ****         return 0;
+ 1194              		.loc 1 327 5 view .LVU350
+ 327:src/stepper.c ****         return 0;
+ 1195              		.loc 1 327 8 is_stmt 0 view .LVU351
+ 1196 0000 0328     		cmp	r0, #3
+ 1197 0002 09D8     		bhi	.L122
+ 331:src/stepper.c **** }
+ 1198              		.loc 1 331 5 is_stmt 1 view .LVU352
+ 331:src/stepper.c **** }
+ 1199              		.loc 1 331 26 is_stmt 0 view .LVU353
+ 1200 0004 054B     		ldr	r3, .L123
+ 1201 0006 C0EBC000 		rsb	r0, r0, r0, lsl #3
+ 1202              	.LVL89:
+ 331:src/stepper.c **** }
+ 1203              		.loc 1 331 26 view .LVU354
+ 1204 000a 03EB8000 		add	r0, r3, r0, lsl #2
+ 331:src/stepper.c **** }
+ 1205              		.loc 1 331 41 view .LVU355
+ 1206 000e 4069     		ldr	r0, [r0, #20]
+ 1207 0010 0038     		subs	r0, r0, #0
+ 1208 0012 18BF     		it	ne
+ 1209 0014 0120     		movne	r0, #1
+ 1210 0016 7047     		bx	lr
+ 1211              	.LVL90:
+ 1212              	.L122:
+ 328:src/stepper.c ****     }
+ 1213              		.loc 1 328 16 view .LVU356
+ 1214 0018 0020     		movs	r0, #0
+ 1215              	.LVL91:
+ 332:src/stepper.c **** 
+ 1216              		.loc 1 332 1 view .LVU357
+ARM GAS  /tmp/ccnwlPWk.s 			page 34
+
+
+ 1217 001a 7047     		bx	lr
+ 1218              	.L124:
+ 1219              		.align	2
+ 1220              	.L123:
+ 1221 001c 00000000 		.word	.LANCHOR0
+ 1222              		.cfi_endproc
+ 1223              	.LFE11:
+ 1225              		.section	.bss.s_stepper_timer,"aw",%nobits
+ 1226              		.align	2
+ 1227              		.set	.LANCHOR1,. + 0
+ 1230              	s_stepper_timer:
+ 1231 0000 00000000 		.space	12
+ 1231      00000000 
+ 1231      00000000 
+ 1232              		.section	.bss.s_steppers,"aw",%nobits
+ 1233              		.align	2
+ 1234              		.set	.LANCHOR0,. + 0
+ 1237              	s_steppers:
+ 1238 0000 00000000 		.space	112
+ 1238      00000000 
+ 1238      00000000 
+ 1238      00000000 
+ 1238      00000000 
+ 1239              		.text
+ 1240              	.Letext0:
+ 1241              		.file 2 "/usr/lib/gcc/arm-none-eabi/10.3.1/include/stdint.h"
+ 1242              		.file 3 "src/sched.h"
+ 1243              		.file 4 "src/stepper.h"
+ARM GAS  /tmp/ccnwlPWk.s 			page 35
+
+
+DEFINED SYMBOLS
+                            *ABS*:0000000000000000 stepper.c
+     /tmp/ccnwlPWk.s:18     .text.stepper_do_step.part.0:0000000000000000 $t
+     /tmp/ccnwlPWk.s:26     .text.stepper_do_step.part.0:0000000000000000 stepper_do_step.part.0
+     /tmp/ccnwlPWk.s:123    .text.stepper_timer_callback:0000000000000000 $t
+     /tmp/ccnwlPWk.s:131    .text.stepper_timer_callback:0000000000000000 stepper_timer_callback
+     /tmp/ccnwlPWk.s:288    .text.stepper_timer_callback:0000000000000080 $d
+     /tmp/ccnwlPWk.s:294    .text.stepper_init:0000000000000000 $t
+     /tmp/ccnwlPWk.s:302    .text.stepper_init:0000000000000000 stepper_init
+     /tmp/ccnwlPWk.s:359    .text.stepper_init:000000000000002c $d
+     /tmp/ccnwlPWk.s:366    .text.stepper_config:0000000000000000 $t
+     /tmp/ccnwlPWk.s:374    .text.stepper_config:0000000000000000 stepper_config
+     /tmp/ccnwlPWk.s:465    .text.stepper_config:000000000000005c $d
+     /tmp/ccnwlPWk.s:470    .text.stepper_enable:0000000000000000 $t
+     /tmp/ccnwlPWk.s:478    .text.stepper_enable:0000000000000000 stepper_enable
+     /tmp/ccnwlPWk.s:562    .text.stepper_enable:000000000000004c $d
+     /tmp/ccnwlPWk.s:567    .text.stepper_set_dir:0000000000000000 $t
+     /tmp/ccnwlPWk.s:575    .text.stepper_set_dir:0000000000000000 stepper_set_dir
+     /tmp/ccnwlPWk.s:683    .text.stepper_set_dir:0000000000000048 $d
+     /tmp/ccnwlPWk.s:690    .text.stepper_step:0000000000000000 $t
+     /tmp/ccnwlPWk.s:698    .text.stepper_step:0000000000000000 stepper_step
+     /tmp/ccnwlPWk.s:742    .text.stepper_step:0000000000000020 $d
+     /tmp/ccnwlPWk.s:749    .text.stepper_get_position:0000000000000000 $t
+     /tmp/ccnwlPWk.s:757    .text.stepper_get_position:0000000000000000 stepper_get_position
+     /tmp/ccnwlPWk.s:788    .text.stepper_get_position:0000000000000018 $d
+     /tmp/ccnwlPWk.s:793    .text.stepper_set_position:0000000000000000 $t
+     /tmp/ccnwlPWk.s:801    .text.stepper_set_position:0000000000000000 stepper_set_position
+     /tmp/ccnwlPWk.s:827    .text.stepper_set_position:0000000000000014 $d
+     /tmp/ccnwlPWk.s:832    .text.stepper_add_move:0000000000000000 $t
+     /tmp/ccnwlPWk.s:840    .text.stepper_add_move:0000000000000000 stepper_add_move
+     /tmp/ccnwlPWk.s:1033   .text.stepper_add_move:000000000000007c $d
+     /tmp/ccnwlPWk.s:1039   .text.stepper_stop:0000000000000000 $t
+     /tmp/ccnwlPWk.s:1047   .text.stepper_stop:0000000000000000 stepper_stop
+     /tmp/ccnwlPWk.s:1075   .text.stepper_stop:0000000000000018 $d
+     /tmp/ccnwlPWk.s:1080   .text.stepper_stop_all:0000000000000000 $t
+     /tmp/ccnwlPWk.s:1088   .text.stepper_stop_all:0000000000000000 stepper_stop_all
+     /tmp/ccnwlPWk.s:1172   .text.stepper_stop_all:000000000000001c $d
+     /tmp/ccnwlPWk.s:1178   .text.stepper_is_moving:0000000000000000 $t
+     /tmp/ccnwlPWk.s:1186   .text.stepper_is_moving:0000000000000000 stepper_is_moving
+     /tmp/ccnwlPWk.s:1221   .text.stepper_is_moving:000000000000001c $d
+     /tmp/ccnwlPWk.s:1226   .bss.s_stepper_timer:0000000000000000 $d
+     /tmp/ccnwlPWk.s:1230   .bss.s_stepper_timer:0000000000000000 s_stepper_timer
+     /tmp/ccnwlPWk.s:1233   .bss.s_steppers:0000000000000000 $d
+     /tmp/ccnwlPWk.s:1237   .bss.s_steppers:0000000000000000 s_steppers
+
+UNDEFINED SYMBOLS
+gpio_out_write
+sched_is_before
+sched_time_diff
+gpio_out_setup
+sched_get_time
+sched_add_timer
+sched_del_timer

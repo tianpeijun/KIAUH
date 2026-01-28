@@ -1,0 +1,2176 @@
+ARM GAS  /tmp/ccyl9S3f.s 			page 1
+
+
+   1              		.cpu cortex-m4
+   2              		.eabi_attribute 27, 1
+   3              		.eabi_attribute 28, 1
+   4              		.eabi_attribute 20, 1
+   5              		.eabi_attribute 21, 1
+   6              		.eabi_attribute 23, 3
+   7              		.eabi_attribute 24, 1
+   8              		.eabi_attribute 25, 1
+   9              		.eabi_attribute 26, 1
+  10              		.eabi_attribute 30, 2
+  11              		.eabi_attribute 34, 1
+  12              		.eabi_attribute 18, 4
+  13              		.file	"itersolve.c"
+  14              		.text
+  15              	.Ltext0:
+  16              		.cfi_sections	.debug_frame
+  17              		.section	.text.itersolve_pool_init,"ax",%progbits
+  18              		.align	1
+  19              		.p2align 2,,3
+  20              		.global	itersolve_pool_init
+  21              		.arch armv7e-m
+  22              		.syntax unified
+  23              		.thumb
+  24              		.thumb_func
+  25              		.fpu fpv4-sp-d16
+  27              	itersolve_pool_init:
+  28              	.LFB6:
+  29              		.file 1 "chelper/itersolve.c"
+   1:chelper/itersolve.c **** /**
+   2:chelper/itersolve.c ****  * @file    itersolve.c
+   3:chelper/itersolve.c ****  * @brief   Iterative solver for stepper timing implementation
+   4:chelper/itersolve.c ****  * 
+   5:chelper/itersolve.c ****  * Adapted from Klipper klippy/chelper/itersolve.c for MCU use.
+   6:chelper/itersolve.c ****  * 
+   7:chelper/itersolve.c ****  * Key adaptations:
+   8:chelper/itersolve.c ****  * - Static memory pools instead of malloc/free
+   9:chelper/itersolve.c ****  * - Removed Python FFI markers (__visible)
+  10:chelper/itersolve.c ****  * - C99 compatible
+  11:chelper/itersolve.c ****  */
+  12:chelper/itersolve.c **** 
+  13:chelper/itersolve.c **** #include "itersolve.h"
+  14:chelper/itersolve.c **** #include <stdint.h>
+  15:chelper/itersolve.c **** #include <string.h>
+  16:chelper/itersolve.c **** #include <math.h>
+  17:chelper/itersolve.c **** 
+  18:chelper/itersolve.c **** /* ========== Static Memory Pools ========== */
+  19:chelper/itersolve.c **** 
+  20:chelper/itersolve.c **** static struct stepper_kinematics sk_pool[ITERSOLVE_MAX_STEPPERS];
+  21:chelper/itersolve.c **** static uint8_t sk_pool_used[ITERSOLVE_MAX_STEPPERS];
+  22:chelper/itersolve.c **** 
+  23:chelper/itersolve.c **** /* ========== Memory Pool Functions ========== */
+  24:chelper/itersolve.c **** 
+  25:chelper/itersolve.c **** void
+  26:chelper/itersolve.c **** itersolve_pool_init(void)
+  27:chelper/itersolve.c **** {
+  30              		.loc 1 27 1 view -0
+  31              		.cfi_startproc
+ARM GAS  /tmp/ccyl9S3f.s 			page 2
+
+
+  32              		@ args = 0, pretend = 0, frame = 0
+  33              		@ frame_needed = 0, uses_anonymous_args = 0
+  34              		@ link register save eliminated.
+  28:chelper/itersolve.c ****     memset(sk_pool_used, 0, sizeof(sk_pool_used));
+  35              		.loc 1 28 5 view .LVU1
+  36 0000 044B     		ldr	r3, .L3
+  29:chelper/itersolve.c ****     memset(sk_pool, 0, sizeof(sk_pool));
+  37              		.loc 1 29 5 is_stmt 0 view .LVU2
+  38 0002 0548     		ldr	r0, .L3+4
+  28:chelper/itersolve.c ****     memset(sk_pool_used, 0, sizeof(sk_pool_used));
+  39              		.loc 1 28 5 view .LVU3
+  40 0004 0021     		movs	r1, #0
+  41 0006 C3E90011 		strd	r1, r1, [r3]
+  42              		.loc 1 29 5 is_stmt 1 view .LVU4
+  43 000a 4FF41072 		mov	r2, #576
+  44 000e FFF7FEBF 		b	memset
+  45              	.LVL0:
+  46              	.L4:
+  47 0012 00BF     		.align	2
+  48              	.L3:
+  49 0014 00000000 		.word	.LANCHOR0
+  50 0018 00000000 		.word	.LANCHOR1
+  51              		.cfi_endproc
+  52              	.LFE6:
+  54              		.section	.text.itersolve_alloc,"ax",%progbits
+  55              		.align	1
+  56              		.p2align 2,,3
+  57              		.global	itersolve_alloc
+  58              		.syntax unified
+  59              		.thumb
+  60              		.thumb_func
+  61              		.fpu fpv4-sp-d16
+  63              	itersolve_alloc:
+  64              	.LFB7:
+  30:chelper/itersolve.c **** }
+  31:chelper/itersolve.c **** 
+  32:chelper/itersolve.c **** struct stepper_kinematics *
+  33:chelper/itersolve.c **** itersolve_alloc(void)
+  34:chelper/itersolve.c **** {
+  65              		.loc 1 34 1 view -0
+  66              		.cfi_startproc
+  67              		@ args = 0, pretend = 0, frame = 0
+  68              		@ frame_needed = 0, uses_anonymous_args = 0
+  35:chelper/itersolve.c ****     for (int i = 0; i < ITERSOLVE_MAX_STEPPERS; i++) {
+  69              		.loc 1 35 5 view .LVU6
+  70              	.LBB2:
+  71              		.loc 1 35 10 view .LVU7
+  72              	.LVL1:
+  73              		.loc 1 35 21 view .LVU8
+  74              	.LBE2:
+  34:chelper/itersolve.c ****     for (int i = 0; i < ITERSOLVE_MAX_STEPPERS; i++) {
+  75              		.loc 1 34 1 is_stmt 0 view .LVU9
+  76 0000 10B5     		push	{r4, lr}
+  77              		.cfi_def_cfa_offset 8
+  78              		.cfi_offset 4, -8
+  79              		.cfi_offset 14, -4
+  80 0002 0E4A     		ldr	r2, .L12
+ARM GAS  /tmp/ccyl9S3f.s 			page 3
+
+
+  81              	.LBB4:
+  82              		.loc 1 35 14 view .LVU10
+  83 0004 0023     		movs	r3, #0
+  84              	.LVL2:
+  85              	.L8:
+  36:chelper/itersolve.c ****         if (!sk_pool_used[i]) {
+  86              		.loc 1 36 9 is_stmt 1 view .LVU11
+  35:chelper/itersolve.c ****     for (int i = 0; i < ITERSOLVE_MAX_STEPPERS; i++) {
+  87              		.loc 1 35 49 view .LVU12
+  88              		.loc 1 36 12 is_stmt 0 view .LVU13
+  89 0006 12F8011F 		ldrb	r1, [r2, #1]!	@ zero_extendqisi2
+  90 000a 29B1     		cbz	r1, .L11
+  35:chelper/itersolve.c ****     for (int i = 0; i < ITERSOLVE_MAX_STEPPERS; i++) {
+  91              		.loc 1 35 50 discriminator 2 view .LVU14
+  92 000c 0133     		adds	r3, r3, #1
+  93              	.LVL3:
+  35:chelper/itersolve.c ****     for (int i = 0; i < ITERSOLVE_MAX_STEPPERS; i++) {
+  94              		.loc 1 35 21 is_stmt 1 discriminator 2 view .LVU15
+  35:chelper/itersolve.c ****     for (int i = 0; i < ITERSOLVE_MAX_STEPPERS; i++) {
+  95              		.loc 1 35 5 is_stmt 0 discriminator 2 view .LVU16
+  96 000e 082B     		cmp	r3, #8
+  97 0010 F9D1     		bne	.L8
+  98              	.LBE4:
+  37:chelper/itersolve.c ****             sk_pool_used[i] = 1;
+  38:chelper/itersolve.c ****             struct stepper_kinematics *sk = &sk_pool[i];
+  39:chelper/itersolve.c ****             memset(sk, 0, sizeof(*sk));
+  40:chelper/itersolve.c ****             sk->step_dist = 1.0;  /* Default: 1mm per step */
+  41:chelper/itersolve.c ****             return sk;
+  42:chelper/itersolve.c ****         }
+  43:chelper/itersolve.c ****     }
+  44:chelper/itersolve.c ****     return NULL;  /* Pool exhausted */
+  99              		.loc 1 44 12 view .LVU17
+ 100 0012 0024     		movs	r4, #0
+  45:chelper/itersolve.c **** }
+ 101              		.loc 1 45 1 view .LVU18
+ 102 0014 2046     		mov	r0, r4
+ 103 0016 10BD     		pop	{r4, pc}
+ 104              	.L11:
+ 105              	.LBB5:
+ 106              	.LBB3:
+  37:chelper/itersolve.c ****             sk_pool_used[i] = 1;
+ 107              		.loc 1 37 13 is_stmt 1 view .LVU19
+  38:chelper/itersolve.c ****             memset(sk, 0, sizeof(*sk));
+ 108              		.loc 1 38 40 is_stmt 0 view .LVU20
+ 109 0018 094C     		ldr	r4, .L12+4
+ 110 001a 03EBC302 		add	r2, r3, r3, lsl #3
+ 111 001e 04EBC204 		add	r4, r4, r2, lsl #3
+  37:chelper/itersolve.c ****             sk_pool_used[i] = 1;
+ 112              		.loc 1 37 29 view .LVU21
+ 113 0022 084A     		ldr	r2, .L12+8
+ 114 0024 0120     		movs	r0, #1
+ 115 0026 D054     		strb	r0, [r2, r3]
+  38:chelper/itersolve.c ****             memset(sk, 0, sizeof(*sk));
+ 116              		.loc 1 38 13 is_stmt 1 view .LVU22
+ 117              	.LVL4:
+  39:chelper/itersolve.c ****             sk->step_dist = 1.0;  /* Default: 1mm per step */
+ 118              		.loc 1 39 13 view .LVU23
+ARM GAS  /tmp/ccyl9S3f.s 			page 4
+
+
+ 119 0028 4822     		movs	r2, #72
+ 120 002a 2046     		mov	r0, r4
+ 121 002c FFF7FEFF 		bl	memset
+ 122              	.LVL5:
+  40:chelper/itersolve.c ****             return sk;
+ 123              		.loc 1 40 13 view .LVU24
+  40:chelper/itersolve.c ****             return sk;
+ 124              		.loc 1 40 27 is_stmt 0 view .LVU25
+ 125 0030 054B     		ldr	r3, .L12+12
+ 126 0032 0022     		movs	r2, #0
+ 127 0034 C4E90A23 		strd	r2, [r4, #40]
+  41:chelper/itersolve.c ****         }
+ 128              		.loc 1 41 13 is_stmt 1 view .LVU26
+ 129              	.LBE3:
+ 130              	.LBE5:
+ 131              		.loc 1 45 1 is_stmt 0 view .LVU27
+ 132 0038 2046     		mov	r0, r4
+ 133 003a 10BD     		pop	{r4, pc}
+ 134              	.LVL6:
+ 135              	.L13:
+ 136              		.loc 1 45 1 view .LVU28
+ 137              		.align	2
+ 138              	.L12:
+ 139 003c FFFFFFFF 		.word	.LANCHOR0-1
+ 140 0040 00000000 		.word	.LANCHOR1
+ 141 0044 00000000 		.word	.LANCHOR0
+ 142 0048 0000F03F 		.word	1072693248
+ 143              		.cfi_endproc
+ 144              	.LFE7:
+ 146              		.section	.text.itersolve_free,"ax",%progbits
+ 147              		.align	1
+ 148              		.p2align 2,,3
+ 149              		.global	itersolve_free
+ 150              		.syntax unified
+ 151              		.thumb
+ 152              		.thumb_func
+ 153              		.fpu fpv4-sp-d16
+ 155              	itersolve_free:
+ 156              	.LVL7:
+ 157              	.LFB8:
+  46:chelper/itersolve.c **** 
+  47:chelper/itersolve.c **** void
+  48:chelper/itersolve.c **** itersolve_free(struct stepper_kinematics *sk)
+  49:chelper/itersolve.c **** {
+ 158              		.loc 1 49 1 is_stmt 1 view -0
+ 159              		.cfi_startproc
+ 160              		@ args = 0, pretend = 0, frame = 0
+ 161              		@ frame_needed = 0, uses_anonymous_args = 0
+ 162              		@ link register save eliminated.
+  50:chelper/itersolve.c ****     if (sk == NULL) {
+ 163              		.loc 1 50 5 view .LVU30
+ 164              		.loc 1 50 8 is_stmt 0 view .LVU31
+ 165 0000 58B1     		cbz	r0, .L14
+  51:chelper/itersolve.c ****         return;
+  52:chelper/itersolve.c ****     }
+  53:chelper/itersolve.c ****     int idx = sk - sk_pool;
+ 166              		.loc 1 53 5 is_stmt 1 view .LVU32
+ARM GAS  /tmp/ccyl9S3f.s 			page 5
+
+
+ 167              		.loc 1 53 18 is_stmt 0 view .LVU33
+ 168 0002 064B     		ldr	r3, .L19
+ 169 0004 C01A     		subs	r0, r0, r3
+ 170              	.LVL8:
+  54:chelper/itersolve.c ****     if (idx >= 0 && idx < ITERSOLVE_MAX_STEPPERS) {
+ 171              		.loc 1 54 5 is_stmt 1 view .LVU34
+ 172              		.loc 1 54 8 is_stmt 0 view .LVU35
+ 173 0006 B0F5FC7F 		cmp	r0, #504
+ 174 000a 06D8     		bhi	.L14
+  55:chelper/itersolve.c ****         sk_pool_used[idx] = 0;
+ 175              		.loc 1 55 9 is_stmt 1 view .LVU36
+  53:chelper/itersolve.c ****     if (idx >= 0 && idx < ITERSOLVE_MAX_STEPPERS) {
+ 176              		.loc 1 53 9 is_stmt 0 view .LVU37
+ 177 000c 044A     		ldr	r2, .L19+4
+ 178              		.loc 1 55 27 view .LVU38
+ 179 000e 054B     		ldr	r3, .L19+8
+  53:chelper/itersolve.c ****     if (idx >= 0 && idx < ITERSOLVE_MAX_STEPPERS) {
+ 180              		.loc 1 53 9 view .LVU39
+ 181 0010 C010     		asrs	r0, r0, #3
+ 182              	.LVL9:
+  53:chelper/itersolve.c ****     if (idx >= 0 && idx < ITERSOLVE_MAX_STEPPERS) {
+ 183              		.loc 1 53 9 view .LVU40
+ 184 0012 02FB00F0 		mul	r0, r2, r0
+ 185              		.loc 1 55 27 view .LVU41
+ 186 0016 0022     		movs	r2, #0
+ 187 0018 1A54     		strb	r2, [r3, r0]
+ 188              	.LVL10:
+ 189              	.L14:
+  56:chelper/itersolve.c ****     }
+  57:chelper/itersolve.c **** }
+ 190              		.loc 1 57 1 view .LVU42
+ 191 001a 7047     		bx	lr
+ 192              	.L20:
+ 193              		.align	2
+ 194              	.L19:
+ 195 001c 00000000 		.word	.LANCHOR1
+ 196 0020 398EE338 		.word	954437177
+ 197 0024 00000000 		.word	.LANCHOR0
+ 198              		.cfi_endproc
+ 199              	.LFE8:
+ 201              		.section	.text.itersolve_set_trapq,"ax",%progbits
+ 202              		.align	1
+ 203              		.p2align 2,,3
+ 204              		.global	itersolve_set_trapq
+ 205              		.syntax unified
+ 206              		.thumb
+ 207              		.thumb_func
+ 208              		.fpu fpv4-sp-d16
+ 210              	itersolve_set_trapq:
+ 211              	.LVL11:
+ 212              	.LFB9:
+  58:chelper/itersolve.c **** 
+  59:chelper/itersolve.c **** /* ========== Configuration Functions ========== */
+  60:chelper/itersolve.c **** 
+  61:chelper/itersolve.c **** void
+  62:chelper/itersolve.c **** itersolve_set_trapq(struct stepper_kinematics *sk, struct trapq *tq)
+  63:chelper/itersolve.c **** {
+ARM GAS  /tmp/ccyl9S3f.s 			page 6
+
+
+ 213              		.loc 1 63 1 is_stmt 1 view -0
+ 214              		.cfi_startproc
+ 215              		@ args = 0, pretend = 0, frame = 0
+ 216              		@ frame_needed = 0, uses_anonymous_args = 0
+ 217              		@ link register save eliminated.
+  64:chelper/itersolve.c ****     sk->tq = tq;
+ 218              		.loc 1 64 5 view .LVU44
+ 219              		.loc 1 64 12 is_stmt 0 view .LVU45
+ 220 0000 8163     		str	r1, [r0, #56]
+  65:chelper/itersolve.c **** }
+ 221              		.loc 1 65 1 view .LVU46
+ 222 0002 7047     		bx	lr
+ 223              		.cfi_endproc
+ 224              	.LFE9:
+ 226              		.section	.text.itersolve_set_calc_callback,"ax",%progbits
+ 227              		.align	1
+ 228              		.p2align 2,,3
+ 229              		.global	itersolve_set_calc_callback
+ 230              		.syntax unified
+ 231              		.thumb
+ 232              		.thumb_func
+ 233              		.fpu fpv4-sp-d16
+ 235              	itersolve_set_calc_callback:
+ 236              	.LVL12:
+ 237              	.LFB10:
+  66:chelper/itersolve.c **** 
+  67:chelper/itersolve.c **** void
+  68:chelper/itersolve.c **** itersolve_set_calc_callback(struct stepper_kinematics *sk, sk_calc_callback cb)
+  69:chelper/itersolve.c **** {
+ 238              		.loc 1 69 1 is_stmt 1 view -0
+ 239              		.cfi_startproc
+ 240              		@ args = 0, pretend = 0, frame = 0
+ 241              		@ frame_needed = 0, uses_anonymous_args = 0
+ 242              		@ link register save eliminated.
+  70:chelper/itersolve.c ****     sk->calc_position_cb = cb;
+ 243              		.loc 1 70 5 view .LVU48
+ 244              		.loc 1 70 26 is_stmt 0 view .LVU49
+ 245 0000 0160     		str	r1, [r0]
+  71:chelper/itersolve.c **** }
+ 246              		.loc 1 71 1 view .LVU50
+ 247 0002 7047     		bx	lr
+ 248              		.cfi_endproc
+ 249              	.LFE10:
+ 251              		.section	.text.itersolve_set_step_dist,"ax",%progbits
+ 252              		.align	1
+ 253              		.p2align 2,,3
+ 254              		.global	itersolve_set_step_dist
+ 255              		.syntax unified
+ 256              		.thumb
+ 257              		.thumb_func
+ 258              		.fpu fpv4-sp-d16
+ 260              	itersolve_set_step_dist:
+ 261              	.LVL13:
+ 262              	.LFB11:
+  72:chelper/itersolve.c **** 
+  73:chelper/itersolve.c **** void
+  74:chelper/itersolve.c **** itersolve_set_step_dist(struct stepper_kinematics *sk, double step_dist)
+ARM GAS  /tmp/ccyl9S3f.s 			page 7
+
+
+  75:chelper/itersolve.c **** {
+ 263              		.loc 1 75 1 is_stmt 1 view -0
+ 264              		.cfi_startproc
+ 265              		@ args = 0, pretend = 0, frame = 0
+ 266              		@ frame_needed = 0, uses_anonymous_args = 0
+ 267              		@ link register save eliminated.
+  76:chelper/itersolve.c ****     sk->step_dist = step_dist;
+ 268              		.loc 1 76 5 view .LVU52
+ 269              		.loc 1 76 19 is_stmt 0 view .LVU53
+ 270 0000 80ED0A0B 		vstr.64	d0, [r0, #40]
+  77:chelper/itersolve.c **** }
+ 271              		.loc 1 77 1 view .LVU54
+ 272 0004 7047     		bx	lr
+ 273              		.cfi_endproc
+ 274              	.LFE11:
+ 276 0006 00BF     		.section	.text.itersolve_set_position,"ax",%progbits
+ 277              		.align	1
+ 278              		.p2align 2,,3
+ 279              		.global	itersolve_set_position
+ 280              		.syntax unified
+ 281              		.thumb
+ 282              		.thumb_func
+ 283              		.fpu fpv4-sp-d16
+ 285              	itersolve_set_position:
+ 286              	.LVL14:
+ 287              	.LFB12:
+  78:chelper/itersolve.c **** 
+  79:chelper/itersolve.c **** void
+  80:chelper/itersolve.c **** itersolve_set_position(struct stepper_kinematics *sk, double pos)
+  81:chelper/itersolve.c **** {
+ 288              		.loc 1 81 1 is_stmt 1 view -0
+ 289              		.cfi_startproc
+ 290              		@ args = 0, pretend = 0, frame = 0
+ 291              		@ frame_needed = 0, uses_anonymous_args = 0
+ 292              		@ link register save eliminated.
+  82:chelper/itersolve.c ****     sk->commanded_pos = pos;
+ 293              		.loc 1 82 5 view .LVU56
+ 294              		.loc 1 82 23 is_stmt 0 view .LVU57
+ 295 0000 80ED040B 		vstr.64	d0, [r0, #16]
+  83:chelper/itersolve.c ****     sk->step_pos = pos;
+ 296              		.loc 1 83 5 is_stmt 1 view .LVU58
+ 297              		.loc 1 83 18 is_stmt 0 view .LVU59
+ 298 0004 80ED0C0B 		vstr.64	d0, [r0, #48]
+  84:chelper/itersolve.c **** }
+ 299              		.loc 1 84 1 view .LVU60
+ 300 0008 7047     		bx	lr
+ 301              		.cfi_endproc
+ 302              	.LFE12:
+ 304 000a 00BF     		.section	.text.itersolve_get_position,"ax",%progbits
+ 305              		.align	1
+ 306              		.p2align 2,,3
+ 307              		.global	itersolve_get_position
+ 308              		.syntax unified
+ 309              		.thumb
+ 310              		.thumb_func
+ 311              		.fpu fpv4-sp-d16
+ 313              	itersolve_get_position:
+ARM GAS  /tmp/ccyl9S3f.s 			page 8
+
+
+ 314              	.LVL15:
+ 315              	.LFB13:
+  85:chelper/itersolve.c **** 
+  86:chelper/itersolve.c **** double
+  87:chelper/itersolve.c **** itersolve_get_position(struct stepper_kinematics *sk)
+  88:chelper/itersolve.c **** {
+ 316              		.loc 1 88 1 is_stmt 1 view -0
+ 317              		.cfi_startproc
+ 318              		@ args = 0, pretend = 0, frame = 0
+ 319              		@ frame_needed = 0, uses_anonymous_args = 0
+ 320              		@ link register save eliminated.
+  89:chelper/itersolve.c ****     return sk->commanded_pos;
+ 321              		.loc 1 89 5 view .LVU62
+  90:chelper/itersolve.c **** }
+ 322              		.loc 1 90 1 is_stmt 0 view .LVU63
+ 323 0000 90ED040B 		vldr.64	d0, [r0, #16]
+ 324 0004 7047     		bx	lr
+ 325              		.cfi_endproc
+ 326              	.LFE13:
+ 328              		.global	__aeabi_dcmpge
+ 329              		.global	__aeabi_dadd
+ 330              		.global	__aeabi_dcmple
+ 331              		.global	__aeabi_dsub
+ 332 0006 00BF     		.section	.text.itersolve_calc_position,"ax",%progbits
+ 333              		.align	1
+ 334              		.p2align 2,,3
+ 335              		.global	itersolve_calc_position
+ 336              		.syntax unified
+ 337              		.thumb
+ 338              		.thumb_func
+ 339              		.fpu fpv4-sp-d16
+ 341              	itersolve_calc_position:
+ 342              	.LVL16:
+ 343              	.LFB15:
+  91:chelper/itersolve.c **** 
+  92:chelper/itersolve.c **** /* ========== Position Calculation ========== */
+  93:chelper/itersolve.c **** 
+  94:chelper/itersolve.c **** /**
+  95:chelper/itersolve.c ****  * Find the move containing the given time
+  96:chelper/itersolve.c ****  */
+  97:chelper/itersolve.c **** static struct move *
+  98:chelper/itersolve.c **** find_move_at_time(struct trapq *tq, double print_time)
+  99:chelper/itersolve.c **** {
+ 100:chelper/itersolve.c ****     if (tq == NULL) {
+ 101:chelper/itersolve.c ****         return NULL;
+ 102:chelper/itersolve.c ****     }
+ 103:chelper/itersolve.c ****     
+ 104:chelper/itersolve.c ****     struct move *m;
+ 105:chelper/itersolve.c ****     list_for_each_entry(m, &tq->moves, struct move, node) {
+ 106:chelper/itersolve.c ****         double move_end = m->print_time + m->move_t;
+ 107:chelper/itersolve.c ****         if (print_time >= m->print_time && print_time <= move_end) {
+ 108:chelper/itersolve.c ****             return m;
+ 109:chelper/itersolve.c ****         }
+ 110:chelper/itersolve.c ****     }
+ 111:chelper/itersolve.c ****     
+ 112:chelper/itersolve.c ****     return NULL;
+ 113:chelper/itersolve.c **** }
+ARM GAS  /tmp/ccyl9S3f.s 			page 9
+
+
+ 114:chelper/itersolve.c **** 
+ 115:chelper/itersolve.c **** double
+ 116:chelper/itersolve.c **** itersolve_calc_position(struct stepper_kinematics *sk, double print_time)
+ 117:chelper/itersolve.c **** {
+ 344              		.loc 1 117 1 is_stmt 1 view -0
+ 345              		.cfi_startproc
+ 346              		@ args = 0, pretend = 0, frame = 0
+ 347              		@ frame_needed = 0, uses_anonymous_args = 0
+ 118:chelper/itersolve.c ****     if (sk->calc_position_cb == NULL || sk->tq == NULL) {
+ 348              		.loc 1 118 5 view .LVU65
+ 117:chelper/itersolve.c ****     if (sk->calc_position_cb == NULL || sk->tq == NULL) {
+ 349              		.loc 1 117 1 is_stmt 0 view .LVU66
+ 350 0000 2DE9F04F 		push	{r4, r5, r6, r7, r8, r9, r10, fp, lr}
+ 351              		.cfi_def_cfa_offset 36
+ 352              		.cfi_offset 4, -36
+ 353              		.cfi_offset 5, -32
+ 354              		.cfi_offset 6, -28
+ 355              		.cfi_offset 7, -24
+ 356              		.cfi_offset 8, -20
+ 357              		.cfi_offset 9, -16
+ 358              		.cfi_offset 10, -12
+ 359              		.cfi_offset 11, -8
+ 360              		.cfi_offset 14, -4
+ 361              		.loc 1 118 11 view .LVU67
+ 362 0004 D0F800B0 		ldr	fp, [r0]
+ 117:chelper/itersolve.c ****     if (sk->calc_position_cb == NULL || sk->tq == NULL) {
+ 363              		.loc 1 117 1 view .LVU68
+ 364 0008 81B0     		sub	sp, sp, #4
+ 365              		.cfi_def_cfa_offset 40
+ 117:chelper/itersolve.c ****     if (sk->calc_position_cb == NULL || sk->tq == NULL) {
+ 366              		.loc 1 117 1 view .LVU69
+ 367 000a 8246     		mov	r10, r0
+ 368              		.loc 1 118 8 view .LVU70
+ 369 000c BBF1000F 		cmp	fp, #0
+ 370 0010 25D0     		beq	.L27
+ 371              		.loc 1 118 43 discriminator 1 view .LVU71
+ 372 0012 856B     		ldr	r5, [r0, #56]
+ 373              		.loc 1 118 38 discriminator 1 view .LVU72
+ 374 0014 1DB3     		cbz	r5, .L27
+ 375              	.LBB9:
+ 376              	.LBB10:
+ 105:chelper/itersolve.c ****         double move_end = m->print_time + m->move_t;
+ 377              		.loc 1 105 5 view .LVU73
+ 378 0016 2B68     		ldr	r3, [r5]
+ 379 0018 9D42     		cmp	r5, r3
+ 380 001a 59EC108B 		vmov	r8, r9, d0
+ 381              	.LBE10:
+ 382              	.LBE9:
+ 119:chelper/itersolve.c ****         return sk->commanded_pos;
+ 120:chelper/itersolve.c ****     }
+ 121:chelper/itersolve.c ****     
+ 122:chelper/itersolve.c ****     struct move *m = find_move_at_time(sk->tq, print_time);
+ 383              		.loc 1 122 5 is_stmt 1 view .LVU74
+ 384              	.LVL17:
+ 385              	.LBB13:
+ 386              	.LBI9:
+  98:chelper/itersolve.c **** {
+ARM GAS  /tmp/ccyl9S3f.s 			page 10
+
+
+ 387              		.loc 1 98 1 view .LVU75
+ 388              	.LBB12:
+ 100:chelper/itersolve.c ****         return NULL;
+ 389              		.loc 1 100 5 view .LVU76
+ 104:chelper/itersolve.c ****     list_for_each_entry(m, &tq->moves, struct move, node) {
+ 390              		.loc 1 104 5 view .LVU77
+ 105:chelper/itersolve.c ****         double move_end = m->print_time + m->move_t;
+ 391              		.loc 1 105 5 view .LVU78
+ 392 001e A3F18004 		sub	r4, r3, #128
+ 393              	.LVL18:
+ 105:chelper/itersolve.c ****         double move_end = m->print_time + m->move_t;
+ 394              		.loc 1 105 5 view .LVU79
+ 395 0022 1CD0     		beq	.L27
+ 396              	.LVL19:
+ 397              	.L33:
+ 398              	.LBB11:
+ 106:chelper/itersolve.c ****         if (print_time >= m->print_time && print_time <= move_end) {
+ 399              		.loc 1 106 9 view .LVU80
+ 106:chelper/itersolve.c ****         if (print_time >= m->print_time && print_time <= move_end) {
+ 400              		.loc 1 106 28 is_stmt 0 view .LVU81
+ 401 0024 D4E90067 		ldrd	r6, [r4]
+ 402              	.LVL20:
+ 107:chelper/itersolve.c ****             return m;
+ 403              		.loc 1 107 9 is_stmt 1 view .LVU82
+ 107:chelper/itersolve.c ****             return m;
+ 404              		.loc 1 107 12 is_stmt 0 view .LVU83
+ 405 0028 4946     		mov	r1, r9
+ 406 002a 3B46     		mov	r3, r7
+ 407 002c 4046     		mov	r0, r8
+ 408 002e 3246     		mov	r2, r6
+ 409 0030 FFF7FEFF 		bl	__aeabi_dcmpge
+ 410              	.LVL21:
+ 107:chelper/itersolve.c ****             return m;
+ 411              		.loc 1 107 12 view .LVU84
+ 412 0034 0346     		mov	r3, r0
+ 106:chelper/itersolve.c ****         if (print_time >= m->print_time && print_time <= move_end) {
+ 413              		.loc 1 106 16 view .LVU85
+ 414 0036 3946     		mov	r1, r7
+ 415 0038 3046     		mov	r0, r6
+ 107:chelper/itersolve.c ****             return m;
+ 416              		.loc 1 107 12 view .LVU86
+ 417 003a 53B1     		cbz	r3, .L30
+ 106:chelper/itersolve.c ****         if (print_time >= m->print_time && print_time <= move_end) {
+ 418              		.loc 1 106 16 view .LVU87
+ 419 003c D4E90223 		ldrd	r2, [r4, #8]
+ 420              	.LVL22:
+ 106:chelper/itersolve.c ****         if (print_time >= m->print_time && print_time <= move_end) {
+ 421              		.loc 1 106 16 view .LVU88
+ 422 0040 FFF7FEFF 		bl	__aeabi_dadd
+ 423              	.LVL23:
+ 106:chelper/itersolve.c ****         if (print_time >= m->print_time && print_time <= move_end) {
+ 424              		.loc 1 106 16 view .LVU89
+ 425 0044 0246     		mov	r2, r0
+ 426 0046 0B46     		mov	r3, r1
+ 107:chelper/itersolve.c ****             return m;
+ 427              		.loc 1 107 41 view .LVU90
+ 428 0048 4046     		mov	r0, r8
+ARM GAS  /tmp/ccyl9S3f.s 			page 11
+
+
+ 429 004a 4946     		mov	r1, r9
+ 430 004c FFF7FEFF 		bl	__aeabi_dcmple
+ 431              	.LVL24:
+ 432 0050 50B9     		cbnz	r0, .L32
+ 433              	.L30:
+ 434              	.LBE11:
+ 105:chelper/itersolve.c ****         double move_end = m->print_time + m->move_t;
+ 435              		.loc 1 105 5 is_stmt 1 view .LVU91
+ 436 0052 D4F88030 		ldr	r3, [r4, #128]
+ 437 0056 9D42     		cmp	r5, r3
+ 438 0058 A3F18004 		sub	r4, r3, #128
+ 439              	.LVL25:
+ 105:chelper/itersolve.c ****         double move_end = m->print_time + m->move_t;
+ 440              		.loc 1 105 5 view .LVU92
+ 441 005c E2D1     		bne	.L33
+ 442              	.LVL26:
+ 443              	.L27:
+ 105:chelper/itersolve.c ****         double move_end = m->print_time + m->move_t;
+ 444              		.loc 1 105 5 is_stmt 0 view .LVU93
+ 445              	.LBE12:
+ 446              	.LBE13:
+ 119:chelper/itersolve.c ****     }
+ 447              		.loc 1 119 9 is_stmt 1 view .LVU94
+ 119:chelper/itersolve.c ****     }
+ 448              		.loc 1 119 18 is_stmt 0 view .LVU95
+ 449 005e 9AED040B 		vldr.64	d0, [r10, #16]
+ 123:chelper/itersolve.c ****     if (m == NULL) {
+ 124:chelper/itersolve.c ****         return sk->commanded_pos;
+ 125:chelper/itersolve.c ****     }
+ 126:chelper/itersolve.c ****     
+ 127:chelper/itersolve.c ****     double move_time = print_time - m->print_time;
+ 128:chelper/itersolve.c ****     return sk->calc_position_cb(sk, m, move_time);
+ 129:chelper/itersolve.c **** }
+ 450              		.loc 1 129 1 view .LVU96
+ 451 0062 01B0     		add	sp, sp, #4
+ 452              		.cfi_remember_state
+ 453              		.cfi_def_cfa_offset 36
+ 454              		@ sp needed
+ 455 0064 BDE8F08F 		pop	{r4, r5, r6, r7, r8, r9, r10, fp, pc}
+ 456              	.LVL27:
+ 457              	.L32:
+ 458              		.cfi_restore_state
+ 123:chelper/itersolve.c ****     if (m == NULL) {
+ 459              		.loc 1 123 5 is_stmt 1 view .LVU97
+ 127:chelper/itersolve.c ****     return sk->calc_position_cb(sk, m, move_time);
+ 460              		.loc 1 127 5 view .LVU98
+ 128:chelper/itersolve.c **** }
+ 461              		.loc 1 128 5 view .LVU99
+ 127:chelper/itersolve.c ****     return sk->calc_position_cb(sk, m, move_time);
+ 462              		.loc 1 127 12 is_stmt 0 view .LVU100
+ 463 0068 3B46     		mov	r3, r7
+ 464 006a 3246     		mov	r2, r6
+ 465 006c 4046     		mov	r0, r8
+ 466 006e 4946     		mov	r1, r9
+ 467 0070 FFF7FEFF 		bl	__aeabi_dsub
+ 468              	.LVL28:
+ 128:chelper/itersolve.c **** }
+ARM GAS  /tmp/ccyl9S3f.s 			page 12
+
+
+ 469              		.loc 1 128 12 view .LVU101
+ 470 0074 41EC100B 		vmov	d0, r0, r1
+ 471 0078 5B46     		mov	r3, fp
+ 472 007a 2146     		mov	r1, r4
+ 473 007c 5046     		mov	r0, r10
+ 474              		.loc 1 129 1 view .LVU102
+ 475 007e 01B0     		add	sp, sp, #4
+ 476              		.cfi_def_cfa_offset 36
+ 477              		@ sp needed
+ 478 0080 BDE8F04F 		pop	{r4, r5, r6, r7, r8, r9, r10, fp, lr}
+ 479              		.cfi_restore 14
+ 480              		.cfi_restore 11
+ 481              		.cfi_restore 10
+ 482              		.cfi_restore 9
+ 483              		.cfi_restore 8
+ 484              		.cfi_restore 7
+ 485              		.cfi_restore 6
+ 486              		.cfi_restore 5
+ 487              		.cfi_restore 4
+ 488              		.cfi_def_cfa_offset 0
+ 489              	.LVL29:
+ 128:chelper/itersolve.c **** }
+ 490              		.loc 1 128 12 view .LVU103
+ 491 0084 1847     		bx	r3
+ 492              	.LVL30:
+ 128:chelper/itersolve.c **** }
+ 493              		.loc 1 128 12 view .LVU104
+ 494              		.cfi_endproc
+ 495              	.LFE15:
+ 497              		.global	__aeabi_dcmplt
+ 498              		.global	__aeabi_dcmpgt
+ 499              		.global	__aeabi_dmul
+ 500              		.global	__aeabi_ddiv
+ 501              		.global	__aeabi_i2d
+ 502 0086 00BF     		.section	.text.itersolve_generate_steps,"ax",%progbits
+ 503              		.align	1
+ 504              		.p2align 2,,3
+ 505              		.global	itersolve_generate_steps
+ 506              		.syntax unified
+ 507              		.thumb
+ 508              		.thumb_func
+ 509              		.fpu fpv4-sp-d16
+ 511              	itersolve_generate_steps:
+ 512              	.LVL31:
+ 513              	.LFB17:
+ 130:chelper/itersolve.c **** 
+ 131:chelper/itersolve.c **** /* ========== Step Generation ========== */
+ 132:chelper/itersolve.c **** 
+ 133:chelper/itersolve.c **** /**
+ 134:chelper/itersolve.c ****  * Iteratively solve for the time when stepper reaches target position
+ 135:chelper/itersolve.c ****  * 
+ 136:chelper/itersolve.c ****  * Uses Newton-Raphson iteration to find the time when the stepper
+ 137:chelper/itersolve.c ****  * position equals the target step position.
+ 138:chelper/itersolve.c ****  */
+ 139:chelper/itersolve.c **** static double
+ 140:chelper/itersolve.c **** itersolve_find_step_time(struct stepper_kinematics *sk, struct move *m,
+ 141:chelper/itersolve.c ****                          double target_pos, double low_time, double high_time)
+ARM GAS  /tmp/ccyl9S3f.s 			page 13
+
+
+ 142:chelper/itersolve.c **** {
+ 143:chelper/itersolve.c ****     /* Newton-Raphson iteration parameters */
+ 144:chelper/itersolve.c ****     const int max_iterations = 50;
+ 145:chelper/itersolve.c ****     const double tolerance = 1e-9;
+ 146:chelper/itersolve.c ****     
+ 147:chelper/itersolve.c ****     double time = (low_time + high_time) * 0.5;
+ 148:chelper/itersolve.c ****     
+ 149:chelper/itersolve.c ****     for (int i = 0; i < max_iterations; i++) {
+ 150:chelper/itersolve.c ****         double pos = sk->calc_position_cb(sk, m, time);
+ 151:chelper/itersolve.c ****         double error = pos - target_pos;
+ 152:chelper/itersolve.c ****         
+ 153:chelper/itersolve.c ****         if (fabs(error) < tolerance) {
+ 154:chelper/itersolve.c ****             return time;
+ 155:chelper/itersolve.c ****         }
+ 156:chelper/itersolve.c ****         
+ 157:chelper/itersolve.c ****         /* Estimate derivative using finite difference */
+ 158:chelper/itersolve.c ****         double dt = 1e-6;
+ 159:chelper/itersolve.c ****         double pos_dt = sk->calc_position_cb(sk, m, time + dt);
+ 160:chelper/itersolve.c ****         double derivative = (pos_dt - pos) / dt;
+ 161:chelper/itersolve.c ****         
+ 162:chelper/itersolve.c ****         if (fabs(derivative) < 1e-12) {
+ 163:chelper/itersolve.c ****             /* Derivative too small, use bisection */
+ 164:chelper/itersolve.c ****             if (error > 0) {
+ 165:chelper/itersolve.c ****                 high_time = time;
+ 166:chelper/itersolve.c ****             } else {
+ 167:chelper/itersolve.c ****                 low_time = time;
+ 168:chelper/itersolve.c ****             }
+ 169:chelper/itersolve.c ****             time = (low_time + high_time) * 0.5;
+ 170:chelper/itersolve.c ****         } else {
+ 171:chelper/itersolve.c ****             /* Newton-Raphson step */
+ 172:chelper/itersolve.c ****             double new_time = time - error / derivative;
+ 173:chelper/itersolve.c ****             
+ 174:chelper/itersolve.c ****             /* Clamp to bounds */
+ 175:chelper/itersolve.c ****             if (new_time < low_time) {
+ 176:chelper/itersolve.c ****                 new_time = (low_time + time) * 0.5;
+ 177:chelper/itersolve.c ****             } else if (new_time > high_time) {
+ 178:chelper/itersolve.c ****                 new_time = (time + high_time) * 0.5;
+ 179:chelper/itersolve.c ****             }
+ 180:chelper/itersolve.c ****             
+ 181:chelper/itersolve.c ****             time = new_time;
+ 182:chelper/itersolve.c ****         }
+ 183:chelper/itersolve.c ****     }
+ 184:chelper/itersolve.c ****     
+ 185:chelper/itersolve.c ****     return time;
+ 186:chelper/itersolve.c **** }
+ 187:chelper/itersolve.c **** 
+ 188:chelper/itersolve.c **** int
+ 189:chelper/itersolve.c **** itersolve_generate_steps(struct stepper_kinematics *sk, double flush_time)
+ 190:chelper/itersolve.c **** {
+ 514              		.loc 1 190 1 is_stmt 1 view -0
+ 515              		.cfi_startproc
+ 516              		@ args = 0, pretend = 0, frame = 40
+ 517              		@ frame_needed = 0, uses_anonymous_args = 0
+ 191:chelper/itersolve.c ****     if (sk->tq == NULL || sk->calc_position_cb == NULL) {
+ 518              		.loc 1 191 5 view .LVU106
+ 190:chelper/itersolve.c ****     if (sk->tq == NULL || sk->calc_position_cb == NULL) {
+ 519              		.loc 1 190 1 is_stmt 0 view .LVU107
+ARM GAS  /tmp/ccyl9S3f.s 			page 14
+
+
+ 520 0000 2DE9F04F 		push	{r4, r5, r6, r7, r8, r9, r10, fp, lr}
+ 521              		.cfi_def_cfa_offset 36
+ 522              		.cfi_offset 4, -36
+ 523              		.cfi_offset 5, -32
+ 524              		.cfi_offset 6, -28
+ 525              		.cfi_offset 7, -24
+ 526              		.cfi_offset 8, -20
+ 527              		.cfi_offset 9, -16
+ 528              		.cfi_offset 10, -12
+ 529              		.cfi_offset 11, -8
+ 530              		.cfi_offset 14, -4
+ 531 0004 2DED0C8B 		vpush.64	{d8, d9, d10, d11, d12, d13}
+ 532              		.cfi_def_cfa_offset 84
+ 533              		.cfi_offset 80, -84
+ 534              		.cfi_offset 81, -80
+ 535              		.cfi_offset 82, -76
+ 536              		.cfi_offset 83, -72
+ 537              		.cfi_offset 84, -68
+ 538              		.cfi_offset 85, -64
+ 539              		.cfi_offset 86, -60
+ 540              		.cfi_offset 87, -56
+ 541              		.cfi_offset 88, -52
+ 542              		.cfi_offset 89, -48
+ 543              		.cfi_offset 90, -44
+ 544              		.cfi_offset 91, -40
+ 545              		.loc 1 191 11 view .LVU108
+ 546 0008 846B     		ldr	r4, [r0, #56]
+ 190:chelper/itersolve.c ****     if (sk->tq == NULL || sk->calc_position_cb == NULL) {
+ 547              		.loc 1 190 1 view .LVU109
+ 548 000a 8BB0     		sub	sp, sp, #44
+ 549              		.cfi_def_cfa_offset 128
+ 550              		.loc 1 191 8 view .LVU110
+ 551 000c 002C     		cmp	r4, #0
+ 552 000e 00F09581 		beq	.L65
+ 553              		.loc 1 191 24 discriminator 1 view .LVU111
+ 554 0012 0368     		ldr	r3, [r0]
+ 555 0014 8246     		mov	r10, r0
+ 556 0016 002B     		cmp	r3, #0
+ 557 0018 00F09781 		beq	.L66
+ 558 001c B0EE40DA 		vmov.f32	s26, s0
+ 559 0020 F0EE60DA 		vmov.f32	s27, s1
+ 192:chelper/itersolve.c ****         return 0;
+ 193:chelper/itersolve.c ****     }
+ 194:chelper/itersolve.c ****     
+ 195:chelper/itersolve.c ****     int steps_generated = 0;
+ 560              		.loc 1 195 5 is_stmt 1 view .LVU112
+ 561              	.LVL32:
+ 196:chelper/itersolve.c ****     double current_time = sk->last_flush_time;
+ 562              		.loc 1 196 5 view .LVU113
+ 197:chelper/itersolve.c ****     
+ 198:chelper/itersolve.c ****     struct move *m;
+ 199:chelper/itersolve.c ****     list_for_each_entry(m, &sk->tq->moves, struct move, node) {
+ 563              		.loc 1 199 5 is_stmt 0 view .LVU114
+ 564 0024 2368     		ldr	r3, [r4]
+ 565 0026 A3F1800B 		sub	fp, r3, #128
+ 566 002a 9C42     		cmp	r4, r3
+ 195:chelper/itersolve.c ****     double current_time = sk->last_flush_time;
+ARM GAS  /tmp/ccyl9S3f.s 			page 15
+
+
+ 567              		.loc 1 195 9 view .LVU115
+ 568 002c 4FF00003 		mov	r3, #0
+ 196:chelper/itersolve.c ****     double current_time = sk->last_flush_time;
+ 569              		.loc 1 196 12 view .LVU116
+ 570 0030 D0E90689 		ldrd	r8, [r0, #24]
+ 571              	.LVL33:
+ 198:chelper/itersolve.c ****     list_for_each_entry(m, &sk->tq->moves, struct move, node) {
+ 572              		.loc 1 198 5 is_stmt 1 view .LVU117
+ 573              		.loc 1 199 5 view .LVU118
+ 574              		.loc 1 199 5 view .LVU119
+ 195:chelper/itersolve.c ****     double current_time = sk->last_flush_time;
+ 575              		.loc 1 195 9 is_stmt 0 view .LVU120
+ 576 0034 0793     		str	r3, [sp, #28]
+ 577              		.loc 1 199 5 view .LVU121
+ 578 0036 00F05D81 		beq	.L43
+ 579              	.LBB21:
+ 580              	.LBB22:
+ 581              	.LBB23:
+ 582              	.LBB24:
+ 583              	.LBB25:
+ 584              	.LBB26:
+ 162:chelper/itersolve.c ****             /* Derivative too small, use bisection */
+ 585              		.loc 1 162 12 view .LVU122
+ 586 003a DA46     		mov	r10, fp
+ 587 003c 8346     		mov	fp, r0
+ 588              	.LVL34:
+ 162:chelper/itersolve.c ****             /* Derivative too small, use bisection */
+ 589              		.loc 1 162 12 view .LVU123
+ 590 003e 06E0     		b	.L64
+ 591              	.LVL35:
+ 592              	.L44:
+ 162:chelper/itersolve.c ****             /* Derivative too small, use bisection */
+ 593              		.loc 1 162 12 view .LVU124
+ 594              	.LBE26:
+ 595              	.LBE25:
+ 596              	.LBE24:
+ 597              	.LBE23:
+ 598              	.LBE22:
+ 599              	.LBE21:
+ 600              		.loc 1 199 5 is_stmt 1 discriminator 2 view .LVU125
+ 601 0040 DAF88030 		ldr	r3, [r10, #128]
+ 602 0044 9C42     		cmp	r4, r3
+ 603 0046 A3F1800A 		sub	r10, r3, #128
+ 604              	.LVL36:
+ 605              		.loc 1 199 5 discriminator 2 view .LVU126
+ 606 004a 00F05281 		beq	.L85
+ 607              	.LVL37:
+ 608              	.L64:
+ 609              	.LBB47:
+ 200:chelper/itersolve.c ****         double move_start = m->print_time;
+ 610              		.loc 1 200 9 view .LVU127
+ 201:chelper/itersolve.c ****         double move_end = m->print_time + m->move_t;
+ 611              		.loc 1 201 44 is_stmt 0 view .LVU128
+ 612 004e 9AED027B 		vldr.64	d7, [r10, #8]
+ 200:chelper/itersolve.c ****         double move_start = m->print_time;
+ 613              		.loc 1 200 16 view .LVU129
+ 614 0052 DAE90067 		ldrd	r6, [r10]
+ARM GAS  /tmp/ccyl9S3f.s 			page 16
+
+
+ 615              	.LVL38:
+ 616              		.loc 1 201 9 is_stmt 1 view .LVU130
+ 617              		.loc 1 201 44 is_stmt 0 view .LVU131
+ 618 0056 B0EE47BA 		vmov.f32	s22, s14
+ 619 005a F0EE67BA 		vmov.f32	s23, s15
+ 620              		.loc 1 201 16 view .LVU132
+ 621 005e 3246     		mov	r2, r6
+ 622 0060 3B46     		mov	r3, r7
+ 623 0062 51EC170B 		vmov	r0, r1, d7
+ 624 0066 FFF7FEFF 		bl	__aeabi_dadd
+ 625              	.LVL39:
+ 626 006a 0246     		mov	r2, r0
+ 627 006c 0B46     		mov	r3, r1
+ 628 006e CDE90823 		strd	r2, [sp, #32]
+ 629              	.LVL40:
+ 202:chelper/itersolve.c ****         
+ 203:chelper/itersolve.c ****         /* Skip moves we've already processed */
+ 204:chelper/itersolve.c ****         if (move_end <= current_time) {
+ 630              		.loc 1 204 9 is_stmt 1 view .LVU133
+ 631              		.loc 1 204 12 is_stmt 0 view .LVU134
+ 632 0072 4246     		mov	r2, r8
+ 633              	.LVL41:
+ 634              		.loc 1 204 12 view .LVU135
+ 635 0074 4B46     		mov	r3, r9
+ 636 0076 FFF7FEFF 		bl	__aeabi_dcmple
+ 637              	.LVL42:
+ 638 007a 0028     		cmp	r0, #0
+ 639 007c E0D1     		bne	.L44
+ 205:chelper/itersolve.c ****             continue;
+ 206:chelper/itersolve.c ****         }
+ 207:chelper/itersolve.c ****         
+ 208:chelper/itersolve.c ****         /* Stop if move is beyond flush time */
+ 209:chelper/itersolve.c ****         if (move_start >= flush_time) {
+ 640              		.loc 1 209 9 is_stmt 1 view .LVU136
+ 641              		.loc 1 209 12 is_stmt 0 view .LVU137
+ 642 007e 53EC1D2B 		vmov	r2, r3, d13
+ 643 0082 3046     		mov	r0, r6
+ 644 0084 3946     		mov	r1, r7
+ 645 0086 FFF7FEFF 		bl	__aeabi_dcmpge
+ 646              	.LVL43:
+ 647 008a 0028     		cmp	r0, #0
+ 648 008c 40F03181 		bne	.L85
+ 210:chelper/itersolve.c ****             break;
+ 211:chelper/itersolve.c ****         }
+ 212:chelper/itersolve.c ****         
+ 213:chelper/itersolve.c ****         /* Calculate start and end positions for this move */
+ 214:chelper/itersolve.c ****         double start_time = (current_time > move_start) ? 
+ 649              		.loc 1 214 9 is_stmt 1 view .LVU138
+ 215:chelper/itersolve.c ****                             (current_time - move_start) : 0.0;
+ 650              		.loc 1 215 57 is_stmt 0 view .LVU139
+ 651 0090 4246     		mov	r2, r8
+ 652 0092 4B46     		mov	r3, r9
+ 653 0094 3046     		mov	r0, r6
+ 654 0096 3946     		mov	r1, r7
+ 655 0098 FFF7FEFF 		bl	__aeabi_dcmplt
+ 656              	.LVL44:
+ 657 009c 0028     		cmp	r0, #0
+ARM GAS  /tmp/ccyl9S3f.s 			page 17
+
+
+ 658 009e 00F04881 		beq	.L80
+ 659              		.loc 1 215 57 discriminator 1 view .LVU140
+ 660 00a2 4046     		mov	r0, r8
+ 661 00a4 4946     		mov	r1, r9
+ 662 00a6 3246     		mov	r2, r6
+ 663 00a8 3B46     		mov	r3, r7
+ 664 00aa FFF7FEFF 		bl	__aeabi_dsub
+ 665              	.LVL45:
+ 666 00ae 8046     		mov	r8, r0
+ 667              	.LVL46:
+ 668              		.loc 1 215 57 discriminator 1 view .LVU141
+ 669 00b0 8946     		mov	r9, r1
+ 670              	.L45:
+ 671              	.LVL47:
+ 216:chelper/itersolve.c ****         double end_time = (flush_time < move_end) ? 
+ 672              		.loc 1 216 9 is_stmt 1 view .LVU142
+ 217:chelper/itersolve.c ****                           (flush_time - move_start) : m->move_t;
+ 673              		.loc 1 217 53 is_stmt 0 view .LVU143
+ 674 00b2 55EC1D4B 		vmov	r4, r5, d13
+ 675 00b6 DDE90801 		ldrd	r0, [sp, #32]
+ 676 00ba 1DEE102A 		vmov	r2, s26	@ int
+ 677 00be 2B46     		mov	r3, r5
+ 678 00c0 FFF7FEFF 		bl	__aeabi_dcmpgt
+ 679              	.LVL48:
+ 680 00c4 40B1     		cbz	r0, .L47
+ 681              	.LVL49:
+ 682              		.loc 1 217 53 discriminator 1 view .LVU144
+ 683 00c6 1DEE100A 		vmov	r0, s26	@ int
+ 684 00ca 3246     		mov	r2, r6
+ 685 00cc 3B46     		mov	r3, r7
+ 686 00ce 2946     		mov	r1, r5
+ 687 00d0 FFF7FEFF 		bl	__aeabi_dsub
+ 688              	.LVL50:
+ 689 00d4 41EC1B0B 		vmov	d11, r0, r1
+ 690              	.L47:
+ 691              	.LVL51:
+ 218:chelper/itersolve.c ****         
+ 219:chelper/itersolve.c ****         double start_pos = sk->calc_position_cb(sk, m, start_time);
+ 692              		.loc 1 219 9 is_stmt 1 view .LVU145
+ 693              		.loc 1 219 28 is_stmt 0 view .LVU146
+ 694 00d8 DBF80030 		ldr	r3, [fp]
+ 695 00dc 5146     		mov	r1, r10
+ 696 00de 5846     		mov	r0, fp
+ 697 00e0 49EC108B 		vmov	d0, r8, r9
+ 698 00e4 9847     		blx	r3
+ 699              	.LVL52:
+ 220:chelper/itersolve.c ****         double end_pos = sk->calc_position_cb(sk, m, end_time);
+ 700              		.loc 1 220 26 view .LVU147
+ 701 00e6 DBF80030 		ldr	r3, [fp]
+ 219:chelper/itersolve.c ****         double end_pos = sk->calc_position_cb(sk, m, end_time);
+ 702              		.loc 1 219 28 view .LVU148
+ 703 00ea B0EE407A 		vmov.f32	s14, s0
+ 704 00ee F0EE607A 		vmov.f32	s15, s1
+ 705              		.loc 1 220 26 view .LVU149
+ 706 00f2 5146     		mov	r1, r10
+ 707 00f4 5846     		mov	r0, fp
+ 708 00f6 B0EE4B0A 		vmov.f32	s0, s22
+ARM GAS  /tmp/ccyl9S3f.s 			page 18
+
+
+ 709 00fa F0EE6B0A 		vmov.f32	s1, s23
+ 219:chelper/itersolve.c ****         double end_pos = sk->calc_position_cb(sk, m, end_time);
+ 710              		.loc 1 219 28 view .LVU150
+ 711 00fe 55EC174B 		vmov	r4, r5, d7
+ 712              	.LVL53:
+ 713              		.loc 1 220 9 is_stmt 1 view .LVU151
+ 714              		.loc 1 220 26 is_stmt 0 view .LVU152
+ 715 0102 9847     		blx	r3
+ 716              	.LVL54:
+ 221:chelper/itersolve.c ****         
+ 222:chelper/itersolve.c ****         /* Determine step direction */
+ 223:chelper/itersolve.c ****         int8_t dir = (end_pos > start_pos) ? 1 : -1;
+ 717              		.loc 1 223 16 view .LVU153
+ 718 0104 2046     		mov	r0, r4
+ 220:chelper/itersolve.c ****         
+ 719              		.loc 1 220 26 view .LVU154
+ 720 0106 53EC102B 		vmov	r2, r3, d0
+ 721 010a B0EE40CA 		vmov.f32	s24, s0
+ 722 010e F0EE60CA 		vmov.f32	s25, s1
+ 723              	.LVL55:
+ 724              		.loc 1 223 9 is_stmt 1 view .LVU155
+ 725              		.loc 1 223 16 is_stmt 0 view .LVU156
+ 726 0112 2946     		mov	r1, r5
+ 727 0114 FFF7FEFF 		bl	__aeabi_dcmplt
+ 728              	.LVL56:
+ 224:chelper/itersolve.c ****         
+ 225:chelper/itersolve.c ****         /* Calculate target step positions */
+ 226:chelper/itersolve.c ****         double step_pos = sk->step_pos;
+ 227:chelper/itersolve.c ****         double target_step = (dir > 0) ? 
+ 228:chelper/itersolve.c ****                              floor(step_pos) + 1.0 : 
+ 729              		.loc 1 228 30 view .LVU157
+ 730 0118 9BED0C0B 		vldr.64	d0, [fp, #48]
+ 223:chelper/itersolve.c ****         
+ 731              		.loc 1 223 16 view .LVU158
+ 732 011c 0028     		cmp	r0, #0
+ 733 011e 00F0FA80 		beq	.L81
+ 734              	.LVL57:
+ 226:chelper/itersolve.c ****         double target_step = (dir > 0) ? 
+ 735              		.loc 1 226 9 is_stmt 1 view .LVU159
+ 227:chelper/itersolve.c ****                              floor(step_pos) + 1.0 : 
+ 736              		.loc 1 227 9 view .LVU160
+ 737              		.loc 1 228 30 is_stmt 0 view .LVU161
+ 738 0122 FFF7FEFF 		bl	floor
+ 739              	.LVL58:
+ 223:chelper/itersolve.c ****         
+ 740              		.loc 1 223 16 view .LVU162
+ 741 0126 0123     		movs	r3, #1
+ 742 0128 0693     		str	r3, [sp, #24]
+ 743              		.loc 1 228 30 view .LVU163
+ 744 012a 51EC100B 		vmov	r0, r1, d0
+ 745              		.loc 1 228 52 view .LVU164
+ 746 012e 904B     		ldr	r3, .L91+24
+ 747 0130 0022     		movs	r2, #0
+ 748 0132 FFF7FEFF 		bl	__aeabi_dadd
+ 749              	.LVL59:
+ 750 0136 41EC180B 		vmov	d8, r0, r1
+ 751              	.LVL60:
+ARM GAS  /tmp/ccyl9S3f.s 			page 19
+
+
+ 752              	.L63:
+ 229:chelper/itersolve.c ****                              ceil(step_pos) - 1.0;
+ 230:chelper/itersolve.c ****         
+ 231:chelper/itersolve.c ****         /* Generate steps within this move */
+ 232:chelper/itersolve.c ****         while (1) {
+ 753              		.loc 1 232 9 is_stmt 1 view .LVU165
+ 754              	.LBB44:
+ 233:chelper/itersolve.c ****             /* Check if target is within move range */
+ 234:chelper/itersolve.c ****             if (dir > 0 && target_step > end_pos) {
+ 755              		.loc 1 234 13 view .LVU166
+ 756              		.loc 1 234 16 is_stmt 0 view .LVU167
+ 757 013a 069B     		ldr	r3, [sp, #24]
+ 758 013c 012B     		cmp	r3, #1
+ 759 013e 00F0C480 		beq	.L89
+ 760              	.LVL61:
+ 761              	.L52:
+ 235:chelper/itersolve.c ****                 break;
+ 236:chelper/itersolve.c ****             }
+ 237:chelper/itersolve.c ****             if (dir < 0 && target_step < end_pos) {
+ 762              		.loc 1 237 13 is_stmt 1 view .LVU168
+ 763              		.loc 1 237 16 is_stmt 0 view .LVU169
+ 764 0142 069B     		ldr	r3, [sp, #24]
+ 765 0144 0133     		adds	r3, r3, #1
+ 766 0146 08D1     		bne	.L53
+ 767              		.loc 1 237 25 discriminator 1 view .LVU170
+ 768 0148 53EC1C2B 		vmov	r2, r3, d12
+ 769 014c 51EC180B 		vmov	r0, r1, d8
+ 770 0150 FFF7FEFF 		bl	__aeabi_dcmplt
+ 771              	.LVL62:
+ 772 0154 0028     		cmp	r0, #0
+ 773 0156 40F0C180 		bne	.L70
+ 774              	.L53:
+ 238:chelper/itersolve.c ****                 break;
+ 239:chelper/itersolve.c ****             }
+ 240:chelper/itersolve.c ****             
+ 241:chelper/itersolve.c ****             /* Find time when we reach target position */
+ 242:chelper/itersolve.c ****             double step_time = itersolve_find_step_time(sk, m, target_step,
+ 775              		.loc 1 242 13 is_stmt 1 view .LVU171
+ 776              	.LVL63:
+ 777              	.LBB42:
+ 778              	.LBI23:
+ 140:chelper/itersolve.c ****                          double target_pos, double low_time, double high_time)
+ 779              		.loc 1 140 1 view .LVU172
+ 780              	.LBB40:
+ 144:chelper/itersolve.c ****     const double tolerance = 1e-9;
+ 781              		.loc 1 144 5 view .LVU173
+ 145:chelper/itersolve.c ****     
+ 782              		.loc 1 145 5 view .LVU174
+ 147:chelper/itersolve.c ****     
+ 783              		.loc 1 147 5 view .LVU175
+ 147:chelper/itersolve.c ****     
+ 784              		.loc 1 147 12 is_stmt 0 view .LVU176
+ 785 015a B0EE4BAA 		vmov.f32	s20, s22
+ 786 015e F0EE6BAA 		vmov.f32	s21, s23
+ 147:chelper/itersolve.c ****     
+ 787              		.loc 1 147 29 view .LVU177
+ 788 0162 55EC1B4B 		vmov	r4, r5, d11
+ARM GAS  /tmp/ccyl9S3f.s 			page 20
+
+
+ 147:chelper/itersolve.c ****     
+ 789              		.loc 1 147 12 view .LVU178
+ 790 0166 3223     		movs	r3, #50
+ 147:chelper/itersolve.c ****     
+ 791              		.loc 1 147 29 view .LVU179
+ 792 0168 4046     		mov	r0, r8
+ 793 016a 4946     		mov	r1, r9
+ 794 016c 1BEE102A 		vmov	r2, s22	@ int
+ 147:chelper/itersolve.c ****     
+ 795              		.loc 1 147 12 view .LVU180
+ 796 0170 0593     		str	r3, [sp, #20]
+ 147:chelper/itersolve.c ****     
+ 797              		.loc 1 147 29 view .LVU181
+ 798 0172 2B46     		mov	r3, r5
+ 147:chelper/itersolve.c ****     
+ 799              		.loc 1 147 12 view .LVU182
+ 800 0174 41EC190B 		vmov	d9, r0, r1
+ 147:chelper/itersolve.c ****     
+ 801              		.loc 1 147 29 view .LVU183
+ 802 0178 FFF7FEFF 		bl	__aeabi_dadd
+ 803              	.LVL64:
+ 147:chelper/itersolve.c ****     
+ 804              		.loc 1 147 12 view .LVU184
+ 805 017c 7D4B     		ldr	r3, .L91+28
+ 806 017e 0022     		movs	r2, #0
+ 807 0180 FFF7FEFF 		bl	__aeabi_dmul
+ 808              	.LVL65:
+ 149:chelper/itersolve.c ****         double pos = sk->calc_position_cb(sk, m, time);
+ 809              		.loc 1 149 5 is_stmt 1 view .LVU185
+ 810              	.LBB37:
+ 149:chelper/itersolve.c ****         double pos = sk->calc_position_cb(sk, m, time);
+ 811              		.loc 1 149 10 view .LVU186
+ 149:chelper/itersolve.c ****         double pos = sk->calc_position_cb(sk, m, time);
+ 812              		.loc 1 149 21 view .LVU187
+ 813              	.LBE37:
+ 147:chelper/itersolve.c ****     
+ 814              		.loc 1 147 12 is_stmt 0 view .LVU188
+ 815 0184 8046     		mov	r8, r0
+ 816              	.LVL66:
+ 147:chelper/itersolve.c ****     
+ 817              		.loc 1 147 12 view .LVU189
+ 818 0186 8946     		mov	r9, r1
+ 819 0188 1CE0     		b	.L62
+ 820              	.LVL67:
+ 821              	.L90:
+ 822              	.LBB38:
+ 823              	.LBB32:
+ 164:chelper/itersolve.c ****                 high_time = time;
+ 824              		.loc 1 164 13 is_stmt 1 view .LVU190
+ 164:chelper/itersolve.c ****                 high_time = time;
+ 825              		.loc 1 164 16 is_stmt 0 view .LVU191
+ 826 018a 3046     		mov	r0, r6
+ 827 018c 3946     		mov	r1, r7
+ 828 018e 0022     		movs	r2, #0
+ 829 0190 0023     		movs	r3, #0
+ 830 0192 FFF7FEFF 		bl	__aeabi_dcmpgt
+ 831              	.LVL68:
+ARM GAS  /tmp/ccyl9S3f.s 			page 21
+
+
+ 832 0196 18B9     		cbnz	r0, .L57
+ 833 0198 49EC198B 		vmov	d9, r8, r9
+ 834              	.LVL69:
+ 164:chelper/itersolve.c ****                 high_time = time;
+ 835              		.loc 1 164 16 view .LVU192
+ 836 019c 59EC1A8B 		vmov	r8, r9, d10
+ 837              	.LVL70:
+ 838              	.L57:
+ 169:chelper/itersolve.c ****         } else {
+ 839              		.loc 1 169 13 is_stmt 1 view .LVU193
+ 169:chelper/itersolve.c ****         } else {
+ 840              		.loc 1 169 30 is_stmt 0 view .LVU194
+ 841 01a0 4246     		mov	r2, r8
+ 842 01a2 4B46     		mov	r3, r9
+ 843 01a4 43EC1A2B 		vmov	d10, r2, r3
+ 844 01a8 51EC190B 		vmov	r0, r1, d9
+ 845              	.LVL71:
+ 846              	.L88:
+ 847              	.LBB27:
+ 178:chelper/itersolve.c ****             }
+ 848              		.loc 1 178 34 view .LVU195
+ 849 01ac FFF7FEFF 		bl	__aeabi_dadd
+ 850              	.LVL72:
+ 178:chelper/itersolve.c ****             }
+ 851              		.loc 1 178 26 view .LVU196
+ 852 01b0 704B     		ldr	r3, .L91+28
+ 853 01b2 0022     		movs	r2, #0
+ 854 01b4 FFF7FEFF 		bl	__aeabi_dmul
+ 855              	.LVL73:
+ 856              	.LBE27:
+ 857              	.LBE32:
+ 149:chelper/itersolve.c ****         double pos = sk->calc_position_cb(sk, m, time);
+ 858              		.loc 1 149 5 view .LVU197
+ 859 01b8 059B     		ldr	r3, [sp, #20]
+ 860 01ba 013B     		subs	r3, r3, #1
+ 861              	.LBB33:
+ 862              	.LBB28:
+ 178:chelper/itersolve.c ****             }
+ 863              		.loc 1 178 26 view .LVU198
+ 864 01bc 8046     		mov	r8, r0
+ 865 01be 8946     		mov	r9, r1
+ 866              	.LVL74:
+ 178:chelper/itersolve.c ****             }
+ 867              		.loc 1 178 26 view .LVU199
+ 868              	.LBE28:
+ 869              	.LBE33:
+ 149:chelper/itersolve.c ****         double pos = sk->calc_position_cb(sk, m, time);
+ 870              		.loc 1 149 41 is_stmt 1 view .LVU200
+ 149:chelper/itersolve.c ****         double pos = sk->calc_position_cb(sk, m, time);
+ 871              		.loc 1 149 21 view .LVU201
+ 149:chelper/itersolve.c ****         double pos = sk->calc_position_cb(sk, m, time);
+ 872              		.loc 1 149 5 is_stmt 0 view .LVU202
+ 873 01c0 0593     		str	r3, [sp, #20]
+ 874              	.LVL75:
+ 149:chelper/itersolve.c ****         double pos = sk->calc_position_cb(sk, m, time);
+ 875              		.loc 1 149 5 view .LVU203
+ 876 01c2 6ED0     		beq	.L54
+ARM GAS  /tmp/ccyl9S3f.s 			page 22
+
+
+ 877              	.LVL76:
+ 878              	.L62:
+ 879              	.LBB34:
+ 150:chelper/itersolve.c ****         double error = pos - target_pos;
+ 880              		.loc 1 150 9 is_stmt 1 view .LVU204
+ 150:chelper/itersolve.c ****         double error = pos - target_pos;
+ 881              		.loc 1 150 22 is_stmt 0 view .LVU205
+ 882 01c4 DBF80030 		ldr	r3, [fp]
+ 883 01c8 5146     		mov	r1, r10
+ 884 01ca 5846     		mov	r0, fp
+ 885 01cc 49EC108B 		vmov	d0, r8, r9
+ 886 01d0 9847     		blx	r3
+ 887              	.LVL77:
+ 888 01d2 55EC104B 		vmov	r4, r5, d0
+ 151:chelper/itersolve.c ****         
+ 889              		.loc 1 151 9 is_stmt 1 view .LVU206
+ 151:chelper/itersolve.c ****         
+ 890              		.loc 1 151 16 is_stmt 0 view .LVU207
+ 891 01d6 53EC182B 		vmov	r2, r3, d8
+ 892 01da 10EE100A 		vmov	r0, s0	@ int
+ 893 01de 2946     		mov	r1, r5
+ 894 01e0 FFF7FEFF 		bl	__aeabi_dsub
+ 895              	.LVL78:
+ 153:chelper/itersolve.c ****             return time;
+ 896              		.loc 1 153 13 view .LVU208
+ 897 01e4 21F00043 		bic	r3, r1, #-2147483648
+ 898 01e8 0193     		str	r3, [sp, #4]
+ 899 01ea 0090     		str	r0, [sp]
+ 151:chelper/itersolve.c ****         
+ 900              		.loc 1 151 16 view .LVU209
+ 901 01ec 0646     		mov	r6, r0
+ 902 01ee 0F46     		mov	r7, r1
+ 903              	.LVL79:
+ 153:chelper/itersolve.c ****             return time;
+ 904              		.loc 1 153 9 is_stmt 1 view .LVU210
+ 153:chelper/itersolve.c ****             return time;
+ 905              		.loc 1 153 12 is_stmt 0 view .LVU211
+ 906 01f0 59A3     		adr	r3, .L91
+ 907 01f2 D3E90023 		ldrd	r2, [r3]
+ 908 01f6 DDE90001 		ldrd	r0, [sp]
+ 909 01fa FFF7FEFF 		bl	__aeabi_dcmplt
+ 910              	.LVL80:
+ 911 01fe 0028     		cmp	r0, #0
+ 912 0200 4FD1     		bne	.L54
+ 158:chelper/itersolve.c ****         double pos_dt = sk->calc_position_cb(sk, m, time + dt);
+ 913              		.loc 1 158 9 is_stmt 1 view .LVU212
+ 914              	.LVL81:
+ 159:chelper/itersolve.c ****         double derivative = (pos_dt - pos) / dt;
+ 915              		.loc 1 159 9 view .LVU213
+ 159:chelper/itersolve.c ****         double derivative = (pos_dt - pos) / dt;
+ 916              		.loc 1 159 25 is_stmt 0 view .LVU214
+ 917 0202 57A3     		adr	r3, .L91+8
+ 918 0204 D3E90023 		ldrd	r2, [r3]
+ 919 0208 4046     		mov	r0, r8
+ 920 020a 4946     		mov	r1, r9
+ 921 020c FFF7FEFF 		bl	__aeabi_dadd
+ 922              	.LVL82:
+ARM GAS  /tmp/ccyl9S3f.s 			page 23
+
+
+ 923 0210 DBF80030 		ldr	r3, [fp]
+ 924 0214 41EC100B 		vmov	d0, r0, r1
+ 925 0218 5146     		mov	r1, r10
+ 926 021a 5846     		mov	r0, fp
+ 927 021c 9847     		blx	r3
+ 928              	.LVL83:
+ 160:chelper/itersolve.c ****         
+ 929              		.loc 1 160 37 view .LVU215
+ 930 021e 2246     		mov	r2, r4
+ 931 0220 2B46     		mov	r3, r5
+ 159:chelper/itersolve.c ****         double derivative = (pos_dt - pos) / dt;
+ 932              		.loc 1 159 25 view .LVU216
+ 933 0222 51EC100B 		vmov	r0, r1, d0
+ 934              	.LVL84:
+ 160:chelper/itersolve.c ****         
+ 935              		.loc 1 160 9 is_stmt 1 view .LVU217
+ 160:chelper/itersolve.c ****         
+ 936              		.loc 1 160 37 is_stmt 0 view .LVU218
+ 937 0226 FFF7FEFF 		bl	__aeabi_dsub
+ 938              	.LVL85:
+ 160:chelper/itersolve.c ****         
+ 939              		.loc 1 160 16 view .LVU219
+ 940 022a 4DA3     		adr	r3, .L91+8
+ 941 022c D3E90023 		ldrd	r2, [r3]
+ 942 0230 FFF7FEFF 		bl	__aeabi_ddiv
+ 943              	.LVL86:
+ 162:chelper/itersolve.c ****             /* Derivative too small, use bisection */
+ 944              		.loc 1 162 13 view .LVU220
+ 945 0234 21F00043 		bic	r3, r1, #-2147483648
+ 946 0238 0393     		str	r3, [sp, #12]
+ 947 023a 0290     		str	r0, [sp, #8]
+ 160:chelper/itersolve.c ****         
+ 948              		.loc 1 160 16 view .LVU221
+ 949 023c 0446     		mov	r4, r0
+ 950 023e 0D46     		mov	r5, r1
+ 951              	.LVL87:
+ 162:chelper/itersolve.c ****             /* Derivative too small, use bisection */
+ 952              		.loc 1 162 9 is_stmt 1 view .LVU222
+ 162:chelper/itersolve.c ****             /* Derivative too small, use bisection */
+ 953              		.loc 1 162 12 is_stmt 0 view .LVU223
+ 954 0240 49A3     		adr	r3, .L91+16
+ 955 0242 D3E90023 		ldrd	r2, [r3]
+ 956 0246 DDE90201 		ldrd	r0, [sp, #8]
+ 957 024a FFF7FEFF 		bl	__aeabi_dcmplt
+ 958              	.LVL88:
+ 959 024e 0028     		cmp	r0, #0
+ 960 0250 9BD1     		bne	.L90
+ 961              	.LBB29:
+ 172:chelper/itersolve.c ****             
+ 962              		.loc 1 172 13 is_stmt 1 view .LVU224
+ 172:chelper/itersolve.c ****             
+ 963              		.loc 1 172 44 is_stmt 0 view .LVU225
+ 964 0252 2246     		mov	r2, r4
+ 965 0254 2B46     		mov	r3, r5
+ 966 0256 3046     		mov	r0, r6
+ 967 0258 3946     		mov	r1, r7
+ 968 025a FFF7FEFF 		bl	__aeabi_ddiv
+ARM GAS  /tmp/ccyl9S3f.s 			page 24
+
+
+ 969              	.LVL89:
+ 970 025e 0246     		mov	r2, r0
+ 971 0260 0B46     		mov	r3, r1
+ 172:chelper/itersolve.c ****             
+ 972              		.loc 1 172 20 view .LVU226
+ 973 0262 4046     		mov	r0, r8
+ 974 0264 4946     		mov	r1, r9
+ 975 0266 FFF7FEFF 		bl	__aeabi_dsub
+ 976              	.LVL90:
+ 175:chelper/itersolve.c ****                 new_time = (low_time + time) * 0.5;
+ 977              		.loc 1 175 16 view .LVU227
+ 978 026a 57EC196B 		vmov	r6, r7, d9
+ 979              	.LVL91:
+ 175:chelper/itersolve.c ****                 new_time = (low_time + time) * 0.5;
+ 980              		.loc 1 175 16 view .LVU228
+ 981 026e 19EE102A 		vmov	r2, s18	@ int
+ 982 0272 3B46     		mov	r3, r7
+ 172:chelper/itersolve.c ****             
+ 983              		.loc 1 172 20 view .LVU229
+ 984 0274 0446     		mov	r4, r0
+ 985              	.LVL92:
+ 172:chelper/itersolve.c ****             
+ 986              		.loc 1 172 20 view .LVU230
+ 987 0276 0D46     		mov	r5, r1
+ 988              	.LVL93:
+ 175:chelper/itersolve.c ****                 new_time = (low_time + time) * 0.5;
+ 989              		.loc 1 175 13 is_stmt 1 view .LVU231
+ 175:chelper/itersolve.c ****                 new_time = (low_time + time) * 0.5;
+ 990              		.loc 1 175 16 is_stmt 0 view .LVU232
+ 991 0278 FFF7FEFF 		bl	__aeabi_dcmplt
+ 992              	.LVL94:
+ 993 027c 0028     		cmp	r0, #0
+ 994 027e 45D1     		bne	.L87
+ 177:chelper/itersolve.c ****                 new_time = (time + high_time) * 0.5;
+ 995              		.loc 1 177 20 is_stmt 1 view .LVU233
+ 177:chelper/itersolve.c ****                 new_time = (time + high_time) * 0.5;
+ 996              		.loc 1 177 23 is_stmt 0 view .LVU234
+ 997 0280 57EC1A6B 		vmov	r6, r7, d10
+ 998 0284 1AEE102A 		vmov	r2, s20	@ int
+ 999 0288 3B46     		mov	r3, r7
+ 1000 028a 2046     		mov	r0, r4
+ 1001 028c 2946     		mov	r1, r5
+ 1002 028e FFF7FEFF 		bl	__aeabi_dcmpgt
+ 1003              	.LVL95:
+ 1004 0292 0028     		cmp	r0, #0
+ 1005 0294 3AD1     		bne	.L87
+ 1006              	.LBE29:
+ 1007              	.LBE34:
+ 149:chelper/itersolve.c ****         double pos = sk->calc_position_cb(sk, m, time);
+ 1008              		.loc 1 149 5 view .LVU235
+ 1009 0296 059B     		ldr	r3, [sp, #20]
+ 1010 0298 013B     		subs	r3, r3, #1
+ 1011              	.LBB35:
+ 1012              	.LBB30:
+ 172:chelper/itersolve.c ****             
+ 1013              		.loc 1 172 20 view .LVU236
+ 1014 029a A046     		mov	r8, r4
+ARM GAS  /tmp/ccyl9S3f.s 			page 25
+
+
+ 1015              	.LVL96:
+ 172:chelper/itersolve.c ****             
+ 1016              		.loc 1 172 20 view .LVU237
+ 1017 029c A946     		mov	r9, r5
+ 1018              	.LVL97:
+ 172:chelper/itersolve.c ****             
+ 1019              		.loc 1 172 20 view .LVU238
+ 1020              	.LBE30:
+ 1021              	.LBE35:
+ 149:chelper/itersolve.c ****         double pos = sk->calc_position_cb(sk, m, time);
+ 1022              		.loc 1 149 41 is_stmt 1 view .LVU239
+ 149:chelper/itersolve.c ****         double pos = sk->calc_position_cb(sk, m, time);
+ 1023              		.loc 1 149 21 view .LVU240
+ 149:chelper/itersolve.c ****         double pos = sk->calc_position_cb(sk, m, time);
+ 1024              		.loc 1 149 5 is_stmt 0 view .LVU241
+ 1025 029e 0593     		str	r3, [sp, #20]
+ 1026              	.LVL98:
+ 149:chelper/itersolve.c ****         double pos = sk->calc_position_cb(sk, m, time);
+ 1027              		.loc 1 149 5 view .LVU242
+ 1028 02a0 90D1     		bne	.L62
+ 1029              	.LVL99:
+ 1030              	.L54:
+ 149:chelper/itersolve.c ****         double pos = sk->calc_position_cb(sk, m, time);
+ 1031              		.loc 1 149 5 view .LVU243
+ 1032              	.LBE38:
+ 1033              	.LBE40:
+ 1034              	.LBE42:
+ 243:chelper/itersolve.c ****                                                         start_time, end_time);
+ 244:chelper/itersolve.c ****             
+ 245:chelper/itersolve.c ****             /* Record step (in real implementation, this would queue to stepper) */
+ 246:chelper/itersolve.c ****             double abs_time = m->print_time + step_time;
+ 1035              		.loc 1 246 13 is_stmt 1 view .LVU244
+ 247:chelper/itersolve.c ****             (void)abs_time;  /* TODO: Queue step to stepper driver */
+ 1036              		.loc 1 247 13 view .LVU245
+ 248:chelper/itersolve.c ****             
+ 249:chelper/itersolve.c ****             steps_generated++;
+ 1037              		.loc 1 249 13 view .LVU246
+ 1038              		.loc 1 249 28 is_stmt 0 view .LVU247
+ 1039 02a2 079B     		ldr	r3, [sp, #28]
+ 250:chelper/itersolve.c ****             sk->step_pos = target_step;
+ 251:chelper/itersolve.c ****             
+ 252:chelper/itersolve.c ****             /* Move to next step */
+ 253:chelper/itersolve.c ****             target_step += dir;
+ 1040              		.loc 1 253 25 view .LVU248
+ 1041 02a4 0698     		ldr	r0, [sp, #24]
+ 249:chelper/itersolve.c ****             sk->step_pos = target_step;
+ 1042              		.loc 1 249 28 view .LVU249
+ 1043 02a6 0133     		adds	r3, r3, #1
+ 250:chelper/itersolve.c ****             sk->step_pos = target_step;
+ 1044              		.loc 1 250 26 view .LVU250
+ 1045 02a8 8BED0C8B 		vstr.64	d8, [fp, #48]
+ 249:chelper/itersolve.c ****             sk->step_pos = target_step;
+ 1046              		.loc 1 249 28 view .LVU251
+ 1047 02ac 0793     		str	r3, [sp, #28]
+ 1048              	.LVL100:
+ 250:chelper/itersolve.c ****             sk->step_pos = target_step;
+ 1049              		.loc 1 250 13 is_stmt 1 view .LVU252
+ARM GAS  /tmp/ccyl9S3f.s 			page 26
+
+
+ 1050              		.loc 1 253 13 view .LVU253
+ 1051              		.loc 1 253 25 is_stmt 0 view .LVU254
+ 1052 02ae FFF7FEFF 		bl	__aeabi_i2d
+ 1053              	.LVL101:
+ 1054              		.loc 1 253 25 view .LVU255
+ 1055 02b2 0B46     		mov	r3, r1
+ 1056 02b4 0246     		mov	r2, r0
+ 1057 02b6 51EC180B 		vmov	r0, r1, d8
+ 1058 02ba FFF7FEFF 		bl	__aeabi_dadd
+ 1059              	.LVL102:
+ 234:chelper/itersolve.c ****                 break;
+ 1060              		.loc 1 234 16 view .LVU256
+ 1061 02be 069B     		ldr	r3, [sp, #24]
+ 1062 02c0 012B     		cmp	r3, #1
+ 1063              		.loc 1 253 25 view .LVU257
+ 1064 02c2 41EC180B 		vmov	d8, r0, r1
+ 1065              	.LVL103:
+ 254:chelper/itersolve.c ****             start_time = step_time;
+ 1066              		.loc 1 254 13 is_stmt 1 view .LVU258
+ 1067              		.loc 1 254 13 is_stmt 0 view .LVU259
+ 1068              	.LBE44:
+ 232:chelper/itersolve.c ****             /* Check if target is within move range */
+ 1069              		.loc 1 232 15 is_stmt 1 view .LVU260
+ 232:chelper/itersolve.c ****             /* Check if target is within move range */
+ 1070              		.loc 1 232 9 view .LVU261
+ 1071              	.LBB45:
+ 234:chelper/itersolve.c ****                 break;
+ 1072              		.loc 1 234 13 view .LVU262
+ 234:chelper/itersolve.c ****                 break;
+ 1073              		.loc 1 234 16 is_stmt 0 view .LVU263
+ 1074 02c6 7FF43CAF 		bne	.L52
+ 1075              	.LVL104:
+ 1076              	.L89:
+ 234:chelper/itersolve.c ****                 break;
+ 1077              		.loc 1 234 25 discriminator 1 view .LVU264
+ 1078 02ca 53EC1C2B 		vmov	r2, r3, d12
+ 1079 02ce 51EC180B 		vmov	r0, r1, d8
+ 1080 02d2 FFF7FEFF 		bl	__aeabi_dcmpgt
+ 1081              	.LVL105:
+ 1082 02d6 0028     		cmp	r0, #0
+ 1083 02d8 3FF43FAF 		beq	.L53
+ 1084              	.L70:
+ 234:chelper/itersolve.c ****                 break;
+ 1085              		.loc 1 234 25 discriminator 1 view .LVU265
+ 1086              	.LBE45:
+ 1087              	.LBE47:
+ 199:chelper/itersolve.c ****         double move_start = m->print_time;
+ 1088              		.loc 1 199 5 view .LVU266
+ 1089 02dc DAF88030 		ldr	r3, [r10, #128]
+ 1090 02e0 DBF83840 		ldr	r4, [fp, #56]
+ 1091 02e4 9C42     		cmp	r4, r3
+ 1092              	.LBB48:
+ 255:chelper/itersolve.c ****         }
+ 256:chelper/itersolve.c ****         
+ 257:chelper/itersolve.c ****         current_time = move_end;
+ 1093              		.loc 1 257 22 view .LVU267
+ 1094 02e6 DDE90889 		ldrd	r8, [sp, #32]
+ARM GAS  /tmp/ccyl9S3f.s 			page 27
+
+
+ 1095              	.LVL106:
+ 1096              		.loc 1 257 22 view .LVU268
+ 1097              	.LBE48:
+ 199:chelper/itersolve.c ****         double move_start = m->print_time;
+ 1098              		.loc 1 199 5 is_stmt 1 view .LVU269
+ 1099 02ea A3F1800A 		sub	r10, r3, #128
+ 1100              	.LVL107:
+ 199:chelper/itersolve.c ****         double move_start = m->print_time;
+ 1101              		.loc 1 199 5 view .LVU270
+ 1102 02ee 7FF4AEAE 		bne	.L64
+ 1103              	.LVL108:
+ 1104              	.L85:
+ 199:chelper/itersolve.c ****         double move_start = m->print_time;
+ 1105              		.loc 1 199 5 is_stmt 0 view .LVU271
+ 1106 02f2 DA46     		mov	r10, fp
+ 1107              	.LVL109:
+ 1108              	.L43:
+ 258:chelper/itersolve.c ****     }
+ 259:chelper/itersolve.c ****     
+ 260:chelper/itersolve.c ****     sk->last_flush_time = flush_time;
+ 1109              		.loc 1 260 5 is_stmt 1 view .LVU272
+ 261:chelper/itersolve.c ****     sk->commanded_pos = sk->step_pos;
+ 1110              		.loc 1 261 23 is_stmt 0 view .LVU273
+ 1111 02f4 DAE90C23 		ldrd	r2, [r10, #48]
+ 262:chelper/itersolve.c ****     
+ 263:chelper/itersolve.c ****     return steps_generated;
+ 264:chelper/itersolve.c **** }
+ 1112              		.loc 1 264 1 view .LVU274
+ 1113 02f8 0798     		ldr	r0, [sp, #28]
+ 260:chelper/itersolve.c ****     sk->commanded_pos = sk->step_pos;
+ 1114              		.loc 1 260 25 view .LVU275
+ 1115 02fa 8AED06DB 		vstr.64	d13, [r10, #24]
+ 261:chelper/itersolve.c ****     sk->commanded_pos = sk->step_pos;
+ 1116              		.loc 1 261 5 is_stmt 1 view .LVU276
+ 261:chelper/itersolve.c ****     sk->commanded_pos = sk->step_pos;
+ 1117              		.loc 1 261 23 is_stmt 0 view .LVU277
+ 1118 02fe CAE90423 		strd	r2, [r10, #16]
+ 263:chelper/itersolve.c **** }
+ 1119              		.loc 1 263 5 is_stmt 1 view .LVU278
+ 1120              		.loc 1 264 1 is_stmt 0 view .LVU279
+ 1121 0302 0BB0     		add	sp, sp, #44
+ 1122              		.cfi_remember_state
+ 1123              		.cfi_def_cfa_offset 84
+ 1124              		@ sp needed
+ 1125 0304 BDEC0C8B 		vldm	sp!, {d8-d13}
+ 1126              		.cfi_restore 90
+ 1127              		.cfi_restore 91
+ 1128              		.cfi_restore 88
+ 1129              		.cfi_restore 89
+ 1130              		.cfi_restore 86
+ 1131              		.cfi_restore 87
+ 1132              		.cfi_restore 84
+ 1133              		.cfi_restore 85
+ 1134              		.cfi_restore 82
+ 1135              		.cfi_restore 83
+ 1136              		.cfi_restore 80
+ 1137              		.cfi_restore 81
+ARM GAS  /tmp/ccyl9S3f.s 			page 28
+
+
+ 1138              		.cfi_def_cfa_offset 36
+ 1139              	.LVL110:
+ 1140              		.loc 1 264 1 view .LVU280
+ 1141 0308 BDE8F08F 		pop	{r4, r5, r6, r7, r8, r9, r10, fp, pc}
+ 1142              	.LVL111:
+ 1143              	.L87:
+ 1144              		.cfi_restore_state
+ 1145              	.LBB49:
+ 1146              	.LBB46:
+ 1147              	.LBB43:
+ 1148              	.LBB41:
+ 1149              	.LBB39:
+ 1150              	.LBB36:
+ 1151              	.LBB31:
+ 178:chelper/itersolve.c ****             }
+ 1152              		.loc 1 178 17 is_stmt 1 view .LVU281
+ 178:chelper/itersolve.c ****             }
+ 1153              		.loc 1 178 34 is_stmt 0 view .LVU282
+ 1154 030c 4046     		mov	r0, r8
+ 1155 030e 4946     		mov	r1, r9
+ 1156 0310 3246     		mov	r2, r6
+ 1157 0312 3B46     		mov	r3, r7
+ 1158 0314 4AE7     		b	.L88
+ 1159              	.LVL112:
+ 1160              	.L81:
+ 178:chelper/itersolve.c ****             }
+ 1161              		.loc 1 178 34 view .LVU283
+ 1162              	.LBE31:
+ 1163              	.LBE36:
+ 1164              	.LBE39:
+ 1165              	.LBE41:
+ 1166              	.LBE43:
+ 1167              	.LBE46:
+ 226:chelper/itersolve.c ****         double target_step = (dir > 0) ? 
+ 1168              		.loc 1 226 9 is_stmt 1 view .LVU284
+ 227:chelper/itersolve.c ****                              floor(step_pos) + 1.0 : 
+ 1169              		.loc 1 227 9 view .LVU285
+ 229:chelper/itersolve.c ****         
+ 1170              		.loc 1 229 30 is_stmt 0 view .LVU286
+ 1171 0316 FFF7FEFF 		bl	ceil
+ 1172              	.LVL113:
+ 223:chelper/itersolve.c ****         
+ 1173              		.loc 1 223 16 view .LVU287
+ 1174 031a 4FF0FF33 		mov	r3, #-1
+ 1175 031e 0693     		str	r3, [sp, #24]
+ 229:chelper/itersolve.c ****         
+ 1176              		.loc 1 229 30 view .LVU288
+ 1177 0320 51EC100B 		vmov	r0, r1, d0
+ 228:chelper/itersolve.c ****                              ceil(step_pos) - 1.0;
+ 1178              		.loc 1 228 52 view .LVU289
+ 1179 0324 124B     		ldr	r3, .L91+24
+ 1180 0326 0022     		movs	r2, #0
+ 1181 0328 FFF7FEFF 		bl	__aeabi_dsub
+ 1182              	.LVL114:
+ 1183 032c 41EC180B 		vmov	d8, r0, r1
+ 1184 0330 03E7     		b	.L63
+ 1185              	.LVL115:
+ARM GAS  /tmp/ccyl9S3f.s 			page 29
+
+
+ 1186              	.L80:
+ 215:chelper/itersolve.c ****         double end_time = (flush_time < move_end) ? 
+ 1187              		.loc 1 215 57 view .LVU290
+ 1188 0332 4FF00008 		mov	r8, #0
+ 1189              	.LVL116:
+ 215:chelper/itersolve.c ****         double end_time = (flush_time < move_end) ? 
+ 1190              		.loc 1 215 57 view .LVU291
+ 1191 0336 4FF00009 		mov	r9, #0
+ 1192 033a BAE6     		b	.L45
+ 1193              	.LVL117:
+ 1194              	.L65:
+ 215:chelper/itersolve.c ****         double end_time = (flush_time < move_end) ? 
+ 1195              		.loc 1 215 57 view .LVU292
+ 1196              	.LBE49:
+ 192:chelper/itersolve.c ****     }
+ 1197              		.loc 1 192 16 view .LVU293
+ 1198 033c 0794     		str	r4, [sp, #28]
+ 1199              		.loc 1 264 1 view .LVU294
+ 1200 033e 0798     		ldr	r0, [sp, #28]
+ 1201              	.LVL118:
+ 1202              		.loc 1 264 1 view .LVU295
+ 1203 0340 0BB0     		add	sp, sp, #44
+ 1204              		.cfi_remember_state
+ 1205              		.cfi_def_cfa_offset 84
+ 1206              		@ sp needed
+ 1207 0342 BDEC0C8B 		vldm	sp!, {d8-d13}
+ 1208              		.cfi_restore 90
+ 1209              		.cfi_restore 91
+ 1210              		.cfi_restore 88
+ 1211              		.cfi_restore 89
+ 1212              		.cfi_restore 86
+ 1213              		.cfi_restore 87
+ 1214              		.cfi_restore 84
+ 1215              		.cfi_restore 85
+ 1216              		.cfi_restore 82
+ 1217              		.cfi_restore 83
+ 1218              		.cfi_restore 80
+ 1219              		.cfi_restore 81
+ 1220              		.cfi_def_cfa_offset 36
+ 1221 0346 BDE8F08F 		pop	{r4, r5, r6, r7, r8, r9, r10, fp, pc}
+ 1222              	.LVL119:
+ 1223              	.L66:
+ 1224              		.cfi_restore_state
+ 192:chelper/itersolve.c ****     }
+ 1225              		.loc 1 192 16 view .LVU296
+ 1226 034a 0793     		str	r3, [sp, #28]
+ 1227              		.loc 1 264 1 view .LVU297
+ 1228 034c 0798     		ldr	r0, [sp, #28]
+ 1229              	.LVL120:
+ 1230              		.loc 1 264 1 view .LVU298
+ 1231 034e 0BB0     		add	sp, sp, #44
+ 1232              		.cfi_def_cfa_offset 84
+ 1233              		@ sp needed
+ 1234 0350 BDEC0C8B 		vldm	sp!, {d8-d13}
+ 1235              		.cfi_restore 90
+ 1236              		.cfi_restore 91
+ 1237              		.cfi_restore 88
+ARM GAS  /tmp/ccyl9S3f.s 			page 30
+
+
+ 1238              		.cfi_restore 89
+ 1239              		.cfi_restore 86
+ 1240              		.cfi_restore 87
+ 1241              		.cfi_restore 84
+ 1242              		.cfi_restore 85
+ 1243              		.cfi_restore 82
+ 1244              		.cfi_restore 83
+ 1245              		.cfi_restore 80
+ 1246              		.cfi_restore 81
+ 1247              		.cfi_def_cfa_offset 36
+ 1248 0354 BDE8F08F 		pop	{r4, r5, r6, r7, r8, r9, r10, fp, pc}
+ 1249              	.LVL121:
+ 1250              	.L92:
+ 1251              		.loc 1 264 1 view .LVU299
+ 1252              		.align	3
+ 1253              	.L91:
+ 1254 0358 95D626E8 		.word	-400107883
+ 1255 035c 0B2E113E 		.word	1041313291
+ 1256 0360 8DEDB5A0 		.word	-1598689907
+ 1257 0364 F7C6B03E 		.word	1051772663
+ 1258 0368 11EA2D81 		.word	-2127697391
+ 1259 036c 9997713D 		.word	1030854553
+ 1260 0370 0000F03F 		.word	1072693248
+ 1261 0374 0000E03F 		.word	1071644672
+ 1262              		.cfi_endproc
+ 1263              	.LFE17:
+ 1265              		.section	.text.itersolve_is_active,"ax",%progbits
+ 1266              		.align	1
+ 1267              		.p2align 2,,3
+ 1268              		.global	itersolve_is_active
+ 1269              		.syntax unified
+ 1270              		.thumb
+ 1271              		.thumb_func
+ 1272              		.fpu fpv4-sp-d16
+ 1274              	itersolve_is_active:
+ 1275              	.LVL122:
+ 1276              	.LFB18:
+ 265:chelper/itersolve.c **** 
+ 266:chelper/itersolve.c **** int
+ 267:chelper/itersolve.c **** itersolve_is_active(struct stepper_kinematics *sk)
+ 268:chelper/itersolve.c **** {
+ 1277              		.loc 1 268 1 is_stmt 1 view -0
+ 1278              		.cfi_startproc
+ 1279              		@ args = 0, pretend = 0, frame = 0
+ 1280              		@ frame_needed = 0, uses_anonymous_args = 0
+ 1281              		@ link register save eliminated.
+ 269:chelper/itersolve.c ****     if (sk->tq == NULL) {
+ 1282              		.loc 1 269 5 view .LVU301
+ 1283              		.loc 1 269 11 is_stmt 0 view .LVU302
+ 1284 0000 806B     		ldr	r0, [r0, #56]
+ 1285              	.LVL123:
+ 1286              		.loc 1 269 8 view .LVU303
+ 1287 0002 08B1     		cbz	r0, .L94
+ 270:chelper/itersolve.c ****         return 0;
+ 271:chelper/itersolve.c ****     }
+ 272:chelper/itersolve.c ****     return trapq_has_moves(sk->tq);
+ 1288              		.loc 1 272 5 is_stmt 1 view .LVU304
+ARM GAS  /tmp/ccyl9S3f.s 			page 31
+
+
+ 1289              		.loc 1 272 12 is_stmt 0 view .LVU305
+ 1290 0004 FFF7FEBF 		b	trapq_has_moves
+ 1291              	.LVL124:
+ 1292              	.L94:
+ 273:chelper/itersolve.c **** }
+ 1293              		.loc 1 273 1 view .LVU306
+ 1294 0008 7047     		bx	lr
+ 1295              		.cfi_endproc
+ 1296              	.LFE18:
+ 1298 000a 00BF     		.section	.text.step_queue_init,"ax",%progbits
+ 1299              		.align	1
+ 1300              		.p2align 2,,3
+ 1301              		.global	step_queue_init
+ 1302              		.syntax unified
+ 1303              		.thumb
+ 1304              		.thumb_func
+ 1305              		.fpu fpv4-sp-d16
+ 1307              	step_queue_init:
+ 1308              	.LVL125:
+ 1309              	.LFB19:
+ 274:chelper/itersolve.c **** 
+ 275:chelper/itersolve.c **** /* ========== Step Queue Functions ========== */
+ 276:chelper/itersolve.c **** 
+ 277:chelper/itersolve.c **** void
+ 278:chelper/itersolve.c **** step_queue_init(struct step_queue *sq)
+ 279:chelper/itersolve.c **** {
+ 1310              		.loc 1 279 1 is_stmt 1 view -0
+ 1311              		.cfi_startproc
+ 1312              		@ args = 0, pretend = 0, frame = 0
+ 1313              		@ frame_needed = 0, uses_anonymous_args = 0
+ 1314              		@ link register save eliminated.
+ 280:chelper/itersolve.c ****     sq->head = 0;
+ 1315              		.loc 1 280 5 view .LVU308
+ 1316              		.loc 1 280 14 is_stmt 0 view .LVU309
+ 1317 0000 00F58050 		add	r0, r0, #4096
+ 1318              	.LVL126:
+ 1319              		.loc 1 280 14 view .LVU310
+ 1320 0004 0023     		movs	r3, #0
+ 281:chelper/itersolve.c ****     sq->tail = 0;
+ 1321              		.loc 1 281 14 view .LVU311
+ 1322 0006 C0E90033 		strd	r3, r3, [r0]
+ 282:chelper/itersolve.c ****     sq->count = 0;
+ 1323              		.loc 1 282 5 is_stmt 1 view .LVU312
+ 1324              		.loc 1 282 15 is_stmt 0 view .LVU313
+ 1325 000a 8360     		str	r3, [r0, #8]
+ 283:chelper/itersolve.c **** }
+ 1326              		.loc 1 283 1 view .LVU314
+ 1327 000c 7047     		bx	lr
+ 1328              		.cfi_endproc
+ 1329              	.LFE19:
+ 1331 000e 00BF     		.section	.text.step_queue_push,"ax",%progbits
+ 1332              		.align	1
+ 1333              		.p2align 2,,3
+ 1334              		.global	step_queue_push
+ 1335              		.syntax unified
+ 1336              		.thumb
+ 1337              		.thumb_func
+ARM GAS  /tmp/ccyl9S3f.s 			page 32
+
+
+ 1338              		.fpu fpv4-sp-d16
+ 1340              	step_queue_push:
+ 1341              	.LVL127:
+ 1342              	.LFB20:
+ 284:chelper/itersolve.c **** 
+ 285:chelper/itersolve.c **** int
+ 286:chelper/itersolve.c **** step_queue_push(struct step_queue *sq, double time, int8_t dir)
+ 287:chelper/itersolve.c **** {
+ 1343              		.loc 1 287 1 is_stmt 1 view -0
+ 1344              		.cfi_startproc
+ 1345              		@ args = 0, pretend = 0, frame = 0
+ 1346              		@ frame_needed = 0, uses_anonymous_args = 0
+ 1347              		@ link register save eliminated.
+ 288:chelper/itersolve.c ****     if (sq->count >= STEP_QUEUE_SIZE) {
+ 1348              		.loc 1 288 5 view .LVU316
+ 1349              		.loc 1 288 11 is_stmt 0 view .LVU317
+ 1350 0000 00F58052 		add	r2, r0, #4096
+ 287:chelper/itersolve.c ****     if (sq->count >= STEP_QUEUE_SIZE) {
+ 1351              		.loc 1 287 1 view .LVU318
+ 1352 0004 10B4     		push	{r4}
+ 1353              		.cfi_def_cfa_offset 4
+ 1354              		.cfi_offset 4, -4
+ 1355              		.loc 1 288 11 view .LVU319
+ 1356 0006 9468     		ldr	r4, [r2, #8]
+ 1357              		.loc 1 288 8 view .LVU320
+ 1358 0008 FF2C     		cmp	r4, #255
+ 1359 000a 13DC     		bgt	.L98
+ 289:chelper/itersolve.c ****         return -1;  /* Queue full */
+ 290:chelper/itersolve.c ****     }
+ 291:chelper/itersolve.c ****     
+ 292:chelper/itersolve.c ****     sq->steps[sq->tail].time = time;
+ 1360              		.loc 1 292 5 is_stmt 1 view .LVU321
+ 1361              		.loc 1 292 17 is_stmt 0 view .LVU322
+ 1362 000c 5368     		ldr	r3, [r2, #4]
+ 1363              		.loc 1 292 30 view .LVU323
+ 1364 000e 00EB0310 		add	r0, r0, r3, lsl #4
+ 1365              	.LVL128:
+ 293:chelper/itersolve.c ****     sq->steps[sq->tail].dir = dir;
+ 294:chelper/itersolve.c ****     sq->tail = (sq->tail + 1) % STEP_QUEUE_SIZE;
+ 1366              		.loc 1 294 26 view .LVU324
+ 1367 0012 0133     		adds	r3, r3, #1
+ 293:chelper/itersolve.c ****     sq->steps[sq->tail].dir = dir;
+ 1368              		.loc 1 293 29 view .LVU325
+ 1369 0014 0172     		strb	r1, [r0, #8]
+ 1370              		.loc 1 294 31 view .LVU326
+ 1371 0016 5942     		rsbs	r1, r3, #0
+ 1372              	.LVL129:
+ 1373              		.loc 1 294 31 view .LVU327
+ 1374 0018 C9B2     		uxtb	r1, r1
+ 1375 001a DBB2     		uxtb	r3, r3
+ 295:chelper/itersolve.c ****     sq->count++;
+ 1376              		.loc 1 295 14 view .LVU328
+ 1377 001c 04F10104 		add	r4, r4, #1
+ 294:chelper/itersolve.c ****     sq->count++;
+ 1378              		.loc 1 294 31 view .LVU329
+ 1379 0020 58BF     		it	pl
+ 1380 0022 4B42     		rsbpl	r3, r1, #0
+ARM GAS  /tmp/ccyl9S3f.s 			page 33
+
+
+ 292:chelper/itersolve.c ****     sq->steps[sq->tail].dir = dir;
+ 1381              		.loc 1 292 30 view .LVU330
+ 1382 0024 80ED000B 		vstr.64	d0, [r0]
+ 293:chelper/itersolve.c ****     sq->tail = (sq->tail + 1) % STEP_QUEUE_SIZE;
+ 1383              		.loc 1 293 5 is_stmt 1 view .LVU331
+ 294:chelper/itersolve.c ****     sq->count++;
+ 1384              		.loc 1 294 5 view .LVU332
+ 1385              		.loc 1 295 14 is_stmt 0 view .LVU333
+ 1386 0028 C2E90134 		strd	r3, r4, [r2, #4]
+ 1387              	.LVL130:
+ 296:chelper/itersolve.c ****     
+ 297:chelper/itersolve.c ****     return 0;
+ 1388              		.loc 1 297 5 is_stmt 1 view .LVU334
+ 1389              		.loc 1 297 12 is_stmt 0 view .LVU335
+ 1390 002c 0020     		movs	r0, #0
+ 1391              	.L96:
+ 298:chelper/itersolve.c **** }
+ 1392              		.loc 1 298 1 view .LVU336
+ 1393 002e 5DF8044B 		ldr	r4, [sp], #4
+ 1394              		.cfi_remember_state
+ 1395              		.cfi_restore 4
+ 1396              		.cfi_def_cfa_offset 0
+ 1397 0032 7047     		bx	lr
+ 1398              	.LVL131:
+ 1399              	.L98:
+ 1400              		.cfi_restore_state
+ 289:chelper/itersolve.c ****     }
+ 1401              		.loc 1 289 16 view .LVU337
+ 1402 0034 4FF0FF30 		mov	r0, #-1
+ 1403              	.LVL132:
+ 289:chelper/itersolve.c ****     }
+ 1404              		.loc 1 289 16 view .LVU338
+ 1405 0038 F9E7     		b	.L96
+ 1406              		.cfi_endproc
+ 1407              	.LFE20:
+ 1409 003a 00BF     		.section	.text.step_queue_pop,"ax",%progbits
+ 1410              		.align	1
+ 1411              		.p2align 2,,3
+ 1412              		.global	step_queue_pop
+ 1413              		.syntax unified
+ 1414              		.thumb
+ 1415              		.thumb_func
+ 1416              		.fpu fpv4-sp-d16
+ 1418              	step_queue_pop:
+ 1419              	.LVL133:
+ 1420              	.LFB21:
+ 299:chelper/itersolve.c **** 
+ 300:chelper/itersolve.c **** int
+ 301:chelper/itersolve.c **** step_queue_pop(struct step_queue *sq, struct step_time *step)
+ 302:chelper/itersolve.c **** {
+ 1421              		.loc 1 302 1 is_stmt 1 view -0
+ 1422              		.cfi_startproc
+ 1423              		@ args = 0, pretend = 0, frame = 0
+ 1424              		@ frame_needed = 0, uses_anonymous_args = 0
+ 303:chelper/itersolve.c ****     if (sq->count == 0) {
+ 1425              		.loc 1 303 5 view .LVU340
+ 302:chelper/itersolve.c ****     if (sq->count == 0) {
+ARM GAS  /tmp/ccyl9S3f.s 			page 34
+
+
+ 1426              		.loc 1 302 1 is_stmt 0 view .LVU341
+ 1427 0000 70B5     		push	{r4, r5, r6, lr}
+ 1428              		.cfi_def_cfa_offset 16
+ 1429              		.cfi_offset 4, -16
+ 1430              		.cfi_offset 5, -12
+ 1431              		.cfi_offset 6, -8
+ 1432              		.cfi_offset 14, -4
+ 1433              		.loc 1 303 11 view .LVU342
+ 1434 0002 00F5805E 		add	lr, r0, #4096
+ 1435 0006 DEF80850 		ldr	r5, [lr, #8]
+ 1436              		.loc 1 303 8 view .LVU343
+ 1437 000a ADB1     		cbz	r5, .L102
+ 304:chelper/itersolve.c ****         return -1;  /* Queue empty */
+ 305:chelper/itersolve.c ****     }
+ 306:chelper/itersolve.c ****     
+ 307:chelper/itersolve.c ****     *step = sq->steps[sq->head];
+ 1438              		.loc 1 307 5 is_stmt 1 view .LVU344
+ 1439              		.loc 1 307 25 is_stmt 0 view .LVU345
+ 1440 000c DEF80040 		ldr	r4, [lr]
+ 1441              		.loc 1 307 11 view .LVU346
+ 1442 0010 00EB0410 		add	r0, r0, r4, lsl #4
+ 1443              	.LVL134:
+ 308:chelper/itersolve.c ****     sq->head = (sq->head + 1) % STEP_QUEUE_SIZE;
+ 1444              		.loc 1 308 26 view .LVU347
+ 1445 0014 0134     		adds	r4, r4, #1
+ 1446              		.loc 1 308 31 view .LVU348
+ 1447 0016 6342     		rsbs	r3, r4, #0
+ 1448 0018 DBB2     		uxtb	r3, r3
+ 1449 001a 8C46     		mov	ip, r1
+ 1450 001c E4B2     		uxtb	r4, r4
+ 1451 001e 58BF     		it	pl
+ 1452 0020 5C42     		rsbpl	r4, r3, #0
+ 307:chelper/itersolve.c ****     sq->head = (sq->head + 1) % STEP_QUEUE_SIZE;
+ 1453              		.loc 1 307 11 view .LVU349
+ 1454 0022 0FC8     		ldm	r0, {r0, r1, r2, r3}
+ 1455              	.LVL135:
+ 309:chelper/itersolve.c ****     sq->count--;
+ 1456              		.loc 1 309 14 view .LVU350
+ 1457 0024 013D     		subs	r5, r5, #1
+ 307:chelper/itersolve.c ****     sq->head = (sq->head + 1) % STEP_QUEUE_SIZE;
+ 1458              		.loc 1 307 11 view .LVU351
+ 1459 0026 8CE80F00 		stm	ip, {r0, r1, r2, r3}
+ 308:chelper/itersolve.c ****     sq->head = (sq->head + 1) % STEP_QUEUE_SIZE;
+ 1460              		.loc 1 308 5 is_stmt 1 view .LVU352
+ 310:chelper/itersolve.c ****     
+ 311:chelper/itersolve.c ****     return 0;
+ 1461              		.loc 1 311 12 is_stmt 0 view .LVU353
+ 1462 002a 0026     		movs	r6, #0
+ 308:chelper/itersolve.c ****     sq->count--;
+ 1463              		.loc 1 308 14 view .LVU354
+ 1464 002c CEF80040 		str	r4, [lr]
+ 309:chelper/itersolve.c ****     sq->count--;
+ 1465              		.loc 1 309 5 is_stmt 1 view .LVU355
+ 309:chelper/itersolve.c ****     sq->count--;
+ 1466              		.loc 1 309 14 is_stmt 0 view .LVU356
+ 1467 0030 CEF80850 		str	r5, [lr, #8]
+ 1468              		.loc 1 311 5 is_stmt 1 view .LVU357
+ARM GAS  /tmp/ccyl9S3f.s 			page 35
+
+
+ 1469              	.LVL136:
+ 1470              	.L100:
+ 312:chelper/itersolve.c **** }
+ 1471              		.loc 1 312 1 is_stmt 0 view .LVU358
+ 1472 0034 3046     		mov	r0, r6
+ 1473 0036 70BD     		pop	{r4, r5, r6, pc}
+ 1474              	.LVL137:
+ 1475              	.L102:
+ 304:chelper/itersolve.c ****     }
+ 1476              		.loc 1 304 16 view .LVU359
+ 1477 0038 4FF0FF36 		mov	r6, #-1
+ 1478 003c FAE7     		b	.L100
+ 1479              		.cfi_endproc
+ 1480              	.LFE21:
+ 1482 003e 00BF     		.section	.text.step_queue_empty,"ax",%progbits
+ 1483              		.align	1
+ 1484              		.p2align 2,,3
+ 1485              		.global	step_queue_empty
+ 1486              		.syntax unified
+ 1487              		.thumb
+ 1488              		.thumb_func
+ 1489              		.fpu fpv4-sp-d16
+ 1491              	step_queue_empty:
+ 1492              	.LVL138:
+ 1493              	.LFB22:
+ 313:chelper/itersolve.c **** 
+ 314:chelper/itersolve.c **** int
+ 315:chelper/itersolve.c **** step_queue_empty(const struct step_queue *sq)
+ 316:chelper/itersolve.c **** {
+ 1494              		.loc 1 316 1 is_stmt 1 view -0
+ 1495              		.cfi_startproc
+ 1496              		@ args = 0, pretend = 0, frame = 0
+ 1497              		@ frame_needed = 0, uses_anonymous_args = 0
+ 1498              		@ link register save eliminated.
+ 317:chelper/itersolve.c ****     return sq->count == 0;
+ 1499              		.loc 1 317 5 view .LVU361
+ 1500              		.loc 1 317 14 is_stmt 0 view .LVU362
+ 1501 0000 00F58050 		add	r0, r0, #4096
+ 1502              	.LVL139:
+ 1503              		.loc 1 317 22 view .LVU363
+ 1504 0004 8068     		ldr	r0, [r0, #8]
+ 1505              	.LVL140:
+ 318:chelper/itersolve.c **** }
+ 1506              		.loc 1 318 1 view .LVU364
+ 1507 0006 B0FA80F0 		clz	r0, r0
+ 1508 000a 4009     		lsrs	r0, r0, #5
+ 1509 000c 7047     		bx	lr
+ 1510              		.cfi_endproc
+ 1511              	.LFE22:
+ 1513 000e 00BF     		.section	.bss.sk_pool,"aw",%nobits
+ 1514              		.align	3
+ 1515              		.set	.LANCHOR1,. + 0
+ 1518              	sk_pool:
+ 1519 0000 00000000 		.space	576
+ 1519      00000000 
+ 1519      00000000 
+ 1519      00000000 
+ARM GAS  /tmp/ccyl9S3f.s 			page 36
+
+
+ 1519      00000000 
+ 1520              		.section	.bss.sk_pool_used,"aw",%nobits
+ 1521              		.align	2
+ 1522              		.set	.LANCHOR0,. + 0
+ 1525              	sk_pool_used:
+ 1526 0000 00000000 		.space	8
+ 1526      00000000 
+ 1527              		.text
+ 1528              	.Letext0:
+ 1529              		.file 2 "/usr/lib/gcc/arm-none-eabi/10.3.1/include/stdint.h"
+ 1530              		.file 3 "chelper/list.h"
+ 1531              		.file 4 "chelper/trapq.h"
+ 1532              		.file 5 "chelper/itersolve.h"
+ 1533              		.file 6 "/usr/include/newlib/math.h"
+ 1534              		.file 7 "<built-in>"
+ARM GAS  /tmp/ccyl9S3f.s 			page 37
+
+
+DEFINED SYMBOLS
+                            *ABS*:0000000000000000 itersolve.c
+     /tmp/ccyl9S3f.s:18     .text.itersolve_pool_init:0000000000000000 $t
+     /tmp/ccyl9S3f.s:27     .text.itersolve_pool_init:0000000000000000 itersolve_pool_init
+     /tmp/ccyl9S3f.s:49     .text.itersolve_pool_init:0000000000000014 $d
+     /tmp/ccyl9S3f.s:55     .text.itersolve_alloc:0000000000000000 $t
+     /tmp/ccyl9S3f.s:63     .text.itersolve_alloc:0000000000000000 itersolve_alloc
+     /tmp/ccyl9S3f.s:139    .text.itersolve_alloc:000000000000003c $d
+     /tmp/ccyl9S3f.s:147    .text.itersolve_free:0000000000000000 $t
+     /tmp/ccyl9S3f.s:155    .text.itersolve_free:0000000000000000 itersolve_free
+     /tmp/ccyl9S3f.s:195    .text.itersolve_free:000000000000001c $d
+     /tmp/ccyl9S3f.s:202    .text.itersolve_set_trapq:0000000000000000 $t
+     /tmp/ccyl9S3f.s:210    .text.itersolve_set_trapq:0000000000000000 itersolve_set_trapq
+     /tmp/ccyl9S3f.s:227    .text.itersolve_set_calc_callback:0000000000000000 $t
+     /tmp/ccyl9S3f.s:235    .text.itersolve_set_calc_callback:0000000000000000 itersolve_set_calc_callback
+     /tmp/ccyl9S3f.s:252    .text.itersolve_set_step_dist:0000000000000000 $t
+     /tmp/ccyl9S3f.s:260    .text.itersolve_set_step_dist:0000000000000000 itersolve_set_step_dist
+     /tmp/ccyl9S3f.s:277    .text.itersolve_set_position:0000000000000000 $t
+     /tmp/ccyl9S3f.s:285    .text.itersolve_set_position:0000000000000000 itersolve_set_position
+     /tmp/ccyl9S3f.s:305    .text.itersolve_get_position:0000000000000000 $t
+     /tmp/ccyl9S3f.s:313    .text.itersolve_get_position:0000000000000000 itersolve_get_position
+     /tmp/ccyl9S3f.s:333    .text.itersolve_calc_position:0000000000000000 $t
+     /tmp/ccyl9S3f.s:341    .text.itersolve_calc_position:0000000000000000 itersolve_calc_position
+     /tmp/ccyl9S3f.s:503    .text.itersolve_generate_steps:0000000000000000 $t
+     /tmp/ccyl9S3f.s:511    .text.itersolve_generate_steps:0000000000000000 itersolve_generate_steps
+     /tmp/ccyl9S3f.s:1254   .text.itersolve_generate_steps:0000000000000358 $d
+     /tmp/ccyl9S3f.s:1266   .text.itersolve_is_active:0000000000000000 $t
+     /tmp/ccyl9S3f.s:1274   .text.itersolve_is_active:0000000000000000 itersolve_is_active
+     /tmp/ccyl9S3f.s:1299   .text.step_queue_init:0000000000000000 $t
+     /tmp/ccyl9S3f.s:1307   .text.step_queue_init:0000000000000000 step_queue_init
+     /tmp/ccyl9S3f.s:1332   .text.step_queue_push:0000000000000000 $t
+     /tmp/ccyl9S3f.s:1340   .text.step_queue_push:0000000000000000 step_queue_push
+     /tmp/ccyl9S3f.s:1410   .text.step_queue_pop:0000000000000000 $t
+     /tmp/ccyl9S3f.s:1418   .text.step_queue_pop:0000000000000000 step_queue_pop
+     /tmp/ccyl9S3f.s:1483   .text.step_queue_empty:0000000000000000 $t
+     /tmp/ccyl9S3f.s:1491   .text.step_queue_empty:0000000000000000 step_queue_empty
+     /tmp/ccyl9S3f.s:1514   .bss.sk_pool:0000000000000000 $d
+     /tmp/ccyl9S3f.s:1518   .bss.sk_pool:0000000000000000 sk_pool
+     /tmp/ccyl9S3f.s:1521   .bss.sk_pool_used:0000000000000000 $d
+     /tmp/ccyl9S3f.s:1525   .bss.sk_pool_used:0000000000000000 sk_pool_used
+
+UNDEFINED SYMBOLS
+memset
+__aeabi_dcmpge
+__aeabi_dadd
+__aeabi_dcmple
+__aeabi_dsub
+__aeabi_dcmplt
+__aeabi_dcmpgt
+__aeabi_dmul
+__aeabi_ddiv
+__aeabi_i2d
+floor
+ceil
+trapq_has_moves

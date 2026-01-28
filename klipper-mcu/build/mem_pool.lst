@@ -1,0 +1,2156 @@
+ARM GAS  /tmp/ccGYeNvj.s 			page 1
+
+
+   1              		.cpu cortex-m4
+   2              		.eabi_attribute 27, 1
+   3              		.eabi_attribute 28, 1
+   4              		.eabi_attribute 20, 1
+   5              		.eabi_attribute 21, 1
+   6              		.eabi_attribute 23, 3
+   7              		.eabi_attribute 24, 1
+   8              		.eabi_attribute 25, 1
+   9              		.eabi_attribute 26, 1
+  10              		.eabi_attribute 30, 2
+  11              		.eabi_attribute 34, 1
+  12              		.eabi_attribute 18, 4
+  13              		.file	"mem_pool.c"
+  14              		.text
+  15              	.Ltext0:
+  16              		.cfi_sections	.debug_frame
+  17              		.section	.text.mem_pool_init,"ax",%progbits
+  18              		.align	1
+  19              		.p2align 2,,3
+  20              		.global	mem_pool_init
+  21              		.arch armv7e-m
+  22              		.syntax unified
+  23              		.thumb
+  24              		.thumb_func
+  25              		.fpu fpv4-sp-d16
+  27              	mem_pool_init:
+  28              	.LFB3:
+  29              		.file 1 "chelper/mem_pool.c"
+   1:chelper/mem_pool.c **** /**
+   2:chelper/mem_pool.c ****  * @file    mem_pool.c
+   3:chelper/mem_pool.c ****  * @brief   Static memory pool implementation for MCU use
+   4:chelper/mem_pool.c ****  * 
+   5:chelper/mem_pool.c ****  * Provides generic memory pool allocation functions to replace
+   6:chelper/mem_pool.c ****  * malloc/free in embedded environments. Uses fixed-size block pools
+   7:chelper/mem_pool.c ****  * for predictable memory usage.
+   8:chelper/mem_pool.c ****  * 
+   9:chelper/mem_pool.c ****  * Memory Layout:
+  10:chelper/mem_pool.c ****  * - Small pool:  16 blocks x 64 bytes  = 1KB
+  11:chelper/mem_pool.c ****  * - Medium pool: 16 blocks x 256 bytes = 4KB
+  12:chelper/mem_pool.c ****  * - Large pool:  8 blocks x 512 bytes  = 4KB
+  13:chelper/mem_pool.c ****  * - Total: ~9KB
+  14:chelper/mem_pool.c ****  */
+  15:chelper/mem_pool.c **** 
+  16:chelper/mem_pool.c **** #include "mem_pool.h"
+  17:chelper/mem_pool.c **** #include <string.h>
+  18:chelper/mem_pool.c **** 
+  19:chelper/mem_pool.c **** /* ========== Static Memory Pools ========== */
+  20:chelper/mem_pool.c **** 
+  21:chelper/mem_pool.c **** /**
+  22:chelper/mem_pool.c ****  * @brief Small block pool (64 bytes each)
+  23:chelper/mem_pool.c ****  */
+  24:chelper/mem_pool.c **** static uint8_t s_small_pool[MEM_POOL_SMALL_COUNT][MEM_POOL_BLOCK_SMALL];
+  25:chelper/mem_pool.c **** static uint8_t s_small_used[MEM_POOL_SMALL_COUNT];
+  26:chelper/mem_pool.c **** 
+  27:chelper/mem_pool.c **** /**
+  28:chelper/mem_pool.c ****  * @brief Medium block pool (256 bytes each)
+  29:chelper/mem_pool.c ****  */
+ARM GAS  /tmp/ccGYeNvj.s 			page 2
+
+
+  30:chelper/mem_pool.c **** static uint8_t s_medium_pool[MEM_POOL_MEDIUM_COUNT][MEM_POOL_BLOCK_MEDIUM];
+  31:chelper/mem_pool.c **** static uint8_t s_medium_used[MEM_POOL_MEDIUM_COUNT];
+  32:chelper/mem_pool.c **** 
+  33:chelper/mem_pool.c **** /**
+  34:chelper/mem_pool.c ****  * @brief Large block pool (512 bytes each)
+  35:chelper/mem_pool.c ****  */
+  36:chelper/mem_pool.c **** static uint8_t s_large_pool[MEM_POOL_LARGE_COUNT][MEM_POOL_BLOCK_LARGE];
+  37:chelper/mem_pool.c **** static uint8_t s_large_used[MEM_POOL_LARGE_COUNT];
+  38:chelper/mem_pool.c **** 
+  39:chelper/mem_pool.c **** /**
+  40:chelper/mem_pool.c ****  * @brief Pool statistics
+  41:chelper/mem_pool.c ****  */
+  42:chelper/mem_pool.c **** static mem_pool_stats_t s_stats;
+  43:chelper/mem_pool.c **** 
+  44:chelper/mem_pool.c **** /* ========== Internal Helper Functions ========== */
+  45:chelper/mem_pool.c **** 
+  46:chelper/mem_pool.c **** /**
+  47:chelper/mem_pool.c ****  * @brief Disable interrupts and return previous state
+  48:chelper/mem_pool.c ****  * @return Previous interrupt state
+  49:chelper/mem_pool.c ****  */
+  50:chelper/mem_pool.c **** static inline uint32_t
+  51:chelper/mem_pool.c **** irq_disable(void)
+  52:chelper/mem_pool.c **** {
+  53:chelper/mem_pool.c **** #if defined(MCU_BUILD) && (defined(__arm__) || defined(__thumb__))
+  54:chelper/mem_pool.c ****     uint32_t primask;
+  55:chelper/mem_pool.c ****     __asm volatile ("mrs %0, primask" : "=r" (primask));
+  56:chelper/mem_pool.c ****     __asm volatile ("cpsid i" ::: "memory");
+  57:chelper/mem_pool.c ****     return primask;
+  58:chelper/mem_pool.c **** #else
+  59:chelper/mem_pool.c ****     return 0;
+  60:chelper/mem_pool.c **** #endif
+  61:chelper/mem_pool.c **** }
+  62:chelper/mem_pool.c **** 
+  63:chelper/mem_pool.c **** /**
+  64:chelper/mem_pool.c ****  * @brief Restore interrupt state
+  65:chelper/mem_pool.c ****  * @param state Previous interrupt state from irq_disable()
+  66:chelper/mem_pool.c ****  */
+  67:chelper/mem_pool.c **** static inline void
+  68:chelper/mem_pool.c **** irq_restore(uint32_t state)
+  69:chelper/mem_pool.c **** {
+  70:chelper/mem_pool.c **** #if defined(MCU_BUILD) && (defined(__arm__) || defined(__thumb__))
+  71:chelper/mem_pool.c ****     __asm volatile ("msr primask, %0" :: "r" (state) : "memory");
+  72:chelper/mem_pool.c **** #else
+  73:chelper/mem_pool.c ****     (void)state;
+  74:chelper/mem_pool.c **** #endif
+  75:chelper/mem_pool.c **** }
+  76:chelper/mem_pool.c **** 
+  77:chelper/mem_pool.c **** /**
+  78:chelper/mem_pool.c ****  * @brief Update peak usage statistics
+  79:chelper/mem_pool.c ****  */
+  80:chelper/mem_pool.c **** static void
+  81:chelper/mem_pool.c **** update_peak_stats(void)
+  82:chelper/mem_pool.c **** {
+  83:chelper/mem_pool.c ****     if (s_stats.small_used > s_stats.small_peak) {
+  84:chelper/mem_pool.c ****         s_stats.small_peak = s_stats.small_used;
+  85:chelper/mem_pool.c ****     }
+  86:chelper/mem_pool.c ****     if (s_stats.medium_used > s_stats.medium_peak) {
+ARM GAS  /tmp/ccGYeNvj.s 			page 3
+
+
+  87:chelper/mem_pool.c ****         s_stats.medium_peak = s_stats.medium_used;
+  88:chelper/mem_pool.c ****     }
+  89:chelper/mem_pool.c ****     if (s_stats.large_used > s_stats.large_peak) {
+  90:chelper/mem_pool.c ****         s_stats.large_peak = s_stats.large_used;
+  91:chelper/mem_pool.c ****     }
+  92:chelper/mem_pool.c **** }
+  93:chelper/mem_pool.c **** 
+  94:chelper/mem_pool.c **** /* ========== Public Functions ========== */
+  95:chelper/mem_pool.c **** 
+  96:chelper/mem_pool.c **** void
+  97:chelper/mem_pool.c **** mem_pool_init(void)
+  98:chelper/mem_pool.c **** {
+  30              		.loc 1 98 1 view -0
+  31              		.cfi_startproc
+  32              		@ args = 0, pretend = 0, frame = 0
+  33              		@ frame_needed = 0, uses_anonymous_args = 0
+  34              		@ link register save eliminated.
+  99:chelper/mem_pool.c ****     /* Clear all usage flags */
+ 100:chelper/mem_pool.c ****     memset(s_small_used, 0, sizeof(s_small_used));
+  35              		.loc 1 100 5 view .LVU1
+  36 0000 0A48     		ldr	r0, .L4
+ 101:chelper/mem_pool.c ****     memset(s_medium_used, 0, sizeof(s_medium_used));
+  37              		.loc 1 101 5 is_stmt 0 view .LVU2
+  38 0002 0B4B     		ldr	r3, .L4+4
+ 100:chelper/mem_pool.c ****     memset(s_medium_used, 0, sizeof(s_medium_used));
+  39              		.loc 1 100 5 view .LVU3
+  40 0004 0021     		movs	r1, #0
+  98:chelper/mem_pool.c ****     /* Clear all usage flags */
+  41              		.loc 1 98 1 view .LVU4
+  42 0006 10B4     		push	{r4}
+  43              		.cfi_def_cfa_offset 4
+  44              		.cfi_offset 4, -4
+ 100:chelper/mem_pool.c ****     memset(s_medium_used, 0, sizeof(s_medium_used));
+  45              		.loc 1 100 5 view .LVU5
+  46 0008 C0E90011 		strd	r1, r1, [r0]
+  47 000c C0E90211 		strd	r1, r1, [r0, #8]
+  48              		.loc 1 101 5 is_stmt 1 view .LVU6
+  49 0010 C3E90011 		strd	r1, r1, [r3]
+  50 0014 C3E90211 		strd	r1, r1, [r3, #8]
+ 102:chelper/mem_pool.c ****     memset(s_large_used, 0, sizeof(s_large_used));
+  51              		.loc 1 102 5 view .LVU7
+  52 0018 064C     		ldr	r4, .L4+8
+ 103:chelper/mem_pool.c ****     
+ 104:chelper/mem_pool.c ****     /* Clear statistics */
+ 105:chelper/mem_pool.c ****     memset(&s_stats, 0, sizeof(s_stats));
+  53              		.loc 1 105 5 is_stmt 0 view .LVU8
+  54 001a 0748     		ldr	r0, .L4+12
+ 102:chelper/mem_pool.c ****     memset(s_large_used, 0, sizeof(s_large_used));
+  55              		.loc 1 102 5 view .LVU9
+  56 001c C4E90011 		strd	r1, r1, [r4]
+  57              		.loc 1 105 5 is_stmt 1 view .LVU10
+  58 0020 2422     		movs	r2, #36
+ 106:chelper/mem_pool.c **** }
+  59              		.loc 1 106 1 is_stmt 0 view .LVU11
+  60 0022 5DF8044B 		ldr	r4, [sp], #4
+  61              		.cfi_restore 4
+  62              		.cfi_def_cfa_offset 0
+ARM GAS  /tmp/ccGYeNvj.s 			page 4
+
+
+ 105:chelper/mem_pool.c **** }
+  63              		.loc 1 105 5 view .LVU12
+  64 0026 FFF7FEBF 		b	memset
+  65              	.LVL0:
+  66              	.L5:
+  67 002a 00BF     		.align	2
+  68              	.L4:
+  69 002c 00000000 		.word	.LANCHOR0
+  70 0030 00000000 		.word	.LANCHOR1
+  71 0034 00000000 		.word	.LANCHOR2
+  72 0038 00000000 		.word	.LANCHOR3
+  73              		.cfi_endproc
+  74              	.LFE3:
+  76              		.section	.text.mem_pool_alloc,"ax",%progbits
+  77              		.align	1
+  78              		.p2align 2,,3
+  79              		.global	mem_pool_alloc
+  80              		.syntax unified
+  81              		.thumb
+  82              		.thumb_func
+  83              		.fpu fpv4-sp-d16
+  85              	mem_pool_alloc:
+  86              	.LVL1:
+  87              	.LFB4:
+ 107:chelper/mem_pool.c **** 
+ 108:chelper/mem_pool.c **** void *
+ 109:chelper/mem_pool.c **** mem_pool_alloc(size_t size)
+ 110:chelper/mem_pool.c **** {
+  88              		.loc 1 110 1 is_stmt 1 view -0
+  89              		.cfi_startproc
+  90              		@ args = 0, pretend = 0, frame = 0
+  91              		@ frame_needed = 0, uses_anonymous_args = 0
+  92              		@ link register save eliminated.
+ 111:chelper/mem_pool.c ****     void *ptr = NULL;
+  93              		.loc 1 111 5 view .LVU14
+ 112:chelper/mem_pool.c ****     
+ 113:chelper/mem_pool.c ****     if (size == 0) {
+  94              		.loc 1 113 5 view .LVU15
+  95              		.loc 1 113 8 is_stmt 0 view .LVU16
+  96 0000 0028     		cmp	r0, #0
+  97 0002 4CD0     		beq	.L33
+ 114:chelper/mem_pool.c ****         return NULL;
+ 115:chelper/mem_pool.c ****     }
+ 116:chelper/mem_pool.c ****     
+ 117:chelper/mem_pool.c ****     s_stats.total_allocs++;
+  98              		.loc 1 117 5 is_stmt 1 view .LVU17
+  99              		.loc 1 117 25 is_stmt 0 view .LVU18
+ 100 0004 4149     		ldr	r1, .L39
+ 101 0006 0B68     		ldr	r3, [r1]
+ 118:chelper/mem_pool.c ****     
+ 119:chelper/mem_pool.c ****     /* Try small pool first */
+ 120:chelper/mem_pool.c ****     if (size <= MEM_POOL_BLOCK_SMALL) {
+ 102              		.loc 1 120 8 view .LVU19
+ 103 0008 4028     		cmp	r0, #64
+ 117:chelper/mem_pool.c ****     
+ 104              		.loc 1 117 25 view .LVU20
+ 105 000a 03F10103 		add	r3, r3, #1
+ARM GAS  /tmp/ccGYeNvj.s 			page 5
+
+
+ 110:chelper/mem_pool.c ****     void *ptr = NULL;
+ 106              		.loc 1 110 1 view .LVU21
+ 107 000e 10B4     		push	{r4}
+ 108              		.cfi_def_cfa_offset 4
+ 109              		.cfi_offset 4, -4
+ 117:chelper/mem_pool.c ****     
+ 110              		.loc 1 117 25 view .LVU22
+ 111 0010 0B60     		str	r3, [r1]
+ 112              		.loc 1 120 5 is_stmt 1 view .LVU23
+ 113              		.loc 1 120 8 is_stmt 0 view .LVU24
+ 114 0012 22D8     		bhi	.L8
+ 115 0014 3E4C     		ldr	r4, .L39+4
+ 116              	.LBB28:
+ 121:chelper/mem_pool.c ****         for (int i = 0; i < MEM_POOL_SMALL_COUNT; i++) {
+ 117              		.loc 1 121 18 view .LVU25
+ 118 0016 0020     		movs	r0, #0
+ 119              	.LVL2:
+ 120              		.loc 1 121 18 view .LVU26
+ 121 0018 2346     		mov	r3, r4
+ 122              	.L13:
+ 123              	.LVL3:
+ 122:chelper/mem_pool.c ****             if (!s_small_used[i]) {
+ 124              		.loc 1 122 13 is_stmt 1 view .LVU27
+ 121:chelper/mem_pool.c ****         for (int i = 0; i < MEM_POOL_SMALL_COUNT; i++) {
+ 125              		.loc 1 121 51 view .LVU28
+ 126              		.loc 1 122 30 is_stmt 0 view .LVU29
+ 127 001a 13F8012B 		ldrb	r2, [r3], #1	@ zero_extendqisi2
+ 128              		.loc 1 122 16 view .LVU30
+ 129 001e 1AB3     		cbz	r2, .L36
+ 121:chelper/mem_pool.c ****         for (int i = 0; i < MEM_POOL_SMALL_COUNT; i++) {
+ 130              		.loc 1 121 52 discriminator 2 view .LVU31
+ 131 0020 0130     		adds	r0, r0, #1
+ 132              	.LVL4:
+ 121:chelper/mem_pool.c ****         for (int i = 0; i < MEM_POOL_SMALL_COUNT; i++) {
+ 133              		.loc 1 121 25 is_stmt 1 discriminator 2 view .LVU32
+ 121:chelper/mem_pool.c ****         for (int i = 0; i < MEM_POOL_SMALL_COUNT; i++) {
+ 134              		.loc 1 121 9 is_stmt 0 discriminator 2 view .LVU33
+ 135 0022 1028     		cmp	r0, #16
+ 136 0024 F9D1     		bne	.L13
+ 137              	.LVL5:
+ 138              	.L14:
+ 121:chelper/mem_pool.c ****         for (int i = 0; i < MEM_POOL_SMALL_COUNT; i++) {
+ 139              		.loc 1 121 9 discriminator 2 view .LVU34
+ 140 0026 3B4C     		ldr	r4, .L39+8
+ 121:chelper/mem_pool.c ****         for (int i = 0; i < MEM_POOL_SMALL_COUNT; i++) {
+ 141              		.loc 1 121 18 view .LVU35
+ 142 0028 0023     		movs	r3, #0
+ 143 002a 2246     		mov	r2, r4
+ 144              	.L20:
+ 145              	.LVL6:
+ 121:chelper/mem_pool.c ****         for (int i = 0; i < MEM_POOL_SMALL_COUNT; i++) {
+ 146              		.loc 1 121 18 view .LVU36
+ 147              	.LBE28:
+ 148              	.LBB41:
+ 149              	.LBB42:
+ 150              	.LBB43:
+ 123:chelper/mem_pool.c ****                 s_small_used[i] = 1;
+ARM GAS  /tmp/ccGYeNvj.s 			page 6
+
+
+ 124:chelper/mem_pool.c ****                 s_stats.small_used++;
+ 125:chelper/mem_pool.c ****                 update_peak_stats();
+ 126:chelper/mem_pool.c ****                 ptr = s_small_pool[i];
+ 127:chelper/mem_pool.c ****                 return ptr;
+ 128:chelper/mem_pool.c ****             }
+ 129:chelper/mem_pool.c ****         }
+ 130:chelper/mem_pool.c ****     }
+ 131:chelper/mem_pool.c ****     
+ 132:chelper/mem_pool.c ****     /* Try medium pool */
+ 133:chelper/mem_pool.c ****     if (size <= MEM_POOL_BLOCK_MEDIUM) {
+ 134:chelper/mem_pool.c ****         for (int i = 0; i < MEM_POOL_MEDIUM_COUNT; i++) {
+ 135:chelper/mem_pool.c ****             if (!s_medium_used[i]) {
+ 151              		.loc 1 135 13 is_stmt 1 view .LVU37
+ 134:chelper/mem_pool.c ****             if (!s_medium_used[i]) {
+ 152              		.loc 1 134 52 view .LVU38
+ 153              		.loc 1 135 31 is_stmt 0 view .LVU39
+ 154 002c 12F8010B 		ldrb	r0, [r2], #1	@ zero_extendqisi2
+ 155              		.loc 1 135 16 view .LVU40
+ 156 0030 0028     		cmp	r0, #0
+ 157 0032 35D0     		beq	.L37
+ 134:chelper/mem_pool.c ****             if (!s_medium_used[i]) {
+ 158              		.loc 1 134 53 view .LVU41
+ 159 0034 0133     		adds	r3, r3, #1
+ 160              	.LVL7:
+ 134:chelper/mem_pool.c ****             if (!s_medium_used[i]) {
+ 161              		.loc 1 134 25 is_stmt 1 view .LVU42
+ 134:chelper/mem_pool.c ****             if (!s_medium_used[i]) {
+ 162              		.loc 1 134 9 is_stmt 0 view .LVU43
+ 163 0036 102B     		cmp	r3, #16
+ 164 0038 F8D1     		bne	.L20
+ 165              	.LVL8:
+ 166              	.L21:
+ 134:chelper/mem_pool.c ****             if (!s_medium_used[i]) {
+ 167              		.loc 1 134 9 view .LVU44
+ 168 003a 374A     		ldr	r2, .L39+12
+ 169              	.LBE43:
+ 170              	.LBE42:
+ 171              	.LBE41:
+ 172              	.LBB75:
+ 121:chelper/mem_pool.c ****             if (!s_small_used[i]) {
+ 173              		.loc 1 121 18 view .LVU45
+ 174 003c 0023     		movs	r3, #0
+ 175              	.L27:
+ 176              	.LVL9:
+ 121:chelper/mem_pool.c ****             if (!s_small_used[i]) {
+ 177              		.loc 1 121 18 view .LVU46
+ 178              	.LBE75:
+ 179              	.LBB76:
+ 180              	.LBB68:
+ 181              	.LBB54:
+ 136:chelper/mem_pool.c ****                 s_medium_used[i] = 1;
+ 137:chelper/mem_pool.c ****                 s_stats.medium_used++;
+ 138:chelper/mem_pool.c ****                 update_peak_stats();
+ 139:chelper/mem_pool.c ****                 ptr = s_medium_pool[i];
+ 140:chelper/mem_pool.c ****                 return ptr;
+ 141:chelper/mem_pool.c ****             }
+ 142:chelper/mem_pool.c ****         }
+ARM GAS  /tmp/ccGYeNvj.s 			page 7
+
+
+ 143:chelper/mem_pool.c ****     }
+ 144:chelper/mem_pool.c ****     
+ 145:chelper/mem_pool.c ****     /* Try large pool */
+ 146:chelper/mem_pool.c ****     if (size <= MEM_POOL_BLOCK_LARGE) {
+ 147:chelper/mem_pool.c ****         for (int i = 0; i < MEM_POOL_LARGE_COUNT; i++) {
+ 148:chelper/mem_pool.c ****             if (!s_large_used[i]) {
+ 182              		.loc 1 148 13 is_stmt 1 view .LVU47
+ 147:chelper/mem_pool.c ****             if (!s_large_used[i]) {
+ 183              		.loc 1 147 51 view .LVU48
+ 184              		.loc 1 148 16 is_stmt 0 view .LVU49
+ 185 003e 12F8010F 		ldrb	r0, [r2, #1]!	@ zero_extendqisi2
+ 186 0042 0028     		cmp	r0, #0
+ 187 0044 47D0     		beq	.L38
+ 147:chelper/mem_pool.c ****             if (!s_large_used[i]) {
+ 188              		.loc 1 147 52 view .LVU50
+ 189 0046 0133     		adds	r3, r3, #1
+ 190              	.LVL10:
+ 147:chelper/mem_pool.c ****             if (!s_large_used[i]) {
+ 191              		.loc 1 147 25 is_stmt 1 view .LVU51
+ 147:chelper/mem_pool.c ****             if (!s_large_used[i]) {
+ 192              		.loc 1 147 9 is_stmt 0 view .LVU52
+ 193 0048 082B     		cmp	r3, #8
+ 194 004a F8D1     		bne	.L27
+ 195              	.LVL11:
+ 196              	.L22:
+ 147:chelper/mem_pool.c ****             if (!s_large_used[i]) {
+ 197              		.loc 1 147 9 view .LVU53
+ 198              	.LBE54:
+ 149:chelper/mem_pool.c ****                 s_large_used[i] = 1;
+ 150:chelper/mem_pool.c ****                 s_stats.large_used++;
+ 151:chelper/mem_pool.c ****                 update_peak_stats();
+ 152:chelper/mem_pool.c ****                 ptr = s_large_pool[i];
+ 153:chelper/mem_pool.c ****                 return ptr;
+ 154:chelper/mem_pool.c ****             }
+ 155:chelper/mem_pool.c ****         }
+ 156:chelper/mem_pool.c ****     }
+ 157:chelper/mem_pool.c ****     
+ 158:chelper/mem_pool.c ****     /* Allocation failed */
+ 159:chelper/mem_pool.c ****     s_stats.failed_allocs++;
+ 199              		.loc 1 159 5 is_stmt 1 view .LVU54
+ 200              		.loc 1 159 26 is_stmt 0 view .LVU55
+ 201 004c 8B68     		ldr	r3, [r1, #8]
+ 202              	.LBE68:
+ 203              	.LBE76:
+ 160:chelper/mem_pool.c ****     return NULL;
+ 161:chelper/mem_pool.c **** }
+ 204              		.loc 1 161 1 view .LVU56
+ 205 004e 5DF8044B 		ldr	r4, [sp], #4
+ 206              		.cfi_remember_state
+ 207              		.cfi_restore 4
+ 208              		.cfi_def_cfa_offset 0
+ 209              	.LBB77:
+ 210              	.LBB69:
+ 159:chelper/mem_pool.c ****     return NULL;
+ 211              		.loc 1 159 26 view .LVU57
+ 212 0052 0133     		adds	r3, r3, #1
+ 160:chelper/mem_pool.c ****     return NULL;
+ARM GAS  /tmp/ccGYeNvj.s 			page 8
+
+
+ 213              		.loc 1 160 12 view .LVU58
+ 214 0054 0020     		movs	r0, #0
+ 159:chelper/mem_pool.c ****     return NULL;
+ 215              		.loc 1 159 26 view .LVU59
+ 216 0056 8B60     		str	r3, [r1, #8]
+ 160:chelper/mem_pool.c ****     return NULL;
+ 217              		.loc 1 160 5 is_stmt 1 view .LVU60
+ 218              	.LBE69:
+ 219              	.LBE77:
+ 220              		.loc 1 161 1 is_stmt 0 view .LVU61
+ 221 0058 7047     		bx	lr
+ 222              	.LVL12:
+ 223              	.L8:
+ 224              		.cfi_restore_state
+ 225              	.LBB78:
+ 226              	.LBI41:
+ 109:chelper/mem_pool.c **** {
+ 227              		.loc 1 109 1 is_stmt 1 view .LVU62
+ 228              	.LBB70:
+ 133:chelper/mem_pool.c ****         for (int i = 0; i < MEM_POOL_MEDIUM_COUNT; i++) {
+ 229              		.loc 1 133 5 view .LVU63
+ 133:chelper/mem_pool.c ****         for (int i = 0; i < MEM_POOL_MEDIUM_COUNT; i++) {
+ 230              		.loc 1 133 8 is_stmt 0 view .LVU64
+ 231 005a B0F5807F 		cmp	r0, #256
+ 232 005e E2D9     		bls	.L14
+ 146:chelper/mem_pool.c ****         for (int i = 0; i < MEM_POOL_LARGE_COUNT; i++) {
+ 233              		.loc 1 146 5 is_stmt 1 view .LVU65
+ 146:chelper/mem_pool.c ****         for (int i = 0; i < MEM_POOL_LARGE_COUNT; i++) {
+ 234              		.loc 1 146 8 is_stmt 0 view .LVU66
+ 235 0060 B0F5007F 		cmp	r0, #512
+ 236 0064 E9D9     		bls	.L21
+ 237              	.LBB63:
+ 238 0066 F1E7     		b	.L22
+ 239              	.LVL13:
+ 240              	.L36:
+ 146:chelper/mem_pool.c ****         for (int i = 0; i < MEM_POOL_LARGE_COUNT; i++) {
+ 241              		.loc 1 146 8 view .LVU67
+ 242              	.LBE63:
+ 243              	.LBE70:
+ 244              	.LBE78:
+ 245              	.LBB79:
+ 123:chelper/mem_pool.c ****                 s_stats.small_used++;
+ 246              		.loc 1 123 17 is_stmt 1 view .LVU68
+ 124:chelper/mem_pool.c ****                 update_peak_stats();
+ 247              		.loc 1 124 35 is_stmt 0 view .LVU69
+ 248 0068 CB68     		ldr	r3, [r1, #12]
+ 249              	.LBB29:
+ 250              	.LBB30:
+  83:chelper/mem_pool.c ****         s_stats.small_peak = s_stats.small_used;
+ 251              		.loc 1 83 8 view .LVU70
+ 252 006a 8A69     		ldr	r2, [r1, #24]
+ 253              	.LBE30:
+ 254              	.LBE29:
+ 123:chelper/mem_pool.c ****                 s_stats.small_used++;
+ 255              		.loc 1 123 33 view .LVU71
+ 256 006c 4FF0010C 		mov	ip, #1
+ 124:chelper/mem_pool.c ****                 update_peak_stats();
+ARM GAS  /tmp/ccGYeNvj.s 			page 9
+
+
+ 257              		.loc 1 124 35 view .LVU72
+ 258 0070 6344     		add	r3, r3, ip
+ 259              	.LBB36:
+ 260              	.LBB31:
+  83:chelper/mem_pool.c ****         s_stats.small_peak = s_stats.small_used;
+ 261              		.loc 1 83 8 view .LVU73
+ 262 0072 9342     		cmp	r3, r2
+  84:chelper/mem_pool.c ****     }
+ 263              		.loc 1 84 28 view .LVU74
+ 264 0074 88BF     		it	hi
+ 265 0076 8B61     		strhi	r3, [r1, #24]
+  86:chelper/mem_pool.c ****         s_stats.medium_peak = s_stats.medium_used;
+ 266              		.loc 1 86 8 view .LVU75
+ 267 0078 CA69     		ldr	r2, [r1, #28]
+ 268              	.LBE31:
+ 269              	.LBE36:
+ 124:chelper/mem_pool.c ****                 update_peak_stats();
+ 270              		.loc 1 124 35 view .LVU76
+ 271 007a CB60     		str	r3, [r1, #12]
+ 272              	.LBB37:
+ 273              	.LBB32:
+  86:chelper/mem_pool.c ****         s_stats.medium_peak = s_stats.medium_used;
+ 274              		.loc 1 86 16 view .LVU77
+ 275 007c 0B69     		ldr	r3, [r1, #16]
+ 276              	.LBE32:
+ 277              	.LBE37:
+ 123:chelper/mem_pool.c ****                 s_stats.small_used++;
+ 278              		.loc 1 123 33 view .LVU78
+ 279 007e 04F800C0 		strb	ip, [r4, r0]
+ 124:chelper/mem_pool.c ****                 update_peak_stats();
+ 280              		.loc 1 124 17 is_stmt 1 view .LVU79
+ 125:chelper/mem_pool.c ****                 ptr = s_small_pool[i];
+ 281              		.loc 1 125 17 view .LVU80
+ 282              	.LBB38:
+ 283              	.LBI29:
+  81:chelper/mem_pool.c **** {
+ 284              		.loc 1 81 1 view .LVU81
+ 285              	.LBB33:
+  83:chelper/mem_pool.c ****         s_stats.small_peak = s_stats.small_used;
+ 286              		.loc 1 83 5 view .LVU82
+  84:chelper/mem_pool.c ****     }
+ 287              		.loc 1 84 9 view .LVU83
+  86:chelper/mem_pool.c ****         s_stats.medium_peak = s_stats.medium_used;
+ 288              		.loc 1 86 5 view .LVU84
+  86:chelper/mem_pool.c ****         s_stats.medium_peak = s_stats.medium_used;
+ 289              		.loc 1 86 8 is_stmt 0 view .LVU85
+ 290 0082 9342     		cmp	r3, r2
+  87:chelper/mem_pool.c ****     }
+ 291              		.loc 1 87 9 is_stmt 1 view .LVU86
+  87:chelper/mem_pool.c ****     }
+ 292              		.loc 1 87 29 is_stmt 0 view .LVU87
+ 293 0084 88BF     		it	hi
+ 294 0086 CB61     		strhi	r3, [r1, #28]
+  89:chelper/mem_pool.c ****         s_stats.large_peak = s_stats.large_used;
+ 295              		.loc 1 89 5 is_stmt 1 view .LVU88
+  89:chelper/mem_pool.c ****         s_stats.large_peak = s_stats.large_used;
+ 296              		.loc 1 89 8 is_stmt 0 view .LVU89
+ARM GAS  /tmp/ccGYeNvj.s 			page 10
+
+
+ 297 0088 0A6A     		ldr	r2, [r1, #32]
+  89:chelper/mem_pool.c ****         s_stats.large_peak = s_stats.large_used;
+ 298              		.loc 1 89 16 view .LVU90
+ 299 008a 4B69     		ldr	r3, [r1, #20]
+ 300              	.LBE33:
+ 301              	.LBE38:
+ 302              	.LBE79:
+ 303              		.loc 1 161 1 view .LVU91
+ 304 008c 5DF8044B 		ldr	r4, [sp], #4
+ 305              		.cfi_restore 4
+ 306              		.cfi_def_cfa_offset 0
+ 307              	.LBB80:
+ 308              	.LBB39:
+ 309              	.LBB34:
+  89:chelper/mem_pool.c ****         s_stats.large_peak = s_stats.large_used;
+ 310              		.loc 1 89 8 view .LVU92
+ 311 0090 9342     		cmp	r3, r2
+  90:chelper/mem_pool.c ****     }
+ 312              		.loc 1 90 9 is_stmt 1 view .LVU93
+ 313              	.LBE34:
+ 314              	.LBE39:
+ 126:chelper/mem_pool.c ****                 return ptr;
+ 315              		.loc 1 126 17 view .LVU94
+ 316              	.LBB40:
+ 317              	.LBB35:
+  90:chelper/mem_pool.c ****     }
+ 318              		.loc 1 90 28 is_stmt 0 view .LVU95
+ 319 0092 88BF     		it	hi
+ 320 0094 0B62     		strhi	r3, [r1, #32]
+ 321              	.LBE35:
+ 322              	.LBE40:
+ 126:chelper/mem_pool.c ****                 return ptr;
+ 323              		.loc 1 126 21 view .LVU96
+ 324 0096 214B     		ldr	r3, .L39+16
+ 325 0098 03EB8010 		add	r0, r3, r0, lsl #6
+ 326              	.LVL14:
+ 127:chelper/mem_pool.c ****             }
+ 327              		.loc 1 127 17 is_stmt 1 view .LVU97
+ 328              	.LBE80:
+ 329              		.loc 1 161 1 is_stmt 0 view .LVU98
+ 330 009c 7047     		bx	lr
+ 331              	.LVL15:
+ 332              	.L33:
+ 333              		.loc 1 161 1 view .LVU99
+ 334 009e 7047     		bx	lr
+ 335              	.LVL16:
+ 336              	.L37:
+ 337              		.cfi_def_cfa_offset 4
+ 338              		.cfi_offset 4, -4
+ 339              	.LBB81:
+ 340              	.LBB71:
+ 341              	.LBB64:
+ 136:chelper/mem_pool.c ****                 s_stats.medium_used++;
+ 342              		.loc 1 136 17 is_stmt 1 view .LVU100
+ 343              	.LBB44:
+ 344              	.LBB45:
+  83:chelper/mem_pool.c ****         s_stats.small_peak = s_stats.small_used;
+ARM GAS  /tmp/ccGYeNvj.s 			page 11
+
+
+ 345              		.loc 1 83 16 is_stmt 0 view .LVU101
+ 346 00a0 D1E90302 		ldrd	r0, r2, [r1, #12]
+ 347              	.LBE45:
+ 348              	.LBE44:
+ 136:chelper/mem_pool.c ****                 s_stats.medium_used++;
+ 349              		.loc 1 136 34 view .LVU102
+ 350 00a4 4FF0010C 		mov	ip, #1
+ 351 00a8 04F803C0 		strb	ip, [r4, r3]
+ 137:chelper/mem_pool.c ****                 update_peak_stats();
+ 352              		.loc 1 137 17 is_stmt 1 view .LVU103
+ 353              	.LBB50:
+ 354              	.LBB46:
+  83:chelper/mem_pool.c ****         s_stats.small_peak = s_stats.small_used;
+ 355              		.loc 1 83 8 is_stmt 0 view .LVU104
+ 356 00ac 8C69     		ldr	r4, [r1, #24]
+ 357 00ae A042     		cmp	r0, r4
+  84:chelper/mem_pool.c ****     }
+ 358              		.loc 1 84 28 view .LVU105
+ 359 00b0 88BF     		it	hi
+ 360 00b2 8861     		strhi	r0, [r1, #24]
+  86:chelper/mem_pool.c ****         s_stats.medium_peak = s_stats.medium_used;
+ 361              		.loc 1 86 8 view .LVU106
+ 362 00b4 C869     		ldr	r0, [r1, #28]
+ 363              	.LBE46:
+ 364              	.LBE50:
+ 365              	.LBE64:
+ 366              	.LBE71:
+ 367              	.LBE81:
+ 368              		.loc 1 161 1 view .LVU107
+ 369 00b6 5DF8044B 		ldr	r4, [sp], #4
+ 370              		.cfi_remember_state
+ 371              		.cfi_restore 4
+ 372              		.cfi_def_cfa_offset 0
+ 373              	.LBB82:
+ 374              	.LBB72:
+ 375              	.LBB65:
+ 137:chelper/mem_pool.c ****                 update_peak_stats();
+ 376              		.loc 1 137 36 view .LVU108
+ 377 00ba 6244     		add	r2, r2, ip
+ 378              	.LBB51:
+ 379              	.LBB47:
+  86:chelper/mem_pool.c ****         s_stats.medium_peak = s_stats.medium_used;
+ 380              		.loc 1 86 8 view .LVU109
+ 381 00bc 8242     		cmp	r2, r0
+  87:chelper/mem_pool.c ****     }
+ 382              		.loc 1 87 29 view .LVU110
+ 383 00be 88BF     		it	hi
+ 384 00c0 CA61     		strhi	r2, [r1, #28]
+  89:chelper/mem_pool.c ****         s_stats.large_peak = s_stats.large_used;
+ 385              		.loc 1 89 8 view .LVU111
+ 386 00c2 086A     		ldr	r0, [r1, #32]
+ 387              	.LBE47:
+ 388              	.LBE51:
+ 137:chelper/mem_pool.c ****                 update_peak_stats();
+ 389              		.loc 1 137 36 view .LVU112
+ 390 00c4 0A61     		str	r2, [r1, #16]
+ 138:chelper/mem_pool.c ****                 ptr = s_medium_pool[i];
+ARM GAS  /tmp/ccGYeNvj.s 			page 12
+
+
+ 391              		.loc 1 138 17 is_stmt 1 view .LVU113
+ 392              	.LBB52:
+ 393              	.LBI44:
+  81:chelper/mem_pool.c **** {
+ 394              		.loc 1 81 1 view .LVU114
+ 395              	.LBB48:
+  83:chelper/mem_pool.c ****         s_stats.small_peak = s_stats.small_used;
+ 396              		.loc 1 83 5 view .LVU115
+  84:chelper/mem_pool.c ****     }
+ 397              		.loc 1 84 9 view .LVU116
+  86:chelper/mem_pool.c ****         s_stats.medium_peak = s_stats.medium_used;
+ 398              		.loc 1 86 5 view .LVU117
+  87:chelper/mem_pool.c ****     }
+ 399              		.loc 1 87 9 view .LVU118
+  89:chelper/mem_pool.c ****         s_stats.large_peak = s_stats.large_used;
+ 400              		.loc 1 89 5 view .LVU119
+  89:chelper/mem_pool.c ****         s_stats.large_peak = s_stats.large_used;
+ 401              		.loc 1 89 16 is_stmt 0 view .LVU120
+ 402 00c6 4A69     		ldr	r2, [r1, #20]
+  89:chelper/mem_pool.c ****         s_stats.large_peak = s_stats.large_used;
+ 403              		.loc 1 89 8 view .LVU121
+ 404 00c8 8242     		cmp	r2, r0
+  90:chelper/mem_pool.c ****     }
+ 405              		.loc 1 90 9 is_stmt 1 view .LVU122
+ 406              	.LBE48:
+ 407              	.LBE52:
+ 139:chelper/mem_pool.c ****                 return ptr;
+ 408              		.loc 1 139 17 view .LVU123
+ 139:chelper/mem_pool.c ****                 return ptr;
+ 409              		.loc 1 139 21 is_stmt 0 view .LVU124
+ 410 00ca 1548     		ldr	r0, .L39+20
+ 411              	.LBB53:
+ 412              	.LBB49:
+  90:chelper/mem_pool.c ****     }
+ 413              		.loc 1 90 28 view .LVU125
+ 414 00cc 88BF     		it	hi
+ 415 00ce 0A62     		strhi	r2, [r1, #32]
+ 416              	.LBE49:
+ 417              	.LBE53:
+ 139:chelper/mem_pool.c ****                 return ptr;
+ 418              		.loc 1 139 21 view .LVU126
+ 419 00d0 00EB0320 		add	r0, r0, r3, lsl #8
+ 420              	.LVL17:
+ 140:chelper/mem_pool.c ****             }
+ 421              		.loc 1 140 17 is_stmt 1 view .LVU127
+ 422              	.LBE65:
+ 423              	.LBE72:
+ 424              	.LBE82:
+ 425              		.loc 1 161 1 is_stmt 0 view .LVU128
+ 426 00d4 7047     		bx	lr
+ 427              	.LVL18:
+ 428              	.L38:
+ 429              		.cfi_restore_state
+ 430              	.LBB83:
+ 431              	.LBB73:
+ 432              	.LBB66:
+ 149:chelper/mem_pool.c ****                 s_stats.large_used++;
+ARM GAS  /tmp/ccGYeNvj.s 			page 13
+
+
+ 433              		.loc 1 149 17 is_stmt 1 view .LVU129
+ 150:chelper/mem_pool.c ****                 update_peak_stats();
+ 434              		.loc 1 150 35 is_stmt 0 view .LVU130
+ 435 00d6 4A69     		ldr	r2, [r1, #20]
+ 149:chelper/mem_pool.c ****                 s_stats.large_used++;
+ 436              		.loc 1 149 33 view .LVU131
+ 437 00d8 1248     		ldr	r0, .L39+24
+ 438 00da 0124     		movs	r4, #1
+ 150:chelper/mem_pool.c ****                 update_peak_stats();
+ 439              		.loc 1 150 35 view .LVU132
+ 440 00dc 2244     		add	r2, r2, r4
+ 149:chelper/mem_pool.c ****                 s_stats.large_used++;
+ 441              		.loc 1 149 33 view .LVU133
+ 442 00de C454     		strb	r4, [r0, r3]
+ 150:chelper/mem_pool.c ****                 update_peak_stats();
+ 443              		.loc 1 150 17 is_stmt 1 view .LVU134
+ 444              	.LBB55:
+ 445              	.LBB56:
+  83:chelper/mem_pool.c ****         s_stats.small_peak = s_stats.small_used;
+ 446              		.loc 1 83 16 is_stmt 0 view .LVU135
+ 447 00e0 C868     		ldr	r0, [r1, #12]
+  83:chelper/mem_pool.c ****         s_stats.small_peak = s_stats.small_used;
+ 448              		.loc 1 83 8 view .LVU136
+ 449 00e2 8C69     		ldr	r4, [r1, #24]
+ 450              	.LBE56:
+ 451              	.LBE55:
+ 150:chelper/mem_pool.c ****                 update_peak_stats();
+ 452              		.loc 1 150 35 view .LVU137
+ 453 00e4 4A61     		str	r2, [r1, #20]
+ 151:chelper/mem_pool.c ****                 ptr = s_large_pool[i];
+ 454              		.loc 1 151 17 is_stmt 1 view .LVU138
+ 455              	.LBB60:
+ 456              	.LBI55:
+  81:chelper/mem_pool.c **** {
+ 457              		.loc 1 81 1 view .LVU139
+ 458              	.LBB57:
+  83:chelper/mem_pool.c ****         s_stats.small_peak = s_stats.small_used;
+ 459              		.loc 1 83 5 view .LVU140
+  83:chelper/mem_pool.c ****         s_stats.small_peak = s_stats.small_used;
+ 460              		.loc 1 83 8 is_stmt 0 view .LVU141
+ 461 00e6 A042     		cmp	r0, r4
+  84:chelper/mem_pool.c ****     }
+ 462              		.loc 1 84 9 is_stmt 1 view .LVU142
+  84:chelper/mem_pool.c ****     }
+ 463              		.loc 1 84 28 is_stmt 0 view .LVU143
+ 464 00e8 88BF     		it	hi
+ 465 00ea 8861     		strhi	r0, [r1, #24]
+  86:chelper/mem_pool.c ****         s_stats.medium_peak = s_stats.medium_used;
+ 466              		.loc 1 86 5 is_stmt 1 view .LVU144
+  86:chelper/mem_pool.c ****         s_stats.medium_peak = s_stats.medium_used;
+ 467              		.loc 1 86 8 is_stmt 0 view .LVU145
+ 468 00ec CC69     		ldr	r4, [r1, #28]
+  86:chelper/mem_pool.c ****         s_stats.medium_peak = s_stats.medium_used;
+ 469              		.loc 1 86 16 view .LVU146
+ 470 00ee 0869     		ldr	r0, [r1, #16]
+  86:chelper/mem_pool.c ****         s_stats.medium_peak = s_stats.medium_used;
+ 471              		.loc 1 86 8 view .LVU147
+ARM GAS  /tmp/ccGYeNvj.s 			page 14
+
+
+ 472 00f0 A042     		cmp	r0, r4
+  87:chelper/mem_pool.c ****     }
+ 473              		.loc 1 87 9 is_stmt 1 view .LVU148
+  87:chelper/mem_pool.c ****     }
+ 474              		.loc 1 87 29 is_stmt 0 view .LVU149
+ 475 00f2 88BF     		it	hi
+ 476 00f4 C861     		strhi	r0, [r1, #28]
+  89:chelper/mem_pool.c ****         s_stats.large_peak = s_stats.large_used;
+ 477              		.loc 1 89 5 is_stmt 1 view .LVU150
+  89:chelper/mem_pool.c ****         s_stats.large_peak = s_stats.large_used;
+ 478              		.loc 1 89 8 is_stmt 0 view .LVU151
+ 479 00f6 086A     		ldr	r0, [r1, #32]
+ 480              	.LBE57:
+ 481              	.LBE60:
+ 482              	.LBE66:
+ 483              	.LBE73:
+ 484              	.LBE83:
+ 485              		.loc 1 161 1 view .LVU152
+ 486 00f8 5DF8044B 		ldr	r4, [sp], #4
+ 487              		.cfi_restore 4
+ 488              		.cfi_def_cfa_offset 0
+ 489              	.LBB84:
+ 490              	.LBB74:
+ 491              	.LBB67:
+ 492              	.LBB61:
+ 493              	.LBB58:
+  89:chelper/mem_pool.c ****         s_stats.large_peak = s_stats.large_used;
+ 494              		.loc 1 89 8 view .LVU153
+ 495 00fc 8242     		cmp	r2, r0
+  90:chelper/mem_pool.c ****     }
+ 496              		.loc 1 90 9 is_stmt 1 view .LVU154
+ 497              	.LBE58:
+ 498              	.LBE61:
+ 152:chelper/mem_pool.c ****                 return ptr;
+ 499              		.loc 1 152 17 view .LVU155
+ 152:chelper/mem_pool.c ****                 return ptr;
+ 500              		.loc 1 152 21 is_stmt 0 view .LVU156
+ 501 00fe 0A48     		ldr	r0, .L39+28
+ 502              	.LBB62:
+ 503              	.LBB59:
+  90:chelper/mem_pool.c ****     }
+ 504              		.loc 1 90 28 view .LVU157
+ 505 0100 88BF     		it	hi
+ 506 0102 0A62     		strhi	r2, [r1, #32]
+ 507              	.LBE59:
+ 508              	.LBE62:
+ 152:chelper/mem_pool.c ****                 return ptr;
+ 509              		.loc 1 152 21 view .LVU158
+ 510 0104 00EB4320 		add	r0, r0, r3, lsl #9
+ 511              	.LVL19:
+ 153:chelper/mem_pool.c ****             }
+ 512              		.loc 1 153 17 is_stmt 1 view .LVU159
+ 513              	.LBE67:
+ 514              	.LBE74:
+ 515              	.LBE84:
+ 516              		.loc 1 161 1 is_stmt 0 view .LVU160
+ 517 0108 7047     		bx	lr
+ARM GAS  /tmp/ccGYeNvj.s 			page 15
+
+
+ 518              	.L40:
+ 519 010a 00BF     		.align	2
+ 520              	.L39:
+ 521 010c 00000000 		.word	.LANCHOR3
+ 522 0110 00000000 		.word	.LANCHOR0
+ 523 0114 00000000 		.word	.LANCHOR1
+ 524 0118 FFFFFFFF 		.word	.LANCHOR2-1
+ 525 011c 00000000 		.word	.LANCHOR4
+ 526 0120 00000000 		.word	s_medium_pool
+ 527 0124 00000000 		.word	.LANCHOR2
+ 528 0128 00000000 		.word	s_large_pool
+ 529              		.cfi_endproc
+ 530              	.LFE4:
+ 532              		.section	.text.mem_pool_free,"ax",%progbits
+ 533              		.align	1
+ 534              		.p2align 2,,3
+ 535              		.global	mem_pool_free
+ 536              		.syntax unified
+ 537              		.thumb
+ 538              		.thumb_func
+ 539              		.fpu fpv4-sp-d16
+ 541              	mem_pool_free:
+ 542              	.LVL20:
+ 543              	.LFB5:
+ 162:chelper/mem_pool.c **** 
+ 163:chelper/mem_pool.c **** void
+ 164:chelper/mem_pool.c **** mem_pool_free(void *ptr)
+ 165:chelper/mem_pool.c **** {
+ 544              		.loc 1 165 1 is_stmt 1 view -0
+ 545              		.cfi_startproc
+ 546              		@ args = 0, pretend = 0, frame = 0
+ 547              		@ frame_needed = 0, uses_anonymous_args = 0
+ 548              		@ link register save eliminated.
+ 166:chelper/mem_pool.c ****     if (ptr == NULL) {
+ 549              		.loc 1 166 5 view .LVU162
+ 550              		.loc 1 166 8 is_stmt 0 view .LVU163
+ 551 0000 0028     		cmp	r0, #0
+ 552 0002 38D0     		beq	.L66
+ 167:chelper/mem_pool.c ****         return;
+ 168:chelper/mem_pool.c ****     }
+ 169:chelper/mem_pool.c ****     
+ 170:chelper/mem_pool.c ****     s_stats.total_frees++;
+ 553              		.loc 1 170 5 is_stmt 1 view .LVU164
+ 554              		.loc 1 170 24 is_stmt 0 view .LVU165
+ 555 0004 2149     		ldr	r1, .L72
+ 556 0006 224B     		ldr	r3, .L72+4
+ 165:chelper/mem_pool.c ****     if (ptr == NULL) {
+ 557              		.loc 1 165 1 view .LVU166
+ 558 0008 10B4     		push	{r4}
+ 559              		.cfi_def_cfa_offset 4
+ 560              		.cfi_offset 4, -4
+ 561              		.loc 1 170 24 view .LVU167
+ 562 000a 4C68     		ldr	r4, [r1, #4]
+ 563 000c 0134     		adds	r4, r4, #1
+ 564              	.LBB92:
+ 171:chelper/mem_pool.c ****     
+ 172:chelper/mem_pool.c ****     /* Check if pointer is in small pool */
+ARM GAS  /tmp/ccGYeNvj.s 			page 16
+
+
+ 173:chelper/mem_pool.c ****     for (int i = 0; i < MEM_POOL_SMALL_COUNT; i++) {
+ 565              		.loc 1 173 14 view .LVU168
+ 566 000e 0022     		movs	r2, #0
+ 567              	.LBE92:
+ 170:chelper/mem_pool.c ****     
+ 568              		.loc 1 170 24 view .LVU169
+ 569 0010 4C60     		str	r4, [r1, #4]
+ 570              		.loc 1 173 5 is_stmt 1 view .LVU170
+ 571              	.LBB93:
+ 572              		.loc 1 173 10 view .LVU171
+ 573              	.LVL21:
+ 574              		.loc 1 173 21 view .LVU172
+ 575              	.L45:
+ 174:chelper/mem_pool.c ****         if (ptr == s_small_pool[i]) {
+ 576              		.loc 1 174 9 view .LVU173
+ 173:chelper/mem_pool.c ****         if (ptr == s_small_pool[i]) {
+ 577              		.loc 1 173 47 view .LVU174
+ 578              		.loc 1 174 12 is_stmt 0 view .LVU175
+ 579 0012 9842     		cmp	r0, r3
+ 173:chelper/mem_pool.c ****         if (ptr == s_small_pool[i]) {
+ 580              		.loc 1 173 5 view .LVU176
+ 581 0014 03F14003 		add	r3, r3, #64
+ 582              		.loc 1 174 12 view .LVU177
+ 583 0018 17D0     		beq	.L69
+ 173:chelper/mem_pool.c ****         if (ptr == s_small_pool[i]) {
+ 584              		.loc 1 173 48 discriminator 2 view .LVU178
+ 585 001a 0132     		adds	r2, r2, #1
+ 586              	.LVL22:
+ 173:chelper/mem_pool.c ****         if (ptr == s_small_pool[i]) {
+ 587              		.loc 1 173 21 is_stmt 1 discriminator 2 view .LVU179
+ 173:chelper/mem_pool.c ****         if (ptr == s_small_pool[i]) {
+ 588              		.loc 1 173 5 is_stmt 0 discriminator 2 view .LVU180
+ 589 001c 102A     		cmp	r2, #16
+ 590 001e F8D1     		bne	.L45
+ 591 0020 1C4B     		ldr	r3, .L72+8
+ 592              	.LBE93:
+ 593              	.LBB94:
+ 594              	.LBB95:
+ 175:chelper/mem_pool.c ****             s_small_used[i] = 0;
+ 176:chelper/mem_pool.c ****             if (s_stats.small_used > 0) {
+ 177:chelper/mem_pool.c ****                 s_stats.small_used--;
+ 178:chelper/mem_pool.c ****             }
+ 179:chelper/mem_pool.c ****             return;
+ 180:chelper/mem_pool.c ****         }
+ 181:chelper/mem_pool.c ****     }
+ 182:chelper/mem_pool.c ****     
+ 183:chelper/mem_pool.c ****     /* Check if pointer is in medium pool */
+ 184:chelper/mem_pool.c ****     for (int i = 0; i < MEM_POOL_MEDIUM_COUNT; i++) {
+ 595              		.loc 1 184 14 view .LVU181
+ 596 0022 0022     		movs	r2, #0
+ 597              	.LVL23:
+ 598              	.L47:
+ 185:chelper/mem_pool.c ****         if (ptr == s_medium_pool[i]) {
+ 599              		.loc 1 185 9 is_stmt 1 view .LVU182
+ 184:chelper/mem_pool.c ****         if (ptr == s_medium_pool[i]) {
+ 600              		.loc 1 184 48 view .LVU183
+ 601              		.loc 1 185 12 is_stmt 0 view .LVU184
+ARM GAS  /tmp/ccGYeNvj.s 			page 17
+
+
+ 602 0024 9842     		cmp	r0, r3
+ 184:chelper/mem_pool.c ****         if (ptr == s_medium_pool[i]) {
+ 603              		.loc 1 184 5 view .LVU185
+ 604 0026 03F58073 		add	r3, r3, #256
+ 605              		.loc 1 185 12 view .LVU186
+ 606 002a 19D0     		beq	.L70
+ 184:chelper/mem_pool.c ****         if (ptr == s_medium_pool[i]) {
+ 607              		.loc 1 184 49 view .LVU187
+ 608 002c 0132     		adds	r2, r2, #1
+ 609              	.LVL24:
+ 184:chelper/mem_pool.c ****         if (ptr == s_medium_pool[i]) {
+ 610              		.loc 1 184 21 is_stmt 1 view .LVU188
+ 184:chelper/mem_pool.c ****         if (ptr == s_medium_pool[i]) {
+ 611              		.loc 1 184 5 is_stmt 0 view .LVU189
+ 612 002e 102A     		cmp	r2, #16
+ 613 0030 F8D1     		bne	.L47
+ 614 0032 194B     		ldr	r3, .L72+12
+ 615              	.LBE95:
+ 616              	.LBB96:
+ 186:chelper/mem_pool.c ****             s_medium_used[i] = 0;
+ 187:chelper/mem_pool.c ****             if (s_stats.medium_used > 0) {
+ 188:chelper/mem_pool.c ****                 s_stats.medium_used--;
+ 189:chelper/mem_pool.c ****             }
+ 190:chelper/mem_pool.c ****             return;
+ 191:chelper/mem_pool.c ****         }
+ 192:chelper/mem_pool.c ****     }
+ 193:chelper/mem_pool.c ****     
+ 194:chelper/mem_pool.c ****     /* Check if pointer is in large pool */
+ 195:chelper/mem_pool.c ****     for (int i = 0; i < MEM_POOL_LARGE_COUNT; i++) {
+ 617              		.loc 1 195 14 view .LVU190
+ 618 0034 0022     		movs	r2, #0
+ 619              	.LVL25:
+ 620              	.L49:
+ 196:chelper/mem_pool.c ****         if (ptr == s_large_pool[i]) {
+ 621              		.loc 1 196 9 is_stmt 1 view .LVU191
+ 195:chelper/mem_pool.c ****         if (ptr == s_large_pool[i]) {
+ 622              		.loc 1 195 47 view .LVU192
+ 623              		.loc 1 196 12 is_stmt 0 view .LVU193
+ 624 0036 9842     		cmp	r0, r3
+ 195:chelper/mem_pool.c ****         if (ptr == s_large_pool[i]) {
+ 625              		.loc 1 195 5 view .LVU194
+ 626 0038 03F50073 		add	r3, r3, #512
+ 627              		.loc 1 196 12 view .LVU195
+ 628 003c 1CD0     		beq	.L71
+ 195:chelper/mem_pool.c ****         if (ptr == s_large_pool[i]) {
+ 629              		.loc 1 195 48 view .LVU196
+ 630 003e 0132     		adds	r2, r2, #1
+ 631              	.LVL26:
+ 195:chelper/mem_pool.c ****         if (ptr == s_large_pool[i]) {
+ 632              		.loc 1 195 21 is_stmt 1 view .LVU197
+ 195:chelper/mem_pool.c ****         if (ptr == s_large_pool[i]) {
+ 633              		.loc 1 195 5 is_stmt 0 view .LVU198
+ 634 0040 082A     		cmp	r2, #8
+ 635 0042 F8D1     		bne	.L49
+ 636              	.LVL27:
+ 637              	.L41:
+ 195:chelper/mem_pool.c ****         if (ptr == s_large_pool[i]) {
+ARM GAS  /tmp/ccGYeNvj.s 			page 18
+
+
+ 638              		.loc 1 195 5 view .LVU199
+ 639              	.LBE96:
+ 640              	.LBE94:
+ 197:chelper/mem_pool.c ****             s_large_used[i] = 0;
+ 198:chelper/mem_pool.c ****             if (s_stats.large_used > 0) {
+ 199:chelper/mem_pool.c ****                 s_stats.large_used--;
+ 200:chelper/mem_pool.c ****             }
+ 201:chelper/mem_pool.c ****             return;
+ 202:chelper/mem_pool.c ****         }
+ 203:chelper/mem_pool.c ****     }
+ 204:chelper/mem_pool.c ****     
+ 205:chelper/mem_pool.c ****     /* Pointer not from pool - ignore (could log warning in debug) */
+ 206:chelper/mem_pool.c **** }
+ 641              		.loc 1 206 1 view .LVU200
+ 642 0044 5DF8044B 		ldr	r4, [sp], #4
+ 643              		.cfi_remember_state
+ 644              		.cfi_restore 4
+ 645              		.cfi_def_cfa_offset 0
+ 646 0048 7047     		bx	lr
+ 647              	.LVL28:
+ 648              	.L69:
+ 649              		.cfi_restore_state
+ 650              	.LBB100:
+ 175:chelper/mem_pool.c ****             if (s_stats.small_used > 0) {
+ 651              		.loc 1 175 13 is_stmt 1 view .LVU201
+ 175:chelper/mem_pool.c ****             if (s_stats.small_used > 0) {
+ 652              		.loc 1 175 29 is_stmt 0 view .LVU202
+ 653 004a 1448     		ldr	r0, .L72+16
+ 654              	.LVL29:
+ 176:chelper/mem_pool.c ****                 s_stats.small_used--;
+ 655              		.loc 1 176 24 view .LVU203
+ 656 004c CB68     		ldr	r3, [r1, #12]
+ 175:chelper/mem_pool.c ****             if (s_stats.small_used > 0) {
+ 657              		.loc 1 175 29 view .LVU204
+ 658 004e 0024     		movs	r4, #0
+ 659 0050 8454     		strb	r4, [r0, r2]
+ 176:chelper/mem_pool.c ****                 s_stats.small_used--;
+ 660              		.loc 1 176 13 is_stmt 1 view .LVU205
+ 176:chelper/mem_pool.c ****                 s_stats.small_used--;
+ 661              		.loc 1 176 16 is_stmt 0 view .LVU206
+ 662 0052 002B     		cmp	r3, #0
+ 663 0054 F6D0     		beq	.L41
+ 177:chelper/mem_pool.c ****             }
+ 664              		.loc 1 177 17 is_stmt 1 view .LVU207
+ 177:chelper/mem_pool.c ****             }
+ 665              		.loc 1 177 35 is_stmt 0 view .LVU208
+ 666 0056 013B     		subs	r3, r3, #1
+ 667              	.LBE100:
+ 668              		.loc 1 206 1 view .LVU209
+ 669 0058 5DF8044B 		ldr	r4, [sp], #4
+ 670              		.cfi_remember_state
+ 671              		.cfi_restore 4
+ 672              		.cfi_def_cfa_offset 0
+ 673              	.LBB101:
+ 177:chelper/mem_pool.c ****             }
+ 674              		.loc 1 177 35 view .LVU210
+ 675 005c CB60     		str	r3, [r1, #12]
+ARM GAS  /tmp/ccGYeNvj.s 			page 19
+
+
+ 676              	.LBE101:
+ 677              		.loc 1 206 1 view .LVU211
+ 678 005e 7047     		bx	lr
+ 679              	.LVL30:
+ 680              	.L70:
+ 681              		.cfi_restore_state
+ 682              	.LBB102:
+ 683              	.LBB97:
+ 186:chelper/mem_pool.c ****             if (s_stats.medium_used > 0) {
+ 684              		.loc 1 186 13 is_stmt 1 view .LVU212
+ 186:chelper/mem_pool.c ****             if (s_stats.medium_used > 0) {
+ 685              		.loc 1 186 30 is_stmt 0 view .LVU213
+ 686 0060 0F48     		ldr	r0, .L72+20
+ 687              	.LVL31:
+ 187:chelper/mem_pool.c ****                 s_stats.medium_used--;
+ 688              		.loc 1 187 24 view .LVU214
+ 689 0062 0B69     		ldr	r3, [r1, #16]
+ 186:chelper/mem_pool.c ****             if (s_stats.medium_used > 0) {
+ 690              		.loc 1 186 30 view .LVU215
+ 691 0064 0024     		movs	r4, #0
+ 692 0066 8454     		strb	r4, [r0, r2]
+ 187:chelper/mem_pool.c ****                 s_stats.medium_used--;
+ 693              		.loc 1 187 13 is_stmt 1 view .LVU216
+ 187:chelper/mem_pool.c ****                 s_stats.medium_used--;
+ 694              		.loc 1 187 16 is_stmt 0 view .LVU217
+ 695 0068 002B     		cmp	r3, #0
+ 696 006a EBD0     		beq	.L41
+ 188:chelper/mem_pool.c ****             }
+ 697              		.loc 1 188 17 is_stmt 1 view .LVU218
+ 188:chelper/mem_pool.c ****             }
+ 698              		.loc 1 188 36 is_stmt 0 view .LVU219
+ 699 006c 013B     		subs	r3, r3, #1
+ 700              	.LBE97:
+ 701              	.LBE102:
+ 702              		.loc 1 206 1 view .LVU220
+ 703 006e 5DF8044B 		ldr	r4, [sp], #4
+ 704              		.cfi_restore 4
+ 705              		.cfi_def_cfa_offset 0
+ 706              	.LBB103:
+ 707              	.LBB98:
+ 188:chelper/mem_pool.c ****             }
+ 708              		.loc 1 188 36 view .LVU221
+ 709 0072 0B61     		str	r3, [r1, #16]
+ 710              	.LBE98:
+ 711              	.LBE103:
+ 712              		.loc 1 206 1 view .LVU222
+ 713 0074 7047     		bx	lr
+ 714              	.LVL32:
+ 715              	.L66:
+ 716              		.loc 1 206 1 view .LVU223
+ 717 0076 7047     		bx	lr
+ 718              	.LVL33:
+ 719              	.L71:
+ 720              		.cfi_def_cfa_offset 4
+ 721              		.cfi_offset 4, -4
+ 722              	.LBB104:
+ 723              	.LBB99:
+ARM GAS  /tmp/ccGYeNvj.s 			page 20
+
+
+ 197:chelper/mem_pool.c ****             if (s_stats.large_used > 0) {
+ 724              		.loc 1 197 13 is_stmt 1 view .LVU224
+ 197:chelper/mem_pool.c ****             if (s_stats.large_used > 0) {
+ 725              		.loc 1 197 29 is_stmt 0 view .LVU225
+ 726 0078 0A48     		ldr	r0, .L72+24
+ 727              	.LVL34:
+ 198:chelper/mem_pool.c ****                 s_stats.large_used--;
+ 728              		.loc 1 198 24 view .LVU226
+ 729 007a 4B69     		ldr	r3, [r1, #20]
+ 197:chelper/mem_pool.c ****             if (s_stats.large_used > 0) {
+ 730              		.loc 1 197 29 view .LVU227
+ 731 007c 0024     		movs	r4, #0
+ 732 007e 8454     		strb	r4, [r0, r2]
+ 198:chelper/mem_pool.c ****                 s_stats.large_used--;
+ 733              		.loc 1 198 13 is_stmt 1 view .LVU228
+ 198:chelper/mem_pool.c ****                 s_stats.large_used--;
+ 734              		.loc 1 198 16 is_stmt 0 view .LVU229
+ 735 0080 002B     		cmp	r3, #0
+ 736 0082 DFD0     		beq	.L41
+ 199:chelper/mem_pool.c ****             }
+ 737              		.loc 1 199 17 is_stmt 1 view .LVU230
+ 199:chelper/mem_pool.c ****             }
+ 738              		.loc 1 199 35 is_stmt 0 view .LVU231
+ 739 0084 013B     		subs	r3, r3, #1
+ 740 0086 4B61     		str	r3, [r1, #20]
+ 741 0088 DCE7     		b	.L41
+ 742              	.L73:
+ 743 008a 00BF     		.align	2
+ 744              	.L72:
+ 745 008c 00000000 		.word	.LANCHOR3
+ 746 0090 00000000 		.word	.LANCHOR4
+ 747 0094 00000000 		.word	s_medium_pool
+ 748 0098 00000000 		.word	s_large_pool
+ 749 009c 00000000 		.word	.LANCHOR0
+ 750 00a0 00000000 		.word	.LANCHOR1
+ 751 00a4 00000000 		.word	.LANCHOR2
+ 752              	.LBE99:
+ 753              	.LBE104:
+ 754              		.cfi_endproc
+ 755              	.LFE5:
+ 757              		.section	.text.mem_pool_alloc_safe,"ax",%progbits
+ 758              		.align	1
+ 759              		.p2align 2,,3
+ 760              		.global	mem_pool_alloc_safe
+ 761              		.syntax unified
+ 762              		.thumb
+ 763              		.thumb_func
+ 764              		.fpu fpv4-sp-d16
+ 766              	mem_pool_alloc_safe:
+ 767              	.LVL35:
+ 768              	.LFB6:
+ 207:chelper/mem_pool.c **** 
+ 208:chelper/mem_pool.c **** void *
+ 209:chelper/mem_pool.c **** mem_pool_alloc_safe(size_t size)
+ 210:chelper/mem_pool.c **** {
+ 769              		.loc 1 210 1 is_stmt 1 view -0
+ 770              		.cfi_startproc
+ARM GAS  /tmp/ccGYeNvj.s 			page 21
+
+
+ 771              		@ args = 0, pretend = 0, frame = 0
+ 772              		@ frame_needed = 0, uses_anonymous_args = 0
+ 211:chelper/mem_pool.c ****     uint32_t state = irq_disable();
+ 773              		.loc 1 211 5 view .LVU233
+ 774              	.LBB105:
+ 775              	.LBI105:
+  51:chelper/mem_pool.c **** {
+ 776              		.loc 1 51 1 view .LVU234
+ 777              	.LBB106:
+  54:chelper/mem_pool.c ****     __asm volatile ("mrs %0, primask" : "=r" (primask));
+ 778              		.loc 1 54 5 view .LVU235
+  55:chelper/mem_pool.c ****     __asm volatile ("cpsid i" ::: "memory");
+ 779              		.loc 1 55 5 view .LVU236
+ 780              	.LBE106:
+ 781              	.LBE105:
+ 210:chelper/mem_pool.c ****     uint32_t state = irq_disable();
+ 782              		.loc 1 210 1 is_stmt 0 view .LVU237
+ 783 0000 10B5     		push	{r4, lr}
+ 784              		.cfi_def_cfa_offset 8
+ 785              		.cfi_offset 4, -8
+ 786              		.cfi_offset 14, -4
+ 787              	.LBB108:
+ 788              	.LBB107:
+  55:chelper/mem_pool.c ****     __asm volatile ("cpsid i" ::: "memory");
+ 789              		.loc 1 55 5 view .LVU238
+ 790              		.syntax unified
+ 791              	@ 55 "chelper/mem_pool.c" 1
+ 792 0002 EFF31084 		mrs r4, primask
+ 793              	@ 0 "" 2
+ 794              	.LVL36:
+  56:chelper/mem_pool.c ****     return primask;
+ 795              		.loc 1 56 5 is_stmt 1 view .LVU239
+ 796              	@ 56 "chelper/mem_pool.c" 1
+ 797 0006 72B6     		cpsid i
+ 798              	@ 0 "" 2
+  57:chelper/mem_pool.c **** #else
+ 799              		.loc 1 57 5 view .LVU240
+ 800              	.LVL37:
+  57:chelper/mem_pool.c **** #else
+ 801              		.loc 1 57 5 is_stmt 0 view .LVU241
+ 802              		.thumb
+ 803              		.syntax unified
+ 804              	.LBE107:
+ 805              	.LBE108:
+ 212:chelper/mem_pool.c ****     void *ptr = mem_pool_alloc(size);
+ 806              		.loc 1 212 5 is_stmt 1 view .LVU242
+ 807              		.loc 1 212 17 is_stmt 0 view .LVU243
+ 808 0008 FFF7FEFF 		bl	mem_pool_alloc
+ 809              	.LVL38:
+ 213:chelper/mem_pool.c ****     irq_restore(state);
+ 810              		.loc 1 213 5 is_stmt 1 view .LVU244
+ 811              	.LBB109:
+ 812              	.LBI109:
+  68:chelper/mem_pool.c **** {
+ 813              		.loc 1 68 1 view .LVU245
+ 814              	.LBB110:
+  71:chelper/mem_pool.c **** #else
+ARM GAS  /tmp/ccGYeNvj.s 			page 22
+
+
+ 815              		.loc 1 71 5 view .LVU246
+ 816              		.syntax unified
+ 817              	@ 71 "chelper/mem_pool.c" 1
+ 818 000c 84F31088 		msr primask, r4
+ 819              	@ 0 "" 2
+ 820              	.LVL39:
+  71:chelper/mem_pool.c **** #else
+ 821              		.loc 1 71 5 is_stmt 0 view .LVU247
+ 822              		.thumb
+ 823              		.syntax unified
+ 824              	.LBE110:
+ 825              	.LBE109:
+ 214:chelper/mem_pool.c ****     return ptr;
+ 826              		.loc 1 214 5 is_stmt 1 view .LVU248
+ 215:chelper/mem_pool.c **** }
+ 827              		.loc 1 215 1 is_stmt 0 view .LVU249
+ 828 0010 10BD     		pop	{r4, pc}
+ 829              		.loc 1 215 1 view .LVU250
+ 830              		.cfi_endproc
+ 831              	.LFE6:
+ 833 0012 00BF     		.section	.text.mem_pool_free_safe,"ax",%progbits
+ 834              		.align	1
+ 835              		.p2align 2,,3
+ 836              		.global	mem_pool_free_safe
+ 837              		.syntax unified
+ 838              		.thumb
+ 839              		.thumb_func
+ 840              		.fpu fpv4-sp-d16
+ 842              	mem_pool_free_safe:
+ 843              	.LVL40:
+ 844              	.LFB7:
+ 216:chelper/mem_pool.c **** 
+ 217:chelper/mem_pool.c **** void
+ 218:chelper/mem_pool.c **** mem_pool_free_safe(void *ptr)
+ 219:chelper/mem_pool.c **** {
+ 845              		.loc 1 219 1 is_stmt 1 view -0
+ 846              		.cfi_startproc
+ 847              		@ args = 0, pretend = 0, frame = 0
+ 848              		@ frame_needed = 0, uses_anonymous_args = 0
+ 220:chelper/mem_pool.c ****     uint32_t state = irq_disable();
+ 849              		.loc 1 220 5 view .LVU252
+ 850              	.LBB111:
+ 851              	.LBI111:
+  51:chelper/mem_pool.c **** {
+ 852              		.loc 1 51 1 view .LVU253
+ 853              	.LBB112:
+  54:chelper/mem_pool.c ****     __asm volatile ("mrs %0, primask" : "=r" (primask));
+ 854              		.loc 1 54 5 view .LVU254
+  55:chelper/mem_pool.c ****     __asm volatile ("cpsid i" ::: "memory");
+ 855              		.loc 1 55 5 view .LVU255
+ 856              	.LBE112:
+ 857              	.LBE111:
+ 219:chelper/mem_pool.c ****     uint32_t state = irq_disable();
+ 858              		.loc 1 219 1 is_stmt 0 view .LVU256
+ 859 0000 10B5     		push	{r4, lr}
+ 860              		.cfi_def_cfa_offset 8
+ 861              		.cfi_offset 4, -8
+ARM GAS  /tmp/ccGYeNvj.s 			page 23
+
+
+ 862              		.cfi_offset 14, -4
+ 863              	.LBB114:
+ 864              	.LBB113:
+  55:chelper/mem_pool.c ****     __asm volatile ("cpsid i" ::: "memory");
+ 865              		.loc 1 55 5 view .LVU257
+ 866              		.syntax unified
+ 867              	@ 55 "chelper/mem_pool.c" 1
+ 868 0002 EFF31084 		mrs r4, primask
+ 869              	@ 0 "" 2
+ 870              	.LVL41:
+  56:chelper/mem_pool.c ****     return primask;
+ 871              		.loc 1 56 5 is_stmt 1 view .LVU258
+ 872              	@ 56 "chelper/mem_pool.c" 1
+ 873 0006 72B6     		cpsid i
+ 874              	@ 0 "" 2
+  57:chelper/mem_pool.c **** #else
+ 875              		.loc 1 57 5 view .LVU259
+ 876              	.LVL42:
+  57:chelper/mem_pool.c **** #else
+ 877              		.loc 1 57 5 is_stmt 0 view .LVU260
+ 878              		.thumb
+ 879              		.syntax unified
+ 880              	.LBE113:
+ 881              	.LBE114:
+ 221:chelper/mem_pool.c ****     mem_pool_free(ptr);
+ 882              		.loc 1 221 5 is_stmt 1 view .LVU261
+ 883 0008 FFF7FEFF 		bl	mem_pool_free
+ 884              	.LVL43:
+ 222:chelper/mem_pool.c ****     irq_restore(state);
+ 885              		.loc 1 222 5 view .LVU262
+ 886              	.LBB115:
+ 887              	.LBI115:
+  68:chelper/mem_pool.c **** {
+ 888              		.loc 1 68 1 view .LVU263
+ 889              	.LBB116:
+  71:chelper/mem_pool.c **** #else
+ 890              		.loc 1 71 5 view .LVU264
+ 891              		.syntax unified
+ 892              	@ 71 "chelper/mem_pool.c" 1
+ 893 000c 84F31088 		msr primask, r4
+ 894              	@ 0 "" 2
+ 895              	.LVL44:
+  71:chelper/mem_pool.c **** #else
+ 896              		.loc 1 71 5 is_stmt 0 view .LVU265
+ 897              		.thumb
+ 898              		.syntax unified
+ 899              	.LBE116:
+ 900              	.LBE115:
+ 223:chelper/mem_pool.c **** }
+ 901              		.loc 1 223 1 view .LVU266
+ 902 0010 10BD     		pop	{r4, pc}
+ 903              		.loc 1 223 1 view .LVU267
+ 904              		.cfi_endproc
+ 905              	.LFE7:
+ 907 0012 00BF     		.section	.text.mem_pool_get_stats,"ax",%progbits
+ 908              		.align	1
+ 909              		.p2align 2,,3
+ARM GAS  /tmp/ccGYeNvj.s 			page 24
+
+
+ 910              		.global	mem_pool_get_stats
+ 911              		.syntax unified
+ 912              		.thumb
+ 913              		.thumb_func
+ 914              		.fpu fpv4-sp-d16
+ 916              	mem_pool_get_stats:
+ 917              	.LVL45:
+ 918              	.LFB8:
+ 224:chelper/mem_pool.c **** 
+ 225:chelper/mem_pool.c **** void
+ 226:chelper/mem_pool.c **** mem_pool_get_stats(mem_pool_stats_t *stats)
+ 227:chelper/mem_pool.c **** {
+ 919              		.loc 1 227 1 is_stmt 1 view -0
+ 920              		.cfi_startproc
+ 921              		@ args = 0, pretend = 0, frame = 0
+ 922              		@ frame_needed = 0, uses_anonymous_args = 0
+ 228:chelper/mem_pool.c ****     if (stats == NULL) {
+ 923              		.loc 1 228 5 view .LVU269
+ 924              		.loc 1 228 8 is_stmt 0 view .LVU270
+ 925 0000 C8B1     		cbz	r0, .L86
+ 229:chelper/mem_pool.c ****         return;
+ 230:chelper/mem_pool.c ****     }
+ 231:chelper/mem_pool.c ****     memcpy(stats, &s_stats, sizeof(mem_pool_stats_t));
+ 926              		.loc 1 231 5 is_stmt 1 view .LVU271
+ 227:chelper/mem_pool.c ****     if (stats == NULL) {
+ 927              		.loc 1 227 1 is_stmt 0 view .LVU272
+ 928 0002 30B5     		push	{r4, r5, lr}
+ 929              		.cfi_def_cfa_offset 12
+ 930              		.cfi_offset 4, -12
+ 931              		.cfi_offset 5, -8
+ 932              		.cfi_offset 14, -4
+ 933              		.loc 1 231 5 view .LVU273
+ 934 0004 0C4C     		ldr	r4, .L89
+ 935 0006 8446     		mov	ip, r0
+ 936 0008 04F12005 		add	r5, r4, #32
+ 937              	.LVL46:
+ 938              	.L80:
+ 939              		.loc 1 231 5 view .LVU274
+ 940 000c A646     		mov	lr, r4
+ 941 000e BEE80F00 		ldmia	lr!, {r0, r1, r2, r3}
+ 942 0012 AE45     		cmp	lr, r5
+ 943 0014 0CF1100C 		add	ip, ip, #16
+ 944 0018 04F11004 		add	r4, r4, #16
+ 945 001c 4CF8100C 		str	r0, [ip, #-16]	@ unaligned
+ 946 0020 4CF80C1C 		str	r1, [ip, #-12]	@ unaligned
+ 947 0024 4CF8082C 		str	r2, [ip, #-8]	@ unaligned
+ 948 0028 4CF8043C 		str	r3, [ip, #-4]	@ unaligned
+ 949 002c EED1     		bne	.L80
+ 950 002e 2068     		ldr	r0, [r4]
+ 951 0030 CCF80000 		str	r0, [ip]	@ unaligned
+ 232:chelper/mem_pool.c **** }
+ 952              		.loc 1 232 1 view .LVU275
+ 953 0034 30BD     		pop	{r4, r5, pc}
+ 954              	.LVL47:
+ 955              	.L86:
+ 956              		.cfi_def_cfa_offset 0
+ 957              		.cfi_restore 4
+ARM GAS  /tmp/ccGYeNvj.s 			page 25
+
+
+ 958              		.cfi_restore 5
+ 959              		.cfi_restore 14
+ 960              		.loc 1 232 1 view .LVU276
+ 961 0036 7047     		bx	lr
+ 962              	.L90:
+ 963              		.align	2
+ 964              	.L89:
+ 965 0038 00000000 		.word	.LANCHOR3
+ 966              		.cfi_endproc
+ 967              	.LFE8:
+ 969              		.section	.text.mem_pool_reset_stats,"ax",%progbits
+ 970              		.align	1
+ 971              		.p2align 2,,3
+ 972              		.global	mem_pool_reset_stats
+ 973              		.syntax unified
+ 974              		.thumb
+ 975              		.thumb_func
+ 976              		.fpu fpv4-sp-d16
+ 978              	mem_pool_reset_stats:
+ 979              	.LFB9:
+ 233:chelper/mem_pool.c **** 
+ 234:chelper/mem_pool.c **** void
+ 235:chelper/mem_pool.c **** mem_pool_reset_stats(void)
+ 236:chelper/mem_pool.c **** {
+ 980              		.loc 1 236 1 is_stmt 1 view -0
+ 981              		.cfi_startproc
+ 982              		@ args = 0, pretend = 0, frame = 0
+ 983              		@ frame_needed = 0, uses_anonymous_args = 0
+ 984              		@ link register save eliminated.
+ 237:chelper/mem_pool.c ****     /* Keep current usage counts, reset others */
+ 238:chelper/mem_pool.c ****     uint32_t small_used = s_stats.small_used;
+ 985              		.loc 1 238 5 view .LVU278
+ 986              		.loc 1 238 14 is_stmt 0 view .LVU279
+ 987 0000 054B     		ldr	r3, .L92
+ 988              	.LVL48:
+ 239:chelper/mem_pool.c ****     uint32_t medium_used = s_stats.medium_used;
+ 989              		.loc 1 239 5 is_stmt 1 view .LVU280
+ 240:chelper/mem_pool.c ****     uint32_t large_used = s_stats.large_used;
+ 241:chelper/mem_pool.c ****     
+ 242:chelper/mem_pool.c ****     memset(&s_stats, 0, sizeof(s_stats));
+ 990              		.loc 1 242 5 is_stmt 0 view .LVU281
+ 991 0002 0022     		movs	r2, #0
+ 240:chelper/mem_pool.c ****     uint32_t large_used = s_stats.large_used;
+ 992              		.loc 1 240 14 view .LVU282
+ 993 0004 D3E90401 		ldrd	r0, r1, [r3, #16]
+ 994              	.LVL49:
+ 995              		.loc 1 242 5 is_stmt 1 view .LVU283
+ 996 0008 C3E90022 		strd	r2, r2, [r3]
+ 997 000c 9A60     		str	r2, [r3, #8]
+ 243:chelper/mem_pool.c ****     
+ 244:chelper/mem_pool.c ****     s_stats.small_used = small_used;
+ 998              		.loc 1 244 5 view .LVU284
+ 245:chelper/mem_pool.c ****     s_stats.medium_used = medium_used;
+ 999              		.loc 1 245 5 view .LVU285
+ 246:chelper/mem_pool.c ****     s_stats.large_used = large_used;
+ 1000              		.loc 1 246 5 view .LVU286
+ 247:chelper/mem_pool.c ****     s_stats.small_peak = small_used;
+ARM GAS  /tmp/ccGYeNvj.s 			page 26
+
+
+ 1001              		.loc 1 247 5 view .LVU287
+ 1002              		.loc 1 247 24 is_stmt 0 view .LVU288
+ 1003 000e DA68     		ldr	r2, [r3, #12]
+ 248:chelper/mem_pool.c ****     s_stats.medium_peak = medium_used;
+ 249:chelper/mem_pool.c ****     s_stats.large_peak = large_used;
+ 1004              		.loc 1 249 24 view .LVU289
+ 1005 0010 1962     		str	r1, [r3, #32]
+ 248:chelper/mem_pool.c ****     s_stats.medium_peak = medium_used;
+ 1006              		.loc 1 248 25 view .LVU290
+ 1007 0012 C3E90620 		strd	r2, r0, [r3, #24]
+ 1008              		.loc 1 249 5 is_stmt 1 view .LVU291
+ 250:chelper/mem_pool.c **** }
+ 1009              		.loc 1 250 1 is_stmt 0 view .LVU292
+ 1010 0016 7047     		bx	lr
+ 1011              	.L93:
+ 1012              		.align	2
+ 1013              	.L92:
+ 1014 0018 00000000 		.word	.LANCHOR3
+ 1015              		.cfi_endproc
+ 1016              	.LFE9:
+ 1018              		.section	.text.mem_pool_is_from_pool,"ax",%progbits
+ 1019              		.align	1
+ 1020              		.p2align 2,,3
+ 1021              		.global	mem_pool_is_from_pool
+ 1022              		.syntax unified
+ 1023              		.thumb
+ 1024              		.thumb_func
+ 1025              		.fpu fpv4-sp-d16
+ 1027              	mem_pool_is_from_pool:
+ 1028              	.LVL50:
+ 1029              	.LFB10:
+ 251:chelper/mem_pool.c **** 
+ 252:chelper/mem_pool.c **** int
+ 253:chelper/mem_pool.c **** mem_pool_is_from_pool(const void *ptr)
+ 254:chelper/mem_pool.c **** {
+ 1030              		.loc 1 254 1 is_stmt 1 view -0
+ 1031              		.cfi_startproc
+ 1032              		@ args = 0, pretend = 0, frame = 0
+ 1033              		@ frame_needed = 0, uses_anonymous_args = 0
+ 1034              		@ link register save eliminated.
+ 255:chelper/mem_pool.c ****     if (ptr == NULL) {
+ 1035              		.loc 1 255 5 view .LVU294
+ 1036              		.loc 1 255 8 is_stmt 0 view .LVU295
+ 1037 0000 C0B1     		cbz	r0, .L94
+ 256:chelper/mem_pool.c ****         return 0;
+ 257:chelper/mem_pool.c ****     }
+ 258:chelper/mem_pool.c ****     
+ 259:chelper/mem_pool.c ****     /* Check small pool range */
+ 260:chelper/mem_pool.c ****     const uint8_t *p = (const uint8_t *)ptr;
+ 1038              		.loc 1 260 5 is_stmt 1 view .LVU296
+ 1039              	.LVL51:
+ 261:chelper/mem_pool.c ****     const uint8_t *small_start = &s_small_pool[0][0];
+ 1040              		.loc 1 261 5 view .LVU297
+ 262:chelper/mem_pool.c ****     const uint8_t *small_end = &s_small_pool[MEM_POOL_SMALL_COUNT - 1][MEM_POOL_BLOCK_SMALL - 1];
+ 1041              		.loc 1 262 5 view .LVU298
+ 263:chelper/mem_pool.c ****     if (p >= small_start && p <= small_end) {
+ 1042              		.loc 1 263 5 view .LVU299
+ARM GAS  /tmp/ccGYeNvj.s 			page 27
+
+
+ 1043              		.loc 1 263 8 is_stmt 0 view .LVU300
+ 1044 0002 0E4B     		ldr	r3, .L102
+ 1045 0004 9842     		cmp	r0, r3
+ 1046 0006 03D3     		bcc	.L96
+ 1047              		.loc 1 263 26 discriminator 1 view .LVU301
+ 1048 0008 03F2FF33 		addw	r3, r3, #1023
+ 1049 000c 9842     		cmp	r0, r3
+ 1050 000e 12D9     		bls	.L100
+ 1051              	.L96:
+ 264:chelper/mem_pool.c ****         return 1;
+ 265:chelper/mem_pool.c ****     }
+ 266:chelper/mem_pool.c ****     
+ 267:chelper/mem_pool.c ****     /* Check medium pool range */
+ 268:chelper/mem_pool.c ****     const uint8_t *medium_start = &s_medium_pool[0][0];
+ 1052              		.loc 1 268 5 is_stmt 1 view .LVU302
+ 1053              	.LVL52:
+ 269:chelper/mem_pool.c ****     const uint8_t *medium_end = &s_medium_pool[MEM_POOL_MEDIUM_COUNT - 1][MEM_POOL_BLOCK_MEDIUM - 1
+ 1054              		.loc 1 269 5 view .LVU303
+ 270:chelper/mem_pool.c ****     if (p >= medium_start && p <= medium_end) {
+ 1055              		.loc 1 270 5 view .LVU304
+ 1056              		.loc 1 270 8 is_stmt 0 view .LVU305
+ 1057 0010 0B4B     		ldr	r3, .L102+4
+ 1058 0012 9842     		cmp	r0, r3
+ 1059 0014 03D3     		bcc	.L97
+ 1060              		.loc 1 270 27 discriminator 1 view .LVU306
+ 1061 0016 03F6FF73 		addw	r3, r3, #4095
+ 1062 001a 9842     		cmp	r0, r3
+ 1063 001c 0BD9     		bls	.L100
+ 1064              	.L97:
+ 271:chelper/mem_pool.c ****         return 1;
+ 272:chelper/mem_pool.c ****     }
+ 273:chelper/mem_pool.c ****     
+ 274:chelper/mem_pool.c ****     /* Check large pool range */
+ 275:chelper/mem_pool.c ****     const uint8_t *large_start = &s_large_pool[0][0];
+ 1065              		.loc 1 275 5 is_stmt 1 view .LVU307
+ 1066              	.LVL53:
+ 276:chelper/mem_pool.c ****     const uint8_t *large_end = &s_large_pool[MEM_POOL_LARGE_COUNT - 1][MEM_POOL_BLOCK_LARGE - 1];
+ 1067              		.loc 1 276 5 view .LVU308
+ 277:chelper/mem_pool.c ****     if (p >= large_start && p <= large_end) {
+ 1068              		.loc 1 277 5 view .LVU309
+ 1069              		.loc 1 277 8 is_stmt 0 view .LVU310
+ 1070 001e 094B     		ldr	r3, .L102+8
+ 1071 0020 9842     		cmp	r0, r3
+ 1072 0022 06D3     		bcc	.L101
+ 1073              		.loc 1 277 26 discriminator 1 view .LVU311
+ 1074 0024 03F6FF73 		addw	r3, r3, #4095
+ 1075 0028 9842     		cmp	r0, r3
+ 1076 002a 8CBF     		ite	hi
+ 1077 002c 0020     		movhi	r0, #0
+ 1078              	.LVL54:
+ 1079              		.loc 1 277 26 discriminator 1 view .LVU312
+ 1080 002e 0120     		movls	r0, #1
+ 1081 0030 7047     		bx	lr
+ 1082              	.LVL55:
+ 1083              	.L101:
+ 256:chelper/mem_pool.c ****     }
+ 1084              		.loc 1 256 16 view .LVU313
+ARM GAS  /tmp/ccGYeNvj.s 			page 28
+
+
+ 1085 0032 0020     		movs	r0, #0
+ 1086              	.LVL56:
+ 1087              	.L94:
+ 278:chelper/mem_pool.c ****         return 1;
+ 279:chelper/mem_pool.c ****     }
+ 280:chelper/mem_pool.c ****     
+ 281:chelper/mem_pool.c ****     return 0;
+ 282:chelper/mem_pool.c **** }
+ 1088              		.loc 1 282 1 view .LVU314
+ 1089 0034 7047     		bx	lr
+ 1090              	.LVL57:
+ 1091              	.L100:
+ 264:chelper/mem_pool.c ****     }
+ 1092              		.loc 1 264 16 view .LVU315
+ 1093 0036 0120     		movs	r0, #1
+ 1094              	.LVL58:
+ 264:chelper/mem_pool.c ****     }
+ 1095              		.loc 1 264 16 view .LVU316
+ 1096 0038 7047     		bx	lr
+ 1097              	.L103:
+ 1098 003a 00BF     		.align	2
+ 1099              	.L102:
+ 1100 003c 00000000 		.word	.LANCHOR4
+ 1101 0040 00000000 		.word	s_medium_pool
+ 1102 0044 00000000 		.word	s_large_pool
+ 1103              		.cfi_endproc
+ 1104              	.LFE10:
+ 1106              		.section	.text.mem_pool_block_size,"ax",%progbits
+ 1107              		.align	1
+ 1108              		.p2align 2,,3
+ 1109              		.global	mem_pool_block_size
+ 1110              		.syntax unified
+ 1111              		.thumb
+ 1112              		.thumb_func
+ 1113              		.fpu fpv4-sp-d16
+ 1115              	mem_pool_block_size:
+ 1116              	.LVL59:
+ 1117              	.LFB11:
+ 283:chelper/mem_pool.c **** 
+ 284:chelper/mem_pool.c **** size_t
+ 285:chelper/mem_pool.c **** mem_pool_block_size(const void *ptr)
+ 286:chelper/mem_pool.c **** {
+ 1118              		.loc 1 286 1 is_stmt 1 view -0
+ 1119              		.cfi_startproc
+ 1120              		@ args = 0, pretend = 0, frame = 0
+ 1121              		@ frame_needed = 0, uses_anonymous_args = 0
+ 1122              		@ link register save eliminated.
+ 287:chelper/mem_pool.c ****     if (ptr == NULL) {
+ 1123              		.loc 1 287 5 view .LVU318
+ 1124              		.loc 1 287 8 is_stmt 0 view .LVU319
+ 1125 0000 F0B1     		cbz	r0, .L104
+ 1126 0002 124B     		ldr	r3, .L116
+ 1127 0004 03F58062 		add	r2, r3, #1024
+ 1128              	.L106:
+ 1129              	.LBB117:
+ 288:chelper/mem_pool.c ****         return 0;
+ 289:chelper/mem_pool.c ****     }
+ARM GAS  /tmp/ccGYeNvj.s 			page 29
+
+
+ 290:chelper/mem_pool.c ****     
+ 291:chelper/mem_pool.c ****     /* Check small pool */
+ 292:chelper/mem_pool.c ****     for (int i = 0; i < MEM_POOL_SMALL_COUNT; i++) {
+ 293:chelper/mem_pool.c ****         if (ptr == s_small_pool[i]) {
+ 1130              		.loc 1 293 9 is_stmt 1 view .LVU320
+ 292:chelper/mem_pool.c ****         if (ptr == s_small_pool[i]) {
+ 1131              		.loc 1 292 47 view .LVU321
+ 292:chelper/mem_pool.c ****         if (ptr == s_small_pool[i]) {
+ 1132              		.loc 1 292 21 view .LVU322
+ 1133              		.loc 1 293 12 is_stmt 0 view .LVU323
+ 1134 0008 9842     		cmp	r0, r3
+ 292:chelper/mem_pool.c ****         if (ptr == s_small_pool[i]) {
+ 1135              		.loc 1 292 5 view .LVU324
+ 1136 000a 03F14003 		add	r3, r3, #64
+ 1137              		.loc 1 293 12 view .LVU325
+ 1138 000e 18D0     		beq	.L110
+ 292:chelper/mem_pool.c ****         if (ptr == s_small_pool[i]) {
+ 1139              		.loc 1 292 5 discriminator 2 view .LVU326
+ 1140 0010 9342     		cmp	r3, r2
+ 1141 0012 F9D1     		bne	.L106
+ 1142 0014 0E4B     		ldr	r3, .L116+4
+ 1143 0016 03F58052 		add	r2, r3, #4096
+ 1144              	.L107:
+ 1145              	.LBE117:
+ 1146              	.LBB118:
+ 294:chelper/mem_pool.c ****             return MEM_POOL_BLOCK_SMALL;
+ 295:chelper/mem_pool.c ****         }
+ 296:chelper/mem_pool.c ****     }
+ 297:chelper/mem_pool.c ****     
+ 298:chelper/mem_pool.c ****     /* Check medium pool */
+ 299:chelper/mem_pool.c ****     for (int i = 0; i < MEM_POOL_MEDIUM_COUNT; i++) {
+ 300:chelper/mem_pool.c ****         if (ptr == s_medium_pool[i]) {
+ 1147              		.loc 1 300 9 is_stmt 1 view .LVU327
+ 299:chelper/mem_pool.c ****         if (ptr == s_medium_pool[i]) {
+ 1148              		.loc 1 299 48 view .LVU328
+ 299:chelper/mem_pool.c ****         if (ptr == s_medium_pool[i]) {
+ 1149              		.loc 1 299 21 view .LVU329
+ 1150              		.loc 1 300 12 is_stmt 0 view .LVU330
+ 1151 001a 9842     		cmp	r0, r3
+ 299:chelper/mem_pool.c ****         if (ptr == s_medium_pool[i]) {
+ 1152              		.loc 1 299 5 view .LVU331
+ 1153 001c 03F58073 		add	r3, r3, #256
+ 1154              		.loc 1 300 12 view .LVU332
+ 1155 0020 11D0     		beq	.L111
+ 299:chelper/mem_pool.c ****         if (ptr == s_medium_pool[i]) {
+ 1156              		.loc 1 299 5 discriminator 2 view .LVU333
+ 1157 0022 9342     		cmp	r3, r2
+ 1158 0024 F9D1     		bne	.L107
+ 1159 0026 0B4B     		ldr	r3, .L116+8
+ 1160 0028 03F58052 		add	r2, r3, #4096
+ 1161              	.L108:
+ 1162              	.LBE118:
+ 1163              	.LBB119:
+ 301:chelper/mem_pool.c ****             return MEM_POOL_BLOCK_MEDIUM;
+ 302:chelper/mem_pool.c ****         }
+ 303:chelper/mem_pool.c ****     }
+ 304:chelper/mem_pool.c ****     
+ARM GAS  /tmp/ccGYeNvj.s 			page 30
+
+
+ 305:chelper/mem_pool.c ****     /* Check large pool */
+ 306:chelper/mem_pool.c ****     for (int i = 0; i < MEM_POOL_LARGE_COUNT; i++) {
+ 307:chelper/mem_pool.c ****         if (ptr == s_large_pool[i]) {
+ 1164              		.loc 1 307 9 is_stmt 1 view .LVU334
+ 306:chelper/mem_pool.c ****         if (ptr == s_large_pool[i]) {
+ 1165              		.loc 1 306 47 view .LVU335
+ 306:chelper/mem_pool.c ****         if (ptr == s_large_pool[i]) {
+ 1166              		.loc 1 306 21 view .LVU336
+ 1167              		.loc 1 307 12 is_stmt 0 view .LVU337
+ 1168 002c 9842     		cmp	r0, r3
+ 306:chelper/mem_pool.c ****         if (ptr == s_large_pool[i]) {
+ 1169              		.loc 1 306 5 view .LVU338
+ 1170 002e 03F50073 		add	r3, r3, #512
+ 1171              		.loc 1 307 12 view .LVU339
+ 1172 0032 03D0     		beq	.L112
+ 306:chelper/mem_pool.c ****         if (ptr == s_large_pool[i]) {
+ 1173              		.loc 1 306 5 discriminator 2 view .LVU340
+ 1174 0034 9A42     		cmp	r2, r3
+ 1175 0036 F9D1     		bne	.L108
+ 1176              	.LBE119:
+ 288:chelper/mem_pool.c ****     }
+ 1177              		.loc 1 288 16 view .LVU341
+ 1178 0038 0020     		movs	r0, #0
+ 1179              	.LVL60:
+ 1180              	.LBB120:
+ 288:chelper/mem_pool.c ****     }
+ 1181              		.loc 1 288 16 view .LVU342
+ 1182 003a 7047     		bx	lr
+ 1183              	.LVL61:
+ 1184              	.L112:
+ 308:chelper/mem_pool.c ****             return MEM_POOL_BLOCK_LARGE;
+ 1185              		.loc 1 308 20 view .LVU343
+ 1186 003c 4FF40070 		mov	r0, #512
+ 1187              	.LVL62:
+ 1188              	.L104:
+ 1189              		.loc 1 308 20 view .LVU344
+ 1190              	.LBE120:
+ 309:chelper/mem_pool.c ****         }
+ 310:chelper/mem_pool.c ****     }
+ 311:chelper/mem_pool.c ****     
+ 312:chelper/mem_pool.c ****     return 0;
+ 313:chelper/mem_pool.c **** }
+ 1191              		.loc 1 313 1 view .LVU345
+ 1192 0040 7047     		bx	lr
+ 1193              	.LVL63:
+ 1194              	.L110:
+ 1195              	.LBB121:
+ 294:chelper/mem_pool.c ****         }
+ 1196              		.loc 1 294 20 view .LVU346
+ 1197 0042 4020     		movs	r0, #64
+ 1198              	.LVL64:
+ 294:chelper/mem_pool.c ****         }
+ 1199              		.loc 1 294 20 view .LVU347
+ 1200 0044 7047     		bx	lr
+ 1201              	.LVL65:
+ 1202              	.L111:
+ 294:chelper/mem_pool.c ****         }
+ARM GAS  /tmp/ccGYeNvj.s 			page 31
+
+
+ 1203              		.loc 1 294 20 view .LVU348
+ 1204              	.LBE121:
+ 1205              	.LBB122:
+ 301:chelper/mem_pool.c ****         }
+ 1206              		.loc 1 301 20 view .LVU349
+ 1207 0046 4FF48070 		mov	r0, #256
+ 1208              	.LVL66:
+ 301:chelper/mem_pool.c ****         }
+ 1209              		.loc 1 301 20 view .LVU350
+ 1210 004a 7047     		bx	lr
+ 1211              	.L117:
+ 1212              		.align	2
+ 1213              	.L116:
+ 1214 004c 00000000 		.word	.LANCHOR4
+ 1215 0050 00000000 		.word	s_medium_pool
+ 1216 0054 00000000 		.word	s_large_pool
+ 1217              	.LBE122:
+ 1218              		.cfi_endproc
+ 1219              	.LFE11:
+ 1221              		.section	.text.mem_pool_available,"ax",%progbits
+ 1222              		.align	1
+ 1223              		.p2align 2,,3
+ 1224              		.global	mem_pool_available
+ 1225              		.syntax unified
+ 1226              		.thumb
+ 1227              		.thumb_func
+ 1228              		.fpu fpv4-sp-d16
+ 1230              	mem_pool_available:
+ 1231              	.LVL67:
+ 1232              	.LFB12:
+ 314:chelper/mem_pool.c **** 
+ 315:chelper/mem_pool.c **** uint32_t
+ 316:chelper/mem_pool.c **** mem_pool_available(size_t size)
+ 317:chelper/mem_pool.c **** {
+ 1233              		.loc 1 317 1 is_stmt 1 view -0
+ 1234              		.cfi_startproc
+ 1235              		@ args = 0, pretend = 0, frame = 0
+ 1236              		@ frame_needed = 0, uses_anonymous_args = 0
+ 1237              		@ link register save eliminated.
+ 318:chelper/mem_pool.c ****     uint32_t count = 0;
+ 1238              		.loc 1 318 5 view .LVU352
+ 319:chelper/mem_pool.c ****     
+ 320:chelper/mem_pool.c ****     if (size == 0) {
+ 1239              		.loc 1 320 5 view .LVU353
+ 1240              		.loc 1 320 8 is_stmt 0 view .LVU354
+ 1241 0000 30B3     		cbz	r0, .L118
+ 321:chelper/mem_pool.c ****         return 0;
+ 322:chelper/mem_pool.c ****     }
+ 323:chelper/mem_pool.c ****     
+ 324:chelper/mem_pool.c ****     /* Count available small blocks */
+ 325:chelper/mem_pool.c ****     if (size <= MEM_POOL_BLOCK_SMALL) {
+ 1242              		.loc 1 325 5 is_stmt 1 view .LVU355
+ 1243              		.loc 1 325 8 is_stmt 0 view .LVU356
+ 1244 0002 4028     		cmp	r0, #64
+ 1245 0004 1CD8     		bhi	.L120
+ 1246 0006 144B     		ldr	r3, .L136
+ 318:chelper/mem_pool.c ****     
+ARM GAS  /tmp/ccGYeNvj.s 			page 32
+
+
+ 1247              		.loc 1 318 14 view .LVU357
+ 1248 0008 0020     		movs	r0, #0
+ 1249              	.LVL68:
+ 318:chelper/mem_pool.c ****     
+ 1250              		.loc 1 318 14 view .LVU358
+ 1251 000a 03F11001 		add	r1, r3, #16
+ 1252              	.LVL69:
+ 1253              	.L122:
+ 1254              	.LBB123:
+ 326:chelper/mem_pool.c ****         for (int i = 0; i < MEM_POOL_SMALL_COUNT; i++) {
+ 327:chelper/mem_pool.c ****             if (!s_small_used[i]) {
+ 1255              		.loc 1 327 13 is_stmt 1 view .LVU359
+ 328:chelper/mem_pool.c ****                 count++;
+ 1256              		.loc 1 328 17 view .LVU360
+ 327:chelper/mem_pool.c ****                 count++;
+ 1257              		.loc 1 327 16 is_stmt 0 view .LVU361
+ 1258 000e 13F8012F 		ldrb	r2, [r3, #1]!	@ zero_extendqisi2
+ 1259              	.LVL70:
+ 327:chelper/mem_pool.c ****                 count++;
+ 1260              		.loc 1 327 16 view .LVU362
+ 1261 0012 02B9     		cbnz	r2, .L121
+ 1262              		.loc 1 328 22 view .LVU363
+ 1263 0014 0130     		adds	r0, r0, #1
+ 1264              	.LVL71:
+ 1265              	.L121:
+ 326:chelper/mem_pool.c ****         for (int i = 0; i < MEM_POOL_SMALL_COUNT; i++) {
+ 1266              		.loc 1 326 51 is_stmt 1 discriminator 2 view .LVU364
+ 326:chelper/mem_pool.c ****         for (int i = 0; i < MEM_POOL_SMALL_COUNT; i++) {
+ 1267              		.loc 1 326 25 discriminator 2 view .LVU365
+ 326:chelper/mem_pool.c ****         for (int i = 0; i < MEM_POOL_SMALL_COUNT; i++) {
+ 1268              		.loc 1 326 9 is_stmt 0 discriminator 2 view .LVU366
+ 1269 0016 8B42     		cmp	r3, r1
+ 1270 0018 F9D1     		bne	.L122
+ 1271              	.LVL72:
+ 1272              	.L123:
+ 326:chelper/mem_pool.c ****         for (int i = 0; i < MEM_POOL_SMALL_COUNT; i++) {
+ 1273              		.loc 1 326 9 discriminator 2 view .LVU367
+ 1274 001a 104B     		ldr	r3, .L136+4
+ 1275 001c 03F11001 		add	r1, r3, #16
+ 1276              	.L126:
+ 1277              	.LVL73:
+ 326:chelper/mem_pool.c ****         for (int i = 0; i < MEM_POOL_SMALL_COUNT; i++) {
+ 1278              		.loc 1 326 9 discriminator 2 view .LVU368
+ 1279              	.LBE123:
+ 1280              	.LBB124:
+ 329:chelper/mem_pool.c ****             }
+ 330:chelper/mem_pool.c ****         }
+ 331:chelper/mem_pool.c ****     }
+ 332:chelper/mem_pool.c ****     
+ 333:chelper/mem_pool.c ****     /* Count available medium blocks */
+ 334:chelper/mem_pool.c ****     if (size <= MEM_POOL_BLOCK_MEDIUM) {
+ 335:chelper/mem_pool.c ****         for (int i = 0; i < MEM_POOL_MEDIUM_COUNT; i++) {
+ 336:chelper/mem_pool.c ****             if (!s_medium_used[i]) {
+ 1281              		.loc 1 336 13 is_stmt 1 view .LVU369
+ 337:chelper/mem_pool.c ****                 count++;
+ 1282              		.loc 1 337 17 view .LVU370
+ 336:chelper/mem_pool.c ****                 count++;
+ARM GAS  /tmp/ccGYeNvj.s 			page 33
+
+
+ 1283              		.loc 1 336 16 is_stmt 0 view .LVU371
+ 1284 0020 13F8012F 		ldrb	r2, [r3, #1]!	@ zero_extendqisi2
+ 1285              	.LVL74:
+ 336:chelper/mem_pool.c ****                 count++;
+ 1286              		.loc 1 336 16 view .LVU372
+ 1287 0024 02B9     		cbnz	r2, .L125
+ 1288              		.loc 1 337 22 view .LVU373
+ 1289 0026 0130     		adds	r0, r0, #1
+ 1290              	.LVL75:
+ 1291              	.L125:
+ 335:chelper/mem_pool.c ****             if (!s_medium_used[i]) {
+ 1292              		.loc 1 335 52 is_stmt 1 discriminator 2 view .LVU374
+ 335:chelper/mem_pool.c ****             if (!s_medium_used[i]) {
+ 1293              		.loc 1 335 25 discriminator 2 view .LVU375
+ 335:chelper/mem_pool.c ****             if (!s_medium_used[i]) {
+ 1294              		.loc 1 335 9 is_stmt 0 discriminator 2 view .LVU376
+ 1295 0028 8B42     		cmp	r3, r1
+ 1296 002a F9D1     		bne	.L126
+ 1297              	.LVL76:
+ 1298              	.L127:
+ 335:chelper/mem_pool.c ****             if (!s_medium_used[i]) {
+ 1299              		.loc 1 335 9 discriminator 2 view .LVU377
+ 1300 002c 0C4B     		ldr	r3, .L136+8
+ 1301 002e 03F10801 		add	r1, r3, #8
+ 1302              	.L129:
+ 1303              	.LVL77:
+ 335:chelper/mem_pool.c ****             if (!s_medium_used[i]) {
+ 1304              		.loc 1 335 9 discriminator 2 view .LVU378
+ 1305              	.LBE124:
+ 1306              	.LBB125:
+ 338:chelper/mem_pool.c ****             }
+ 339:chelper/mem_pool.c ****         }
+ 340:chelper/mem_pool.c ****     }
+ 341:chelper/mem_pool.c ****     
+ 342:chelper/mem_pool.c ****     /* Count available large blocks */
+ 343:chelper/mem_pool.c ****     if (size <= MEM_POOL_BLOCK_LARGE) {
+ 344:chelper/mem_pool.c ****         for (int i = 0; i < MEM_POOL_LARGE_COUNT; i++) {
+ 345:chelper/mem_pool.c ****             if (!s_large_used[i]) {
+ 1307              		.loc 1 345 13 is_stmt 1 view .LVU379
+ 346:chelper/mem_pool.c ****                 count++;
+ 1308              		.loc 1 346 17 view .LVU380
+ 345:chelper/mem_pool.c ****                 count++;
+ 1309              		.loc 1 345 16 is_stmt 0 view .LVU381
+ 1310 0032 13F8012F 		ldrb	r2, [r3, #1]!	@ zero_extendqisi2
+ 1311              	.LVL78:
+ 345:chelper/mem_pool.c ****                 count++;
+ 1312              		.loc 1 345 16 view .LVU382
+ 1313 0036 02B9     		cbnz	r2, .L128
+ 1314              		.loc 1 346 22 view .LVU383
+ 1315 0038 0130     		adds	r0, r0, #1
+ 1316              	.LVL79:
+ 1317              	.L128:
+ 344:chelper/mem_pool.c ****             if (!s_large_used[i]) {
+ 1318              		.loc 1 344 51 is_stmt 1 discriminator 2 view .LVU384
+ 344:chelper/mem_pool.c ****             if (!s_large_used[i]) {
+ 1319              		.loc 1 344 25 discriminator 2 view .LVU385
+ 344:chelper/mem_pool.c ****             if (!s_large_used[i]) {
+ARM GAS  /tmp/ccGYeNvj.s 			page 34
+
+
+ 1320              		.loc 1 344 9 is_stmt 0 discriminator 2 view .LVU386
+ 1321 003a 8B42     		cmp	r3, r1
+ 1322 003c F9D1     		bne	.L129
+ 344:chelper/mem_pool.c ****             if (!s_large_used[i]) {
+ 1323              		.loc 1 344 9 discriminator 2 view .LVU387
+ 1324 003e 7047     		bx	lr
+ 1325              	.LVL80:
+ 1326              	.L120:
+ 344:chelper/mem_pool.c ****             if (!s_large_used[i]) {
+ 1327              		.loc 1 344 9 discriminator 2 view .LVU388
+ 1328              	.LBE125:
+ 334:chelper/mem_pool.c ****         for (int i = 0; i < MEM_POOL_MEDIUM_COUNT; i++) {
+ 1329              		.loc 1 334 5 is_stmt 1 view .LVU389
+ 334:chelper/mem_pool.c ****         for (int i = 0; i < MEM_POOL_MEDIUM_COUNT; i++) {
+ 1330              		.loc 1 334 8 is_stmt 0 view .LVU390
+ 1331 0040 B0F5807F 		cmp	r0, #256
+ 1332 0044 05D9     		bls	.L135
+ 343:chelper/mem_pool.c ****         for (int i = 0; i < MEM_POOL_LARGE_COUNT; i++) {
+ 1333              		.loc 1 343 5 is_stmt 1 view .LVU391
+ 343:chelper/mem_pool.c ****         for (int i = 0; i < MEM_POOL_LARGE_COUNT; i++) {
+ 1334              		.loc 1 343 8 is_stmt 0 view .LVU392
+ 1335 0046 B0F5007F 		cmp	r0, #512
+ 318:chelper/mem_pool.c ****     
+ 1336              		.loc 1 318 14 view .LVU393
+ 1337 004a 4FF00000 		mov	r0, #0
+ 1338              	.LVL81:
+ 343:chelper/mem_pool.c ****         for (int i = 0; i < MEM_POOL_LARGE_COUNT; i++) {
+ 1339              		.loc 1 343 8 view .LVU394
+ 1340 004e EDD9     		bls	.L127
+ 1341              	.L118:
+ 347:chelper/mem_pool.c ****             }
+ 348:chelper/mem_pool.c ****         }
+ 349:chelper/mem_pool.c ****     }
+ 350:chelper/mem_pool.c ****     
+ 351:chelper/mem_pool.c ****     return count;
+ 352:chelper/mem_pool.c **** }
+ 1342              		.loc 1 352 1 view .LVU395
+ 1343 0050 7047     		bx	lr
+ 1344              	.LVL82:
+ 1345              	.L135:
+ 318:chelper/mem_pool.c ****     
+ 1346              		.loc 1 318 14 view .LVU396
+ 1347 0052 0020     		movs	r0, #0
+ 1348              	.LVL83:
+ 318:chelper/mem_pool.c ****     
+ 1349              		.loc 1 318 14 view .LVU397
+ 1350 0054 E1E7     		b	.L123
+ 1351              	.L137:
+ 1352 0056 00BF     		.align	2
+ 1353              	.L136:
+ 1354 0058 FFFFFFFF 		.word	.LANCHOR0-1
+ 1355 005c FFFFFFFF 		.word	.LANCHOR1-1
+ 1356 0060 FFFFFFFF 		.word	.LANCHOR2-1
+ 1357              		.cfi_endproc
+ 1358              	.LFE12:
+ 1360              		.section	.bss.s_large_pool,"aw",%nobits
+ 1361              		.align	2
+ARM GAS  /tmp/ccGYeNvj.s 			page 35
+
+
+ 1364              	s_large_pool:
+ 1365 0000 00000000 		.space	4096
+ 1365      00000000 
+ 1365      00000000 
+ 1365      00000000 
+ 1365      00000000 
+ 1366              		.section	.bss.s_large_used,"aw",%nobits
+ 1367              		.align	2
+ 1368              		.set	.LANCHOR2,. + 0
+ 1371              	s_large_used:
+ 1372 0000 00000000 		.space	8
+ 1372      00000000 
+ 1373              		.section	.bss.s_medium_pool,"aw",%nobits
+ 1374              		.align	2
+ 1377              	s_medium_pool:
+ 1378 0000 00000000 		.space	4096
+ 1378      00000000 
+ 1378      00000000 
+ 1378      00000000 
+ 1378      00000000 
+ 1379              		.section	.bss.s_medium_used,"aw",%nobits
+ 1380              		.align	2
+ 1381              		.set	.LANCHOR1,. + 0
+ 1384              	s_medium_used:
+ 1385 0000 00000000 		.space	16
+ 1385      00000000 
+ 1385      00000000 
+ 1385      00000000 
+ 1386              		.section	.bss.s_small_pool,"aw",%nobits
+ 1387              		.align	2
+ 1388              		.set	.LANCHOR4,. + 0
+ 1391              	s_small_pool:
+ 1392 0000 00000000 		.space	1024
+ 1392      00000000 
+ 1392      00000000 
+ 1392      00000000 
+ 1392      00000000 
+ 1393              		.section	.bss.s_small_used,"aw",%nobits
+ 1394              		.align	2
+ 1395              		.set	.LANCHOR0,. + 0
+ 1398              	s_small_used:
+ 1399 0000 00000000 		.space	16
+ 1399      00000000 
+ 1399      00000000 
+ 1399      00000000 
+ 1400              		.section	.bss.s_stats,"aw",%nobits
+ 1401              		.align	2
+ 1402              		.set	.LANCHOR3,. + 0
+ 1405              	s_stats:
+ 1406 0000 00000000 		.space	36
+ 1406      00000000 
+ 1406      00000000 
+ 1406      00000000 
+ 1406      00000000 
+ 1407              		.text
+ 1408              	.Letext0:
+ 1409              		.file 2 "/usr/lib/gcc/arm-none-eabi/10.3.1/include/stdint.h"
+ARM GAS  /tmp/ccGYeNvj.s 			page 36
+
+
+ 1410              		.file 3 "/usr/lib/gcc/arm-none-eabi/10.3.1/include/stddef.h"
+ 1411              		.file 4 "chelper/mem_pool.h"
+ 1412              		.file 5 "<built-in>"
+ARM GAS  /tmp/ccGYeNvj.s 			page 37
+
+
+DEFINED SYMBOLS
+                            *ABS*:0000000000000000 mem_pool.c
+     /tmp/ccGYeNvj.s:18     .text.mem_pool_init:0000000000000000 $t
+     /tmp/ccGYeNvj.s:27     .text.mem_pool_init:0000000000000000 mem_pool_init
+     /tmp/ccGYeNvj.s:69     .text.mem_pool_init:000000000000002c $d
+     /tmp/ccGYeNvj.s:77     .text.mem_pool_alloc:0000000000000000 $t
+     /tmp/ccGYeNvj.s:85     .text.mem_pool_alloc:0000000000000000 mem_pool_alloc
+     /tmp/ccGYeNvj.s:521    .text.mem_pool_alloc:000000000000010c $d
+     /tmp/ccGYeNvj.s:1377   .bss.s_medium_pool:0000000000000000 s_medium_pool
+     /tmp/ccGYeNvj.s:1364   .bss.s_large_pool:0000000000000000 s_large_pool
+     /tmp/ccGYeNvj.s:533    .text.mem_pool_free:0000000000000000 $t
+     /tmp/ccGYeNvj.s:541    .text.mem_pool_free:0000000000000000 mem_pool_free
+     /tmp/ccGYeNvj.s:745    .text.mem_pool_free:000000000000008c $d
+     /tmp/ccGYeNvj.s:758    .text.mem_pool_alloc_safe:0000000000000000 $t
+     /tmp/ccGYeNvj.s:766    .text.mem_pool_alloc_safe:0000000000000000 mem_pool_alloc_safe
+     /tmp/ccGYeNvj.s:834    .text.mem_pool_free_safe:0000000000000000 $t
+     /tmp/ccGYeNvj.s:842    .text.mem_pool_free_safe:0000000000000000 mem_pool_free_safe
+     /tmp/ccGYeNvj.s:908    .text.mem_pool_get_stats:0000000000000000 $t
+     /tmp/ccGYeNvj.s:916    .text.mem_pool_get_stats:0000000000000000 mem_pool_get_stats
+     /tmp/ccGYeNvj.s:965    .text.mem_pool_get_stats:0000000000000038 $d
+     /tmp/ccGYeNvj.s:970    .text.mem_pool_reset_stats:0000000000000000 $t
+     /tmp/ccGYeNvj.s:978    .text.mem_pool_reset_stats:0000000000000000 mem_pool_reset_stats
+     /tmp/ccGYeNvj.s:1014   .text.mem_pool_reset_stats:0000000000000018 $d
+     /tmp/ccGYeNvj.s:1019   .text.mem_pool_is_from_pool:0000000000000000 $t
+     /tmp/ccGYeNvj.s:1027   .text.mem_pool_is_from_pool:0000000000000000 mem_pool_is_from_pool
+     /tmp/ccGYeNvj.s:1100   .text.mem_pool_is_from_pool:000000000000003c $d
+     /tmp/ccGYeNvj.s:1107   .text.mem_pool_block_size:0000000000000000 $t
+     /tmp/ccGYeNvj.s:1115   .text.mem_pool_block_size:0000000000000000 mem_pool_block_size
+     /tmp/ccGYeNvj.s:1214   .text.mem_pool_block_size:000000000000004c $d
+     /tmp/ccGYeNvj.s:1222   .text.mem_pool_available:0000000000000000 $t
+     /tmp/ccGYeNvj.s:1230   .text.mem_pool_available:0000000000000000 mem_pool_available
+     /tmp/ccGYeNvj.s:1354   .text.mem_pool_available:0000000000000058 $d
+     /tmp/ccGYeNvj.s:1361   .bss.s_large_pool:0000000000000000 $d
+     /tmp/ccGYeNvj.s:1367   .bss.s_large_used:0000000000000000 $d
+     /tmp/ccGYeNvj.s:1371   .bss.s_large_used:0000000000000000 s_large_used
+     /tmp/ccGYeNvj.s:1374   .bss.s_medium_pool:0000000000000000 $d
+     /tmp/ccGYeNvj.s:1380   .bss.s_medium_used:0000000000000000 $d
+     /tmp/ccGYeNvj.s:1384   .bss.s_medium_used:0000000000000000 s_medium_used
+     /tmp/ccGYeNvj.s:1387   .bss.s_small_pool:0000000000000000 $d
+     /tmp/ccGYeNvj.s:1391   .bss.s_small_pool:0000000000000000 s_small_pool
+     /tmp/ccGYeNvj.s:1394   .bss.s_small_used:0000000000000000 $d
+     /tmp/ccGYeNvj.s:1398   .bss.s_small_used:0000000000000000 s_small_used
+     /tmp/ccGYeNvj.s:1401   .bss.s_stats:0000000000000000 $d
+     /tmp/ccGYeNvj.s:1405   .bss.s_stats:0000000000000000 s_stats
+
+UNDEFINED SYMBOLS
+memset

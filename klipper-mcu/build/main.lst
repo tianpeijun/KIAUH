@@ -1,0 +1,2184 @@
+ARM GAS  /tmp/cc8jU0Eq.s 			page 1
+
+
+   1              		.cpu cortex-m4
+   2              		.eabi_attribute 27, 1
+   3              		.eabi_attribute 28, 1
+   4              		.eabi_attribute 20, 1
+   5              		.eabi_attribute 21, 1
+   6              		.eabi_attribute 23, 3
+   7              		.eabi_attribute 24, 1
+   8              		.eabi_attribute 25, 1
+   9              		.eabi_attribute 26, 1
+  10              		.eabi_attribute 30, 2
+  11              		.eabi_attribute 34, 1
+  12              		.eabi_attribute 18, 4
+  13              		.file	"main.c"
+  14              		.text
+  15              	.Ltext0:
+  16              		.cfi_sections	.debug_frame
+  17              		.section	.text.Default_Handler,"ax",%progbits
+  18              		.align	1
+  19              		.p2align 2,,3
+  20              		.global	Default_Handler
+  21              		.arch armv7e-m
+  22              		.syntax unified
+  23              		.thumb
+  24              		.thumb_func
+  25              		.fpu fpv4-sp-d16
+  27              	Default_Handler:
+  28              	.LFB24:
+  29              		.file 1 "app/main.c"
+   1:app/main.c    **** /**
+   2:app/main.c    ****  * @file    main.c
+   3:app/main.c    ****  * @brief   程序入口和主循环
+   4:app/main.c    ****  * 
+   5:app/main.c    ****  * Klipper MCU 移植项目 - 主程序入口
+   6:app/main.c    ****  * 实现硬件初始化和主循环框架
+   7:app/main.c    ****  * 
+   8:app/main.c    ****  * @note    验收标准: 5.1.1, 5.1.4
+   9:app/main.c    ****  */
+  10:app/main.c    **** 
+  11:app/main.c    **** #include <stdint.h>
+  12:app/main.c    **** #include <stddef.h>
+  13:app/main.c    **** 
+  14:app/main.c    **** #include "autoconf.h"
+  15:app/main.c    **** #include "config.h"
+  16:app/main.c    **** #include "src/sched.h"
+  17:app/main.c    **** #include "src/stm32/internal.h"
+  18:app/main.c    **** #include "src/stm32/serial.h"
+  19:app/main.c    **** #include "board/irq.h"
+  20:app/main.c    **** #include "board/misc.h"
+  21:app/main.c    **** 
+  22:app/main.c    **** /* ========== 外部函数声明 ========== */
+  23:app/main.c    **** 
+  24:app/main.c    **** /* 模块初始化函数 (后续任务实现) */
+  25:app/main.c    **** extern void gcode_init(void) __attribute__((weak));
+  26:app/main.c    **** extern void gcode_process(void) __attribute__((weak));
+  27:app/main.c    **** extern void toolhead_init(void) __attribute__((weak));
+  28:app/main.c    **** extern void heater_init(void) __attribute__((weak));
+  29:app/main.c    **** extern void fan_init(void) __attribute__((weak));
+ARM GAS  /tmp/cc8jU0Eq.s 			page 2
+
+
+  30:app/main.c    **** 
+  31:app/main.c    **** /* ========== 私有变量 ========== */
+  32:app/main.c    **** 
+  33:app/main.c    **** /* 系统启动标志 */
+  34:app/main.c    **** static volatile uint8_t s_system_ready = 0;
+  35:app/main.c    **** 
+  36:app/main.c    **** /* ========== NVIC 函数实现 ========== */
+  37:app/main.c    **** 
+  38:app/main.c    **** /**
+  39:app/main.c    ****  * @brief   使能 NVIC 中断
+  40:app/main.c    ****  * @param   irq     中断号
+  41:app/main.c    ****  */
+  42:app/main.c    **** void
+  43:app/main.c    **** nvic_enable_irq(uint8_t irq)
+  44:app/main.c    **** {
+  45:app/main.c    ****     volatile uint32_t* p_iser = (volatile uint32_t*)(NVIC_ISER);
+  46:app/main.c    ****     p_iser[irq / 32] = (1UL << (irq % 32));
+  47:app/main.c    **** }
+  48:app/main.c    **** 
+  49:app/main.c    **** /**
+  50:app/main.c    ****  * @brief   禁用 NVIC 中断
+  51:app/main.c    ****  * @param   irq     中断号
+  52:app/main.c    ****  */
+  53:app/main.c    **** void
+  54:app/main.c    **** nvic_disable_irq(uint8_t irq)
+  55:app/main.c    **** {
+  56:app/main.c    ****     volatile uint32_t* p_icer = (volatile uint32_t*)(NVIC_ICER);
+  57:app/main.c    ****     p_icer[irq / 32] = (1UL << (irq % 32));
+  58:app/main.c    **** }
+  59:app/main.c    **** 
+  60:app/main.c    **** /**
+  61:app/main.c    ****  * @brief   设置 NVIC 中断优先级
+  62:app/main.c    ****  * @param   irq         中断号
+  63:app/main.c    ****  * @param   priority    优先级 (0-255, 越小优先级越高)
+  64:app/main.c    ****  */
+  65:app/main.c    **** void
+  66:app/main.c    **** nvic_set_priority(uint8_t irq, uint8_t priority)
+  67:app/main.c    **** {
+  68:app/main.c    ****     volatile uint8_t* p_ipr = (volatile uint8_t*)(NVIC_IPR);
+  69:app/main.c    ****     p_ipr[irq] = priority;
+  70:app/main.c    **** }
+  71:app/main.c    **** 
+  72:app/main.c    **** /**
+  73:app/main.c    ****  * @brief   清除 NVIC 中断挂起标志
+  74:app/main.c    ****  * @param   irq     中断号
+  75:app/main.c    ****  */
+  76:app/main.c    **** void
+  77:app/main.c    **** nvic_clear_pending(uint8_t irq)
+  78:app/main.c    **** {
+  79:app/main.c    ****     volatile uint32_t* p_icpr = (volatile uint32_t*)(NVIC_ICPR);
+  80:app/main.c    ****     p_icpr[irq / 32] = (1UL << (irq % 32));
+  81:app/main.c    **** }
+  82:app/main.c    **** 
+  83:app/main.c    **** /**
+  84:app/main.c    ****  * @brief   保存中断状态并禁用中断
+  85:app/main.c    ****  * @retval  之前的中断状态
+  86:app/main.c    ****  * @note    供 sched.c 使用
+ARM GAS  /tmp/cc8jU0Eq.s 			page 3
+
+
+  87:app/main.c    ****  */
+  88:app/main.c    **** uint32_t
+  89:app/main.c    **** irq_save(void)
+  90:app/main.c    **** {
+  91:app/main.c    ****     return irq_disable();
+  92:app/main.c    **** }
+  93:app/main.c    **** 
+  94:app/main.c    **** /* ========== 中断向量表 ========== */
+  95:app/main.c    **** 
+  96:app/main.c    **** /* 栈顶指针 (由链接脚本定义) */
+  97:app/main.c    **** extern uint32_t _estack;
+  98:app/main.c    **** 
+  99:app/main.c    **** /* 复位处理函数 */
+ 100:app/main.c    **** void Reset_Handler(void);
+ 101:app/main.c    **** 
+ 102:app/main.c    **** /* 默认中断处理函数 */
+ 103:app/main.c    **** void Default_Handler(void);
+ 104:app/main.c    **** 
+ 105:app/main.c    **** /* 系统异常处理函数 */
+ 106:app/main.c    **** void NMI_Handler(void) __attribute__((weak, alias("Default_Handler")));
+ 107:app/main.c    **** void HardFault_Handler(void) __attribute__((weak));
+ 108:app/main.c    **** void MemManage_Handler(void) __attribute__((weak, alias("Default_Handler")));
+ 109:app/main.c    **** void BusFault_Handler(void) __attribute__((weak, alias("Default_Handler")));
+ 110:app/main.c    **** void UsageFault_Handler(void) __attribute__((weak, alias("Default_Handler")));
+ 111:app/main.c    **** void SVC_Handler(void) __attribute__((weak, alias("Default_Handler")));
+ 112:app/main.c    **** void DebugMon_Handler(void) __attribute__((weak, alias("Default_Handler")));
+ 113:app/main.c    **** void PendSV_Handler(void) __attribute__((weak, alias("Default_Handler")));
+ 114:app/main.c    **** void SysTick_Handler(void);
+ 115:app/main.c    **** 
+ 116:app/main.c    **** /* 外设中断处理函数 */
+ 117:app/main.c    **** void WWDG_IRQHandler(void) __attribute__((weak, alias("Default_Handler")));
+ 118:app/main.c    **** void PVD_IRQHandler(void) __attribute__((weak, alias("Default_Handler")));
+ 119:app/main.c    **** void TAMP_STAMP_IRQHandler(void) __attribute__((weak, alias("Default_Handler")));
+ 120:app/main.c    **** void RTC_WKUP_IRQHandler(void) __attribute__((weak, alias("Default_Handler")));
+ 121:app/main.c    **** void FLASH_IRQHandler(void) __attribute__((weak, alias("Default_Handler")));
+ 122:app/main.c    **** void RCC_IRQHandler(void) __attribute__((weak, alias("Default_Handler")));
+ 123:app/main.c    **** void EXTI0_IRQHandler(void) __attribute__((weak, alias("Default_Handler")));
+ 124:app/main.c    **** void EXTI1_IRQHandler(void) __attribute__((weak, alias("Default_Handler")));
+ 125:app/main.c    **** void EXTI2_IRQHandler(void) __attribute__((weak, alias("Default_Handler")));
+ 126:app/main.c    **** void EXTI3_IRQHandler(void) __attribute__((weak, alias("Default_Handler")));
+ 127:app/main.c    **** void EXTI4_IRQHandler(void) __attribute__((weak, alias("Default_Handler")));
+ 128:app/main.c    **** void DMA1_Stream0_IRQHandler(void) __attribute__((weak, alias("Default_Handler")));
+ 129:app/main.c    **** void DMA1_Stream1_IRQHandler(void) __attribute__((weak, alias("Default_Handler")));
+ 130:app/main.c    **** void DMA1_Stream2_IRQHandler(void) __attribute__((weak, alias("Default_Handler")));
+ 131:app/main.c    **** void DMA1_Stream3_IRQHandler(void) __attribute__((weak, alias("Default_Handler")));
+ 132:app/main.c    **** void DMA1_Stream4_IRQHandler(void) __attribute__((weak, alias("Default_Handler")));
+ 133:app/main.c    **** void DMA1_Stream5_IRQHandler(void) __attribute__((weak, alias("Default_Handler")));
+ 134:app/main.c    **** void DMA1_Stream6_IRQHandler(void) __attribute__((weak, alias("Default_Handler")));
+ 135:app/main.c    **** void ADC_IRQHandler(void) __attribute__((weak, alias("Default_Handler")));
+ 136:app/main.c    **** void CAN1_TX_IRQHandler(void) __attribute__((weak, alias("Default_Handler")));
+ 137:app/main.c    **** void CAN1_RX0_IRQHandler(void) __attribute__((weak, alias("Default_Handler")));
+ 138:app/main.c    **** void CAN1_RX1_IRQHandler(void) __attribute__((weak, alias("Default_Handler")));
+ 139:app/main.c    **** void CAN1_SCE_IRQHandler(void) __attribute__((weak, alias("Default_Handler")));
+ 140:app/main.c    **** void EXTI9_5_IRQHandler(void) __attribute__((weak, alias("Default_Handler")));
+ 141:app/main.c    **** void TIM1_BRK_TIM9_IRQHandler(void) __attribute__((weak, alias("Default_Handler")));
+ 142:app/main.c    **** void TIM1_UP_TIM10_IRQHandler(void) __attribute__((weak, alias("Default_Handler")));
+ 143:app/main.c    **** void TIM1_TRG_COM_TIM11_IRQHandler(void) __attribute__((weak, alias("Default_Handler")));
+ARM GAS  /tmp/cc8jU0Eq.s 			page 4
+
+
+ 144:app/main.c    **** void TIM1_CC_IRQHandler(void) __attribute__((weak, alias("Default_Handler")));
+ 145:app/main.c    **** void TIM2_IRQHandler(void) __attribute__((weak, alias("Default_Handler")));
+ 146:app/main.c    **** void TIM3_IRQHandler(void) __attribute__((weak, alias("Default_Handler")));
+ 147:app/main.c    **** void TIM4_IRQHandler(void) __attribute__((weak, alias("Default_Handler")));
+ 148:app/main.c    **** void I2C1_EV_IRQHandler(void) __attribute__((weak, alias("Default_Handler")));
+ 149:app/main.c    **** void I2C1_ER_IRQHandler(void) __attribute__((weak, alias("Default_Handler")));
+ 150:app/main.c    **** void I2C2_EV_IRQHandler(void) __attribute__((weak, alias("Default_Handler")));
+ 151:app/main.c    **** void I2C2_ER_IRQHandler(void) __attribute__((weak, alias("Default_Handler")));
+ 152:app/main.c    **** void SPI1_IRQHandler(void) __attribute__((weak, alias("Default_Handler")));
+ 153:app/main.c    **** void SPI2_IRQHandler(void) __attribute__((weak, alias("Default_Handler")));
+ 154:app/main.c    **** void USART1_IRQHandler(void) __attribute__((weak, alias("Default_Handler")));
+ 155:app/main.c    **** void USART2_IRQHandler(void) __attribute__((weak, alias("Default_Handler")));
+ 156:app/main.c    **** void USART3_IRQHandler(void) __attribute__((weak, alias("Default_Handler")));
+ 157:app/main.c    **** void EXTI15_10_IRQHandler(void) __attribute__((weak, alias("Default_Handler")));
+ 158:app/main.c    **** void RTC_Alarm_IRQHandler(void) __attribute__((weak, alias("Default_Handler")));
+ 159:app/main.c    **** void OTG_FS_WKUP_IRQHandler(void) __attribute__((weak, alias("Default_Handler")));
+ 160:app/main.c    **** void TIM8_BRK_TIM12_IRQHandler(void) __attribute__((weak, alias("Default_Handler")));
+ 161:app/main.c    **** void TIM8_UP_TIM13_IRQHandler(void) __attribute__((weak, alias("Default_Handler")));
+ 162:app/main.c    **** void TIM8_TRG_COM_TIM14_IRQHandler(void) __attribute__((weak, alias("Default_Handler")));
+ 163:app/main.c    **** void TIM8_CC_IRQHandler(void) __attribute__((weak, alias("Default_Handler")));
+ 164:app/main.c    **** void DMA1_Stream7_IRQHandler(void) __attribute__((weak, alias("Default_Handler")));
+ 165:app/main.c    **** void FSMC_IRQHandler(void) __attribute__((weak, alias("Default_Handler")));
+ 166:app/main.c    **** void SDIO_IRQHandler(void) __attribute__((weak, alias("Default_Handler")));
+ 167:app/main.c    **** void TIM5_IRQHandler(void) __attribute__((weak, alias("Default_Handler")));
+ 168:app/main.c    **** void SPI3_IRQHandler(void) __attribute__((weak, alias("Default_Handler")));
+ 169:app/main.c    **** void UART4_IRQHandler(void) __attribute__((weak, alias("Default_Handler")));
+ 170:app/main.c    **** void UART5_IRQHandler(void) __attribute__((weak, alias("Default_Handler")));
+ 171:app/main.c    **** void TIM6_DAC_IRQHandler(void) __attribute__((weak, alias("Default_Handler")));
+ 172:app/main.c    **** void TIM7_IRQHandler(void) __attribute__((weak, alias("Default_Handler")));
+ 173:app/main.c    **** void DMA2_Stream0_IRQHandler(void) __attribute__((weak, alias("Default_Handler")));
+ 174:app/main.c    **** void DMA2_Stream1_IRQHandler(void) __attribute__((weak, alias("Default_Handler")));
+ 175:app/main.c    **** void DMA2_Stream2_IRQHandler(void) __attribute__((weak, alias("Default_Handler")));
+ 176:app/main.c    **** void DMA2_Stream3_IRQHandler(void) __attribute__((weak, alias("Default_Handler")));
+ 177:app/main.c    **** void DMA2_Stream4_IRQHandler(void) __attribute__((weak, alias("Default_Handler")));
+ 178:app/main.c    **** void ETH_IRQHandler(void) __attribute__((weak, alias("Default_Handler")));
+ 179:app/main.c    **** void ETH_WKUP_IRQHandler(void) __attribute__((weak, alias("Default_Handler")));
+ 180:app/main.c    **** void CAN2_TX_IRQHandler(void) __attribute__((weak, alias("Default_Handler")));
+ 181:app/main.c    **** void CAN2_RX0_IRQHandler(void) __attribute__((weak, alias("Default_Handler")));
+ 182:app/main.c    **** void CAN2_RX1_IRQHandler(void) __attribute__((weak, alias("Default_Handler")));
+ 183:app/main.c    **** void CAN2_SCE_IRQHandler(void) __attribute__((weak, alias("Default_Handler")));
+ 184:app/main.c    **** void OTG_FS_IRQHandler(void) __attribute__((weak, alias("Default_Handler")));
+ 185:app/main.c    **** void DMA2_Stream5_IRQHandler(void) __attribute__((weak, alias("Default_Handler")));
+ 186:app/main.c    **** void DMA2_Stream6_IRQHandler(void) __attribute__((weak, alias("Default_Handler")));
+ 187:app/main.c    **** void DMA2_Stream7_IRQHandler(void) __attribute__((weak, alias("Default_Handler")));
+ 188:app/main.c    **** void USART6_IRQHandler(void) __attribute__((weak, alias("Default_Handler")));
+ 189:app/main.c    **** void I2C3_EV_IRQHandler(void) __attribute__((weak, alias("Default_Handler")));
+ 190:app/main.c    **** void I2C3_ER_IRQHandler(void) __attribute__((weak, alias("Default_Handler")));
+ 191:app/main.c    **** void OTG_HS_EP1_OUT_IRQHandler(void) __attribute__((weak, alias("Default_Handler")));
+ 192:app/main.c    **** void OTG_HS_EP1_IN_IRQHandler(void) __attribute__((weak, alias("Default_Handler")));
+ 193:app/main.c    **** void OTG_HS_WKUP_IRQHandler(void) __attribute__((weak, alias("Default_Handler")));
+ 194:app/main.c    **** void OTG_HS_IRQHandler(void) __attribute__((weak, alias("Default_Handler")));
+ 195:app/main.c    **** void DCMI_IRQHandler(void) __attribute__((weak, alias("Default_Handler")));
+ 196:app/main.c    **** void CRYP_IRQHandler(void) __attribute__((weak, alias("Default_Handler")));
+ 197:app/main.c    **** void HASH_RNG_IRQHandler(void) __attribute__((weak, alias("Default_Handler")));
+ 198:app/main.c    **** void FPU_IRQHandler(void) __attribute__((weak, alias("Default_Handler")));
+ 199:app/main.c    **** 
+ 200:app/main.c    **** /* 中断向量表 - 放置在 .isr_vector 段 */
+ARM GAS  /tmp/cc8jU0Eq.s 			page 5
+
+
+ 201:app/main.c    **** __attribute__((section(".isr_vector")))
+ 202:app/main.c    **** const uint32_t g_vector_table[] = {
+ 203:app/main.c    ****     /* 栈顶指针 */
+ 204:app/main.c    ****     (uint32_t)&_estack,
+ 205:app/main.c    ****     
+ 206:app/main.c    ****     /* Cortex-M4 系统异常 */
+ 207:app/main.c    ****     (uint32_t)Reset_Handler,
+ 208:app/main.c    ****     (uint32_t)NMI_Handler,
+ 209:app/main.c    ****     (uint32_t)HardFault_Handler,
+ 210:app/main.c    ****     (uint32_t)MemManage_Handler,
+ 211:app/main.c    ****     (uint32_t)BusFault_Handler,
+ 212:app/main.c    ****     (uint32_t)UsageFault_Handler,
+ 213:app/main.c    ****     0, 0, 0, 0,                     /* 保留 */
+ 214:app/main.c    ****     (uint32_t)SVC_Handler,
+ 215:app/main.c    ****     (uint32_t)DebugMon_Handler,
+ 216:app/main.c    ****     0,                              /* 保留 */
+ 217:app/main.c    ****     (uint32_t)PendSV_Handler,
+ 218:app/main.c    ****     (uint32_t)SysTick_Handler,
+ 219:app/main.c    ****     
+ 220:app/main.c    ****     /* STM32F407 外设中断 */
+ 221:app/main.c    ****     (uint32_t)WWDG_IRQHandler,              /* 0 */
+ 222:app/main.c    ****     (uint32_t)PVD_IRQHandler,               /* 1 */
+ 223:app/main.c    ****     (uint32_t)TAMP_STAMP_IRQHandler,        /* 2 */
+ 224:app/main.c    ****     (uint32_t)RTC_WKUP_IRQHandler,          /* 3 */
+ 225:app/main.c    ****     (uint32_t)FLASH_IRQHandler,             /* 4 */
+ 226:app/main.c    ****     (uint32_t)RCC_IRQHandler,               /* 5 */
+ 227:app/main.c    ****     (uint32_t)EXTI0_IRQHandler,             /* 6 */
+ 228:app/main.c    ****     (uint32_t)EXTI1_IRQHandler,             /* 7 */
+ 229:app/main.c    ****     (uint32_t)EXTI2_IRQHandler,             /* 8 */
+ 230:app/main.c    ****     (uint32_t)EXTI3_IRQHandler,             /* 9 */
+ 231:app/main.c    ****     (uint32_t)EXTI4_IRQHandler,             /* 10 */
+ 232:app/main.c    ****     (uint32_t)DMA1_Stream0_IRQHandler,      /* 11 */
+ 233:app/main.c    ****     (uint32_t)DMA1_Stream1_IRQHandler,      /* 12 */
+ 234:app/main.c    ****     (uint32_t)DMA1_Stream2_IRQHandler,      /* 13 */
+ 235:app/main.c    ****     (uint32_t)DMA1_Stream3_IRQHandler,      /* 14 */
+ 236:app/main.c    ****     (uint32_t)DMA1_Stream4_IRQHandler,      /* 15 */
+ 237:app/main.c    ****     (uint32_t)DMA1_Stream5_IRQHandler,      /* 16 */
+ 238:app/main.c    ****     (uint32_t)DMA1_Stream6_IRQHandler,      /* 17 */
+ 239:app/main.c    ****     (uint32_t)ADC_IRQHandler,               /* 18 */
+ 240:app/main.c    ****     (uint32_t)CAN1_TX_IRQHandler,           /* 19 */
+ 241:app/main.c    ****     (uint32_t)CAN1_RX0_IRQHandler,          /* 20 */
+ 242:app/main.c    ****     (uint32_t)CAN1_RX1_IRQHandler,          /* 21 */
+ 243:app/main.c    ****     (uint32_t)CAN1_SCE_IRQHandler,          /* 22 */
+ 244:app/main.c    ****     (uint32_t)EXTI9_5_IRQHandler,           /* 23 */
+ 245:app/main.c    ****     (uint32_t)TIM1_BRK_TIM9_IRQHandler,     /* 24 */
+ 246:app/main.c    ****     (uint32_t)TIM1_UP_TIM10_IRQHandler,     /* 25 */
+ 247:app/main.c    ****     (uint32_t)TIM1_TRG_COM_TIM11_IRQHandler,/* 26 */
+ 248:app/main.c    ****     (uint32_t)TIM1_CC_IRQHandler,           /* 27 */
+ 249:app/main.c    ****     (uint32_t)TIM2_IRQHandler,              /* 28 */
+ 250:app/main.c    ****     (uint32_t)TIM3_IRQHandler,              /* 29 */
+ 251:app/main.c    ****     (uint32_t)TIM4_IRQHandler,              /* 30 */
+ 252:app/main.c    ****     (uint32_t)I2C1_EV_IRQHandler,           /* 31 */
+ 253:app/main.c    ****     (uint32_t)I2C1_ER_IRQHandler,           /* 32 */
+ 254:app/main.c    ****     (uint32_t)I2C2_EV_IRQHandler,           /* 33 */
+ 255:app/main.c    ****     (uint32_t)I2C2_ER_IRQHandler,           /* 34 */
+ 256:app/main.c    ****     (uint32_t)SPI1_IRQHandler,              /* 35 */
+ 257:app/main.c    ****     (uint32_t)SPI2_IRQHandler,              /* 36 */
+ARM GAS  /tmp/cc8jU0Eq.s 			page 6
+
+
+ 258:app/main.c    ****     (uint32_t)USART1_IRQHandler,            /* 37 */
+ 259:app/main.c    ****     (uint32_t)USART2_IRQHandler,            /* 38 */
+ 260:app/main.c    ****     (uint32_t)USART3_IRQHandler,            /* 39 */
+ 261:app/main.c    ****     (uint32_t)EXTI15_10_IRQHandler,         /* 40 */
+ 262:app/main.c    ****     (uint32_t)RTC_Alarm_IRQHandler,         /* 41 */
+ 263:app/main.c    ****     (uint32_t)OTG_FS_WKUP_IRQHandler,       /* 42 */
+ 264:app/main.c    ****     (uint32_t)TIM8_BRK_TIM12_IRQHandler,    /* 43 */
+ 265:app/main.c    ****     (uint32_t)TIM8_UP_TIM13_IRQHandler,     /* 44 */
+ 266:app/main.c    ****     (uint32_t)TIM8_TRG_COM_TIM14_IRQHandler,/* 45 */
+ 267:app/main.c    ****     (uint32_t)TIM8_CC_IRQHandler,           /* 46 */
+ 268:app/main.c    ****     (uint32_t)DMA1_Stream7_IRQHandler,      /* 47 */
+ 269:app/main.c    ****     (uint32_t)FSMC_IRQHandler,              /* 48 */
+ 270:app/main.c    ****     (uint32_t)SDIO_IRQHandler,              /* 49 */
+ 271:app/main.c    ****     (uint32_t)TIM5_IRQHandler,              /* 50 */
+ 272:app/main.c    ****     (uint32_t)SPI3_IRQHandler,              /* 51 */
+ 273:app/main.c    ****     (uint32_t)UART4_IRQHandler,             /* 52 */
+ 274:app/main.c    ****     (uint32_t)UART5_IRQHandler,             /* 53 */
+ 275:app/main.c    ****     (uint32_t)TIM6_DAC_IRQHandler,          /* 54 */
+ 276:app/main.c    ****     (uint32_t)TIM7_IRQHandler,              /* 55 */
+ 277:app/main.c    ****     (uint32_t)DMA2_Stream0_IRQHandler,      /* 56 */
+ 278:app/main.c    ****     (uint32_t)DMA2_Stream1_IRQHandler,      /* 57 */
+ 279:app/main.c    ****     (uint32_t)DMA2_Stream2_IRQHandler,      /* 58 */
+ 280:app/main.c    ****     (uint32_t)DMA2_Stream3_IRQHandler,      /* 59 */
+ 281:app/main.c    ****     (uint32_t)DMA2_Stream4_IRQHandler,      /* 60 */
+ 282:app/main.c    ****     (uint32_t)ETH_IRQHandler,               /* 61 */
+ 283:app/main.c    ****     (uint32_t)ETH_WKUP_IRQHandler,          /* 62 */
+ 284:app/main.c    ****     (uint32_t)CAN2_TX_IRQHandler,           /* 63 */
+ 285:app/main.c    ****     (uint32_t)CAN2_RX0_IRQHandler,          /* 64 */
+ 286:app/main.c    ****     (uint32_t)CAN2_RX1_IRQHandler,          /* 65 */
+ 287:app/main.c    ****     (uint32_t)CAN2_SCE_IRQHandler,          /* 66 */
+ 288:app/main.c    ****     (uint32_t)OTG_FS_IRQHandler,            /* 67 */
+ 289:app/main.c    ****     (uint32_t)DMA2_Stream5_IRQHandler,      /* 68 */
+ 290:app/main.c    ****     (uint32_t)DMA2_Stream6_IRQHandler,      /* 69 */
+ 291:app/main.c    ****     (uint32_t)DMA2_Stream7_IRQHandler,      /* 70 */
+ 292:app/main.c    ****     (uint32_t)USART6_IRQHandler,            /* 71 */
+ 293:app/main.c    ****     (uint32_t)I2C3_EV_IRQHandler,           /* 72 */
+ 294:app/main.c    ****     (uint32_t)I2C3_ER_IRQHandler,           /* 73 */
+ 295:app/main.c    ****     (uint32_t)OTG_HS_EP1_OUT_IRQHandler,    /* 74 */
+ 296:app/main.c    ****     (uint32_t)OTG_HS_EP1_IN_IRQHandler,     /* 75 */
+ 297:app/main.c    ****     (uint32_t)OTG_HS_WKUP_IRQHandler,       /* 76 */
+ 298:app/main.c    ****     (uint32_t)OTG_HS_IRQHandler,            /* 77 */
+ 299:app/main.c    ****     (uint32_t)DCMI_IRQHandler,              /* 78 */
+ 300:app/main.c    ****     (uint32_t)CRYP_IRQHandler,              /* 79 */
+ 301:app/main.c    ****     (uint32_t)HASH_RNG_IRQHandler,          /* 80 */
+ 302:app/main.c    ****     (uint32_t)FPU_IRQHandler,               /* 81 */
+ 303:app/main.c    **** };
+ 304:app/main.c    **** 
+ 305:app/main.c    **** /* ========== 私有函数 ========== */
+ 306:app/main.c    **** 
+ 307:app/main.c    **** /**
+ 308:app/main.c    ****  * @brief   初始化 BSS 段 (清零)
+ 309:app/main.c    ****  */
+ 310:app/main.c    **** static void
+ 311:app/main.c    **** bss_init(void)
+ 312:app/main.c    **** {
+ 313:app/main.c    ****     extern uint32_t _sbss;
+ 314:app/main.c    ****     extern uint32_t _ebss;
+ARM GAS  /tmp/cc8jU0Eq.s 			page 7
+
+
+ 315:app/main.c    ****     
+ 316:app/main.c    ****     uint32_t* p_dst = &_sbss;
+ 317:app/main.c    ****     while (p_dst < &_ebss) {
+ 318:app/main.c    ****         *p_dst++ = 0;
+ 319:app/main.c    ****     }
+ 320:app/main.c    **** }
+ 321:app/main.c    **** 
+ 322:app/main.c    **** /**
+ 323:app/main.c    ****  * @brief   初始化 DATA 段 (从 Flash 复制到 RAM)
+ 324:app/main.c    ****  */
+ 325:app/main.c    **** static void
+ 326:app/main.c    **** data_init(void)
+ 327:app/main.c    **** {
+ 328:app/main.c    ****     extern uint32_t _sidata;
+ 329:app/main.c    ****     extern uint32_t _sdata;
+ 330:app/main.c    ****     extern uint32_t _edata;
+ 331:app/main.c    ****     
+ 332:app/main.c    ****     uint32_t* p_src = &_sidata;
+ 333:app/main.c    ****     uint32_t* p_dst = &_sdata;
+ 334:app/main.c    ****     
+ 335:app/main.c    ****     while (p_dst < &_edata) {
+ 336:app/main.c    ****         *p_dst++ = *p_src++;
+ 337:app/main.c    ****     }
+ 338:app/main.c    **** }
+ 339:app/main.c    **** 
+ 340:app/main.c    **** /**
+ 341:app/main.c    ****  * @brief   启用 FPU (浮点单元)
+ 342:app/main.c    ****  */
+ 343:app/main.c    **** static void
+ 344:app/main.c    **** fpu_enable(void)
+ 345:app/main.c    **** {
+ 346:app/main.c    ****     /* 启用 CP10 和 CP11 协处理器 */
+ 347:app/main.c    ****     /* SCB->CPACR |= ((3UL << 10*2) | (3UL << 11*2)) */
+ 348:app/main.c    ****     volatile uint32_t* p_cpacr = (volatile uint32_t*)0xE000ED88;
+ 349:app/main.c    ****     *p_cpacr |= ((3UL << 20) | (3UL << 22));
+ 350:app/main.c    ****     
+ 351:app/main.c    ****     /* 数据同步屏障 */
+ 352:app/main.c    ****     __asm__ __volatile__("dsb" ::: "memory");
+ 353:app/main.c    ****     __asm__ __volatile__("isb" ::: "memory");
+ 354:app/main.c    **** }
+ 355:app/main.c    **** 
+ 356:app/main.c    **** /* ========== 公有函数 ========== */
+ 357:app/main.c    **** 
+ 358:app/main.c    **** /**
+ 359:app/main.c    ****  * @brief   硬件初始化
+ 360:app/main.c    ****  * 
+ 361:app/main.c    ****  * 初始化所有硬件外设:
+ 362:app/main.c    ****  * - 系统时钟 (168 MHz)
+ 363:app/main.c    ****  * - GPIO
+ 364:app/main.c    ****  * - 串口 (115200 baud)
+ 365:app/main.c    ****  * - ADC
+ 366:app/main.c    ****  * 
+ 367:app/main.c    ****  * @retval  0 成功，负数 失败
+ 368:app/main.c    ****  */
+ 369:app/main.c    **** int
+ 370:app/main.c    **** board_init(void)
+ 371:app/main.c    **** {
+ARM GAS  /tmp/cc8jU0Eq.s 			page 8
+
+
+ 372:app/main.c    ****     /* 系统初始化 (时钟、GPIO) */
+ 373:app/main.c    ****     system_init();
+ 374:app/main.c    ****     
+ 375:app/main.c    ****     /* 串口初始化 */
+ 376:app/main.c    ****     serial_init();
+ 377:app/main.c    ****     
+ 378:app/main.c    ****     /* 输出启动信息 */
+ 379:app/main.c    ****     serial_puts("\r\n");
+ 380:app/main.c    ****     serial_puts("========================================\r\n");
+ 381:app/main.c    ****     serial_puts("  Klipper MCU Firmware v" CONFIG_VERSION "\r\n");
+ 382:app/main.c    ****     serial_puts("  Build: " CONFIG_BUILD_DATE " " CONFIG_BUILD_TIME "\r\n");
+ 383:app/main.c    ****     serial_puts("========================================\r\n");
+ 384:app/main.c    ****     serial_puts("Board initialized.\r\n");
+ 385:app/main.c    ****     
+ 386:app/main.c    ****     return 0;
+ 387:app/main.c    **** }
+ 388:app/main.c    **** 
+ 389:app/main.c    **** /**
+ 390:app/main.c    ****  * @brief   复位处理函数 (启动入口)
+ 391:app/main.c    ****  * 
+ 392:app/main.c    ****  * MCU 复位后首先执行此函数:
+ 393:app/main.c    ****  * 1. 初始化 BSS 段
+ 394:app/main.c    ****  * 2. 初始化 DATA 段
+ 395:app/main.c    ****  * 3. 启用 FPU
+ 396:app/main.c    ****  * 4. 调用 main()
+ 397:app/main.c    ****  */
+ 398:app/main.c    **** void
+ 399:app/main.c    **** Reset_Handler(void)
+ 400:app/main.c    **** {
+ 401:app/main.c    ****     /* 初始化 BSS 段 (清零) */
+ 402:app/main.c    ****     bss_init();
+ 403:app/main.c    ****     
+ 404:app/main.c    ****     /* 初始化 DATA 段 (从 Flash 复制) */
+ 405:app/main.c    ****     data_init();
+ 406:app/main.c    ****     
+ 407:app/main.c    ****     /* 启用 FPU */
+ 408:app/main.c    ****     fpu_enable();
+ 409:app/main.c    ****     
+ 410:app/main.c    ****     /* 调用 main 函数 */
+ 411:app/main.c    ****     extern int main(void);
+ 412:app/main.c    ****     main();
+ 413:app/main.c    ****     
+ 414:app/main.c    ****     /* main 不应返回，如果返回则进入死循环 */
+ 415:app/main.c    ****     for (;;) {
+ 416:app/main.c    ****         __asm__ __volatile__("wfi");
+ 417:app/main.c    ****     }
+ 418:app/main.c    **** }
+ 419:app/main.c    **** 
+ 420:app/main.c    **** /**
+ 421:app/main.c    ****  * @brief   默认中断处理函数
+ 422:app/main.c    ****  * 
+ 423:app/main.c    ****  * 未实现的中断会跳转到此处
+ 424:app/main.c    ****  */
+ 425:app/main.c    **** void
+ 426:app/main.c    **** Default_Handler(void)
+ 427:app/main.c    **** {
+  30              		.loc 1 427 1 view -0
+ARM GAS  /tmp/cc8jU0Eq.s 			page 9
+
+
+  31              		.cfi_startproc
+  32              		@ Volatile: function does not return.
+  33              		@ args = 0, pretend = 0, frame = 0
+  34              		@ frame_needed = 0, uses_anonymous_args = 0
+  35              		@ link register save eliminated.
+  36              	.L2:
+ 428:app/main.c    ****     /* 进入死循环 */
+ 429:app/main.c    ****     for (;;) {
+  37              		.loc 1 429 5 discriminator 1 view .LVU1
+ 430:app/main.c    ****         __asm__ __volatile__("nop");
+  38              		.loc 1 430 9 discriminator 1 view .LVU2
+  39              		.syntax unified
+  40              	@ 430 "app/main.c" 1
+  41 0000 00BF     		nop
+  42              	@ 0 "" 2
+ 429:app/main.c    ****         __asm__ __volatile__("nop");
+  43              		.loc 1 429 11 discriminator 1 view .LVU3
+  44              		.thumb
+  45              		.syntax unified
+  46 0002 FDE7     		b	.L2
+  47              		.cfi_endproc
+  48              	.LFE24:
+  50              		.weak	FPU_IRQHandler
+  51              		.thumb_set FPU_IRQHandler,Default_Handler
+  52              		.weak	HASH_RNG_IRQHandler
+  53              		.thumb_set HASH_RNG_IRQHandler,Default_Handler
+  54              		.weak	CRYP_IRQHandler
+  55              		.thumb_set CRYP_IRQHandler,Default_Handler
+  56              		.weak	DCMI_IRQHandler
+  57              		.thumb_set DCMI_IRQHandler,Default_Handler
+  58              		.weak	OTG_HS_IRQHandler
+  59              		.thumb_set OTG_HS_IRQHandler,Default_Handler
+  60              		.weak	OTG_HS_WKUP_IRQHandler
+  61              		.thumb_set OTG_HS_WKUP_IRQHandler,Default_Handler
+  62              		.weak	OTG_HS_EP1_IN_IRQHandler
+  63              		.thumb_set OTG_HS_EP1_IN_IRQHandler,Default_Handler
+  64              		.weak	OTG_HS_EP1_OUT_IRQHandler
+  65              		.thumb_set OTG_HS_EP1_OUT_IRQHandler,Default_Handler
+  66              		.weak	I2C3_ER_IRQHandler
+  67              		.thumb_set I2C3_ER_IRQHandler,Default_Handler
+  68              		.weak	I2C3_EV_IRQHandler
+  69              		.thumb_set I2C3_EV_IRQHandler,Default_Handler
+  70              		.weak	USART6_IRQHandler
+  71              		.thumb_set USART6_IRQHandler,Default_Handler
+  72              		.weak	DMA2_Stream7_IRQHandler
+  73              		.thumb_set DMA2_Stream7_IRQHandler,Default_Handler
+  74              		.weak	DMA2_Stream6_IRQHandler
+  75              		.thumb_set DMA2_Stream6_IRQHandler,Default_Handler
+  76              		.weak	DMA2_Stream5_IRQHandler
+  77              		.thumb_set DMA2_Stream5_IRQHandler,Default_Handler
+  78              		.weak	OTG_FS_IRQHandler
+  79              		.thumb_set OTG_FS_IRQHandler,Default_Handler
+  80              		.weak	CAN2_SCE_IRQHandler
+  81              		.thumb_set CAN2_SCE_IRQHandler,Default_Handler
+  82              		.weak	CAN2_RX1_IRQHandler
+  83              		.thumb_set CAN2_RX1_IRQHandler,Default_Handler
+  84              		.weak	CAN2_RX0_IRQHandler
+ARM GAS  /tmp/cc8jU0Eq.s 			page 10
+
+
+  85              		.thumb_set CAN2_RX0_IRQHandler,Default_Handler
+  86              		.weak	CAN2_TX_IRQHandler
+  87              		.thumb_set CAN2_TX_IRQHandler,Default_Handler
+  88              		.weak	ETH_WKUP_IRQHandler
+  89              		.thumb_set ETH_WKUP_IRQHandler,Default_Handler
+  90              		.weak	ETH_IRQHandler
+  91              		.thumb_set ETH_IRQHandler,Default_Handler
+  92              		.weak	DMA2_Stream4_IRQHandler
+  93              		.thumb_set DMA2_Stream4_IRQHandler,Default_Handler
+  94              		.weak	DMA2_Stream3_IRQHandler
+  95              		.thumb_set DMA2_Stream3_IRQHandler,Default_Handler
+  96              		.weak	DMA2_Stream2_IRQHandler
+  97              		.thumb_set DMA2_Stream2_IRQHandler,Default_Handler
+  98              		.weak	DMA2_Stream1_IRQHandler
+  99              		.thumb_set DMA2_Stream1_IRQHandler,Default_Handler
+ 100              		.weak	DMA2_Stream0_IRQHandler
+ 101              		.thumb_set DMA2_Stream0_IRQHandler,Default_Handler
+ 102              		.weak	TIM7_IRQHandler
+ 103              		.thumb_set TIM7_IRQHandler,Default_Handler
+ 104              		.weak	TIM6_DAC_IRQHandler
+ 105              		.thumb_set TIM6_DAC_IRQHandler,Default_Handler
+ 106              		.weak	UART5_IRQHandler
+ 107              		.thumb_set UART5_IRQHandler,Default_Handler
+ 108              		.weak	UART4_IRQHandler
+ 109              		.thumb_set UART4_IRQHandler,Default_Handler
+ 110              		.weak	SPI3_IRQHandler
+ 111              		.thumb_set SPI3_IRQHandler,Default_Handler
+ 112              		.weak	TIM5_IRQHandler
+ 113              		.thumb_set TIM5_IRQHandler,Default_Handler
+ 114              		.weak	SDIO_IRQHandler
+ 115              		.thumb_set SDIO_IRQHandler,Default_Handler
+ 116              		.weak	FSMC_IRQHandler
+ 117              		.thumb_set FSMC_IRQHandler,Default_Handler
+ 118              		.weak	DMA1_Stream7_IRQHandler
+ 119              		.thumb_set DMA1_Stream7_IRQHandler,Default_Handler
+ 120              		.weak	TIM8_CC_IRQHandler
+ 121              		.thumb_set TIM8_CC_IRQHandler,Default_Handler
+ 122              		.weak	TIM8_TRG_COM_TIM14_IRQHandler
+ 123              		.thumb_set TIM8_TRG_COM_TIM14_IRQHandler,Default_Handler
+ 124              		.weak	TIM8_UP_TIM13_IRQHandler
+ 125              		.thumb_set TIM8_UP_TIM13_IRQHandler,Default_Handler
+ 126              		.weak	TIM8_BRK_TIM12_IRQHandler
+ 127              		.thumb_set TIM8_BRK_TIM12_IRQHandler,Default_Handler
+ 128              		.weak	OTG_FS_WKUP_IRQHandler
+ 129              		.thumb_set OTG_FS_WKUP_IRQHandler,Default_Handler
+ 130              		.weak	RTC_Alarm_IRQHandler
+ 131              		.thumb_set RTC_Alarm_IRQHandler,Default_Handler
+ 132              		.weak	EXTI15_10_IRQHandler
+ 133              		.thumb_set EXTI15_10_IRQHandler,Default_Handler
+ 134              		.weak	USART3_IRQHandler
+ 135              		.thumb_set USART3_IRQHandler,Default_Handler
+ 136              		.weak	USART2_IRQHandler
+ 137              		.thumb_set USART2_IRQHandler,Default_Handler
+ 138              		.weak	USART1_IRQHandler
+ 139              		.thumb_set USART1_IRQHandler,Default_Handler
+ 140              		.weak	SPI2_IRQHandler
+ 141              		.thumb_set SPI2_IRQHandler,Default_Handler
+ARM GAS  /tmp/cc8jU0Eq.s 			page 11
+
+
+ 142              		.weak	SPI1_IRQHandler
+ 143              		.thumb_set SPI1_IRQHandler,Default_Handler
+ 144              		.weak	I2C2_ER_IRQHandler
+ 145              		.thumb_set I2C2_ER_IRQHandler,Default_Handler
+ 146              		.weak	I2C2_EV_IRQHandler
+ 147              		.thumb_set I2C2_EV_IRQHandler,Default_Handler
+ 148              		.weak	I2C1_ER_IRQHandler
+ 149              		.thumb_set I2C1_ER_IRQHandler,Default_Handler
+ 150              		.weak	I2C1_EV_IRQHandler
+ 151              		.thumb_set I2C1_EV_IRQHandler,Default_Handler
+ 152              		.weak	TIM4_IRQHandler
+ 153              		.thumb_set TIM4_IRQHandler,Default_Handler
+ 154              		.weak	TIM3_IRQHandler
+ 155              		.thumb_set TIM3_IRQHandler,Default_Handler
+ 156              		.weak	TIM2_IRQHandler
+ 157              		.thumb_set TIM2_IRQHandler,Default_Handler
+ 158              		.weak	TIM1_CC_IRQHandler
+ 159              		.thumb_set TIM1_CC_IRQHandler,Default_Handler
+ 160              		.weak	TIM1_TRG_COM_TIM11_IRQHandler
+ 161              		.thumb_set TIM1_TRG_COM_TIM11_IRQHandler,Default_Handler
+ 162              		.weak	TIM1_UP_TIM10_IRQHandler
+ 163              		.thumb_set TIM1_UP_TIM10_IRQHandler,Default_Handler
+ 164              		.weak	TIM1_BRK_TIM9_IRQHandler
+ 165              		.thumb_set TIM1_BRK_TIM9_IRQHandler,Default_Handler
+ 166              		.weak	EXTI9_5_IRQHandler
+ 167              		.thumb_set EXTI9_5_IRQHandler,Default_Handler
+ 168              		.weak	CAN1_SCE_IRQHandler
+ 169              		.thumb_set CAN1_SCE_IRQHandler,Default_Handler
+ 170              		.weak	CAN1_RX1_IRQHandler
+ 171              		.thumb_set CAN1_RX1_IRQHandler,Default_Handler
+ 172              		.weak	CAN1_RX0_IRQHandler
+ 173              		.thumb_set CAN1_RX0_IRQHandler,Default_Handler
+ 174              		.weak	CAN1_TX_IRQHandler
+ 175              		.thumb_set CAN1_TX_IRQHandler,Default_Handler
+ 176              		.weak	ADC_IRQHandler
+ 177              		.thumb_set ADC_IRQHandler,Default_Handler
+ 178              		.weak	DMA1_Stream6_IRQHandler
+ 179              		.thumb_set DMA1_Stream6_IRQHandler,Default_Handler
+ 180              		.weak	DMA1_Stream5_IRQHandler
+ 181              		.thumb_set DMA1_Stream5_IRQHandler,Default_Handler
+ 182              		.weak	DMA1_Stream4_IRQHandler
+ 183              		.thumb_set DMA1_Stream4_IRQHandler,Default_Handler
+ 184              		.weak	DMA1_Stream3_IRQHandler
+ 185              		.thumb_set DMA1_Stream3_IRQHandler,Default_Handler
+ 186              		.weak	DMA1_Stream2_IRQHandler
+ 187              		.thumb_set DMA1_Stream2_IRQHandler,Default_Handler
+ 188              		.weak	DMA1_Stream1_IRQHandler
+ 189              		.thumb_set DMA1_Stream1_IRQHandler,Default_Handler
+ 190              		.weak	DMA1_Stream0_IRQHandler
+ 191              		.thumb_set DMA1_Stream0_IRQHandler,Default_Handler
+ 192              		.weak	EXTI4_IRQHandler
+ 193              		.thumb_set EXTI4_IRQHandler,Default_Handler
+ 194              		.weak	EXTI3_IRQHandler
+ 195              		.thumb_set EXTI3_IRQHandler,Default_Handler
+ 196              		.weak	EXTI2_IRQHandler
+ 197              		.thumb_set EXTI2_IRQHandler,Default_Handler
+ 198              		.weak	EXTI1_IRQHandler
+ARM GAS  /tmp/cc8jU0Eq.s 			page 12
+
+
+ 199              		.thumb_set EXTI1_IRQHandler,Default_Handler
+ 200              		.weak	EXTI0_IRQHandler
+ 201              		.thumb_set EXTI0_IRQHandler,Default_Handler
+ 202              		.weak	RCC_IRQHandler
+ 203              		.thumb_set RCC_IRQHandler,Default_Handler
+ 204              		.weak	FLASH_IRQHandler
+ 205              		.thumb_set FLASH_IRQHandler,Default_Handler
+ 206              		.weak	RTC_WKUP_IRQHandler
+ 207              		.thumb_set RTC_WKUP_IRQHandler,Default_Handler
+ 208              		.weak	TAMP_STAMP_IRQHandler
+ 209              		.thumb_set TAMP_STAMP_IRQHandler,Default_Handler
+ 210              		.weak	PVD_IRQHandler
+ 211              		.thumb_set PVD_IRQHandler,Default_Handler
+ 212              		.weak	WWDG_IRQHandler
+ 213              		.thumb_set WWDG_IRQHandler,Default_Handler
+ 214              		.weak	PendSV_Handler
+ 215              		.thumb_set PendSV_Handler,Default_Handler
+ 216              		.weak	DebugMon_Handler
+ 217              		.thumb_set DebugMon_Handler,Default_Handler
+ 218              		.weak	SVC_Handler
+ 219              		.thumb_set SVC_Handler,Default_Handler
+ 220              		.weak	UsageFault_Handler
+ 221              		.thumb_set UsageFault_Handler,Default_Handler
+ 222              		.weak	BusFault_Handler
+ 223              		.thumb_set BusFault_Handler,Default_Handler
+ 224              		.weak	MemManage_Handler
+ 225              		.thumb_set MemManage_Handler,Default_Handler
+ 226              		.weak	NMI_Handler
+ 227              		.thumb_set NMI_Handler,Default_Handler
+ 228              		.section	.rodata.HardFault_Handler.str1.4,"aMS",%progbits,1
+ 229              		.align	2
+ 230              	.LC0:
+ 231 0000 0D0A2121 		.ascii	"\015\012!!! HardFault !!!\015\012\000"
+ 231      21204861 
+ 231      72644661 
+ 231      756C7420 
+ 231      2121210D 
+ 232              		.section	.text.HardFault_Handler,"ax",%progbits
+ 233              		.align	1
+ 234              		.p2align 2,,3
+ 235              		.weak	HardFault_Handler
+ 236              		.syntax unified
+ 237              		.thumb
+ 238              		.thumb_func
+ 239              		.fpu fpv4-sp-d16
+ 241              	HardFault_Handler:
+ 242              	.LFB25:
+ 431:app/main.c    ****     }
+ 432:app/main.c    **** }
+ 433:app/main.c    **** 
+ 434:app/main.c    **** /**
+ 435:app/main.c    ****  * @brief   硬件错误处理函数
+ 436:app/main.c    ****  */
+ 437:app/main.c    **** void
+ 438:app/main.c    **** HardFault_Handler(void)
+ 439:app/main.c    **** {
+ 243              		.loc 1 439 1 view -0
+ARM GAS  /tmp/cc8jU0Eq.s 			page 13
+
+
+ 244              		.cfi_startproc
+ 245              		@ args = 0, pretend = 0, frame = 0
+ 246              		@ frame_needed = 0, uses_anonymous_args = 0
+ 440:app/main.c    ****     /* 输出错误信息 (如果串口可用) */
+ 441:app/main.c    ****     serial_puts("\r\n!!! HardFault !!!\r\n");
+ 247              		.loc 1 441 5 view .LVU5
+ 439:app/main.c    ****     /* 输出错误信息 (如果串口可用) */
+ 248              		.loc 1 439 1 is_stmt 0 view .LVU6
+ 249 0000 08B5     		push	{r3, lr}
+ 250              		.cfi_def_cfa_offset 8
+ 251              		.cfi_offset 3, -8
+ 252              		.cfi_offset 14, -4
+ 253              		.loc 1 441 5 view .LVU7
+ 254 0002 0248     		ldr	r0, .L7
+ 255 0004 FFF7FEFF 		bl	serial_puts
+ 256              	.LVL0:
+ 257              	.L5:
+ 442:app/main.c    ****     
+ 443:app/main.c    ****     /* 进入死循环 */
+ 444:app/main.c    ****     for (;;) {
+ 258              		.loc 1 444 5 is_stmt 1 discriminator 1 view .LVU8
+ 445:app/main.c    ****         __asm__ __volatile__("nop");
+ 259              		.loc 1 445 9 discriminator 1 view .LVU9
+ 260              		.syntax unified
+ 261              	@ 445 "app/main.c" 1
+ 262 0008 00BF     		nop
+ 263              	@ 0 "" 2
+ 444:app/main.c    ****         __asm__ __volatile__("nop");
+ 264              		.loc 1 444 11 discriminator 1 view .LVU10
+ 265              		.thumb
+ 266              		.syntax unified
+ 267 000a FDE7     		b	.L5
+ 268              	.L8:
+ 269              		.align	2
+ 270              	.L7:
+ 271 000c 00000000 		.word	.LC0
+ 272              		.cfi_endproc
+ 273              	.LFE25:
+ 275              		.section	.text.nvic_enable_irq,"ax",%progbits
+ 276              		.align	1
+ 277              		.p2align 2,,3
+ 278              		.global	nvic_enable_irq
+ 279              		.syntax unified
+ 280              		.thumb
+ 281              		.thumb_func
+ 282              		.fpu fpv4-sp-d16
+ 284              	nvic_enable_irq:
+ 285              	.LVL1:
+ 286              	.LFB14:
+  44:app/main.c    ****     volatile uint32_t* p_iser = (volatile uint32_t*)(NVIC_ISER);
+ 287              		.loc 1 44 1 view -0
+ 288              		.cfi_startproc
+ 289              		@ args = 0, pretend = 0, frame = 0
+ 290              		@ frame_needed = 0, uses_anonymous_args = 0
+ 291              		@ link register save eliminated.
+  45:app/main.c    ****     p_iser[irq / 32] = (1UL << (irq % 32));
+ 292              		.loc 1 45 5 view .LVU12
+ARM GAS  /tmp/cc8jU0Eq.s 			page 14
+
+
+  46:app/main.c    **** }
+ 293              		.loc 1 46 5 view .LVU13
+  46:app/main.c    **** }
+ 294              		.loc 1 46 11 is_stmt 0 view .LVU14
+ 295 0000 4309     		lsrs	r3, r0, #5
+ 296 0002 9B00     		lsls	r3, r3, #2
+ 297 0004 03F16043 		add	r3, r3, #-536870912
+ 298 0008 03F56143 		add	r3, r3, #57600
+  46:app/main.c    **** }
+ 299              		.loc 1 46 37 view .LVU15
+ 300 000c 00F01F00 		and	r0, r0, #31
+ 301              	.LVL2:
+  46:app/main.c    **** }
+ 302              		.loc 1 46 29 view .LVU16
+ 303 0010 0122     		movs	r2, #1
+ 304 0012 02FA00F0 		lsl	r0, r2, r0
+  46:app/main.c    **** }
+ 305              		.loc 1 46 22 view .LVU17
+ 306 0016 1860     		str	r0, [r3]
+  47:app/main.c    **** 
+ 307              		.loc 1 47 1 view .LVU18
+ 308 0018 7047     		bx	lr
+ 309              		.cfi_endproc
+ 310              	.LFE14:
+ 312 001a 00BF     		.section	.text.nvic_disable_irq,"ax",%progbits
+ 313              		.align	1
+ 314              		.p2align 2,,3
+ 315              		.global	nvic_disable_irq
+ 316              		.syntax unified
+ 317              		.thumb
+ 318              		.thumb_func
+ 319              		.fpu fpv4-sp-d16
+ 321              	nvic_disable_irq:
+ 322              	.LVL3:
+ 323              	.LFB15:
+  55:app/main.c    ****     volatile uint32_t* p_icer = (volatile uint32_t*)(NVIC_ICER);
+ 324              		.loc 1 55 1 is_stmt 1 view -0
+ 325              		.cfi_startproc
+ 326              		@ args = 0, pretend = 0, frame = 0
+ 327              		@ frame_needed = 0, uses_anonymous_args = 0
+ 328              		@ link register save eliminated.
+  56:app/main.c    ****     p_icer[irq / 32] = (1UL << (irq % 32));
+ 329              		.loc 1 56 5 view .LVU20
+  57:app/main.c    **** }
+ 330              		.loc 1 57 5 view .LVU21
+  57:app/main.c    **** }
+ 331              		.loc 1 57 11 is_stmt 0 view .LVU22
+ 332 0000 4109     		lsrs	r1, r0, #5
+ 333 0002 044A     		ldr	r2, .L11
+  57:app/main.c    **** }
+ 334              		.loc 1 57 37 view .LVU23
+ 335 0004 00F01F00 		and	r0, r0, #31
+ 336              	.LVL4:
+  57:app/main.c    **** }
+ 337              		.loc 1 57 29 view .LVU24
+ 338 0008 0123     		movs	r3, #1
+ 339 000a 03FA00F0 		lsl	r0, r3, r0
+ARM GAS  /tmp/cc8jU0Eq.s 			page 15
+
+
+  57:app/main.c    **** }
+ 340              		.loc 1 57 22 view .LVU25
+ 341 000e 42F82100 		str	r0, [r2, r1, lsl #2]
+  58:app/main.c    **** 
+ 342              		.loc 1 58 1 view .LVU26
+ 343 0012 7047     		bx	lr
+ 344              	.L12:
+ 345              		.align	2
+ 346              	.L11:
+ 347 0014 80E100E0 		.word	-536813184
+ 348              		.cfi_endproc
+ 349              	.LFE15:
+ 351              		.section	.text.nvic_set_priority,"ax",%progbits
+ 352              		.align	1
+ 353              		.p2align 2,,3
+ 354              		.global	nvic_set_priority
+ 355              		.syntax unified
+ 356              		.thumb
+ 357              		.thumb_func
+ 358              		.fpu fpv4-sp-d16
+ 360              	nvic_set_priority:
+ 361              	.LVL5:
+ 362              	.LFB16:
+  67:app/main.c    ****     volatile uint8_t* p_ipr = (volatile uint8_t*)(NVIC_IPR);
+ 363              		.loc 1 67 1 is_stmt 1 view -0
+ 364              		.cfi_startproc
+ 365              		@ args = 0, pretend = 0, frame = 0
+ 366              		@ frame_needed = 0, uses_anonymous_args = 0
+ 367              		@ link register save eliminated.
+  68:app/main.c    ****     p_ipr[irq] = priority;
+ 368              		.loc 1 68 5 view .LVU28
+  69:app/main.c    **** }
+ 369              		.loc 1 69 5 view .LVU29
+  69:app/main.c    **** }
+ 370              		.loc 1 69 10 is_stmt 0 view .LVU30
+ 371 0000 00F16040 		add	r0, r0, #-536870912
+ 372              	.LVL6:
+  69:app/main.c    **** }
+ 373              		.loc 1 69 10 view .LVU31
+ 374 0004 00F56440 		add	r0, r0, #58368
+  69:app/main.c    **** }
+ 375              		.loc 1 69 16 view .LVU32
+ 376 0008 0170     		strb	r1, [r0]
+  70:app/main.c    **** 
+ 377              		.loc 1 70 1 view .LVU33
+ 378 000a 7047     		bx	lr
+ 379              		.cfi_endproc
+ 380              	.LFE16:
+ 382              		.section	.text.nvic_clear_pending,"ax",%progbits
+ 383              		.align	1
+ 384              		.p2align 2,,3
+ 385              		.global	nvic_clear_pending
+ 386              		.syntax unified
+ 387              		.thumb
+ 388              		.thumb_func
+ 389              		.fpu fpv4-sp-d16
+ 391              	nvic_clear_pending:
+ARM GAS  /tmp/cc8jU0Eq.s 			page 16
+
+
+ 392              	.LVL7:
+ 393              	.LFB17:
+  78:app/main.c    ****     volatile uint32_t* p_icpr = (volatile uint32_t*)(NVIC_ICPR);
+ 394              		.loc 1 78 1 is_stmt 1 view -0
+ 395              		.cfi_startproc
+ 396              		@ args = 0, pretend = 0, frame = 0
+ 397              		@ frame_needed = 0, uses_anonymous_args = 0
+ 398              		@ link register save eliminated.
+  79:app/main.c    ****     p_icpr[irq / 32] = (1UL << (irq % 32));
+ 399              		.loc 1 79 5 view .LVU35
+  80:app/main.c    **** }
+ 400              		.loc 1 80 5 view .LVU36
+  80:app/main.c    **** }
+ 401              		.loc 1 80 11 is_stmt 0 view .LVU37
+ 402 0000 4109     		lsrs	r1, r0, #5
+ 403 0002 044A     		ldr	r2, .L15
+  80:app/main.c    **** }
+ 404              		.loc 1 80 37 view .LVU38
+ 405 0004 00F01F00 		and	r0, r0, #31
+ 406              	.LVL8:
+  80:app/main.c    **** }
+ 407              		.loc 1 80 29 view .LVU39
+ 408 0008 0123     		movs	r3, #1
+ 409 000a 03FA00F0 		lsl	r0, r3, r0
+  80:app/main.c    **** }
+ 410              		.loc 1 80 22 view .LVU40
+ 411 000e 42F82100 		str	r0, [r2, r1, lsl #2]
+  81:app/main.c    **** 
+ 412              		.loc 1 81 1 view .LVU41
+ 413 0012 7047     		bx	lr
+ 414              	.L16:
+ 415              		.align	2
+ 416              	.L15:
+ 417 0014 80E200E0 		.word	-536812928
+ 418              		.cfi_endproc
+ 419              	.LFE17:
+ 421              		.section	.text.irq_save,"ax",%progbits
+ 422              		.align	1
+ 423              		.p2align 2,,3
+ 424              		.global	irq_save
+ 425              		.syntax unified
+ 426              		.thumb
+ 427              		.thumb_func
+ 428              		.fpu fpv4-sp-d16
+ 430              	irq_save:
+ 431              	.LFB18:
+  90:app/main.c    ****     return irq_disable();
+ 432              		.loc 1 90 1 is_stmt 1 view -0
+ 433              		.cfi_startproc
+ 434              		@ args = 0, pretend = 0, frame = 0
+ 435              		@ frame_needed = 0, uses_anonymous_args = 0
+ 436              		@ link register save eliminated.
+  91:app/main.c    **** }
+ 437              		.loc 1 91 5 view .LVU43
+ 438              	.LBB12:
+ 439              	.LBI12:
+ 440              		.file 2 "./board/irq.h"
+ARM GAS  /tmp/cc8jU0Eq.s 			page 17
+
+
+   1:./board/irq.h **** /**
+   2:./board/irq.h ****  * @file    irq.h
+   3:./board/irq.h ****  * @brief   Interrupt management interface
+   4:./board/irq.h ****  * 
+   5:./board/irq.h ****  * Provides interrupt enable/disable functions and critical section
+   6:./board/irq.h ****  * management for STM32F407.
+   7:./board/irq.h ****  */
+   8:./board/irq.h **** 
+   9:./board/irq.h **** #ifndef BOARD_IRQ_H
+  10:./board/irq.h **** #define BOARD_IRQ_H
+  11:./board/irq.h **** 
+  12:./board/irq.h **** #include <stdint.h>
+  13:./board/irq.h **** 
+  14:./board/irq.h **** /* ========== Interrupt Control ========== */
+  15:./board/irq.h **** 
+  16:./board/irq.h **** /**
+  17:./board/irq.h ****  * @brief   Disable all interrupts
+  18:./board/irq.h ****  * @return  Previous interrupt state (for restore)
+  19:./board/irq.h ****  */
+  20:./board/irq.h **** static inline uint32_t irq_disable(void)
+ 441              		.loc 2 20 24 view .LVU44
+ 442              	.LBB13:
+  21:./board/irq.h **** {
+  22:./board/irq.h ****     uint32_t primask;
+ 443              		.loc 2 22 5 view .LVU45
+  23:./board/irq.h ****     __asm__ __volatile__(
+ 444              		.loc 2 23 5 view .LVU46
+ 445              		.syntax unified
+ 446              	@ 23 "./board/irq.h" 1
+ 447 0000 EFF31080 		mrs r0, primask
+ 448 0004 72B6     	cpsid i
+ 449              	
+ 450              	@ 0 "" 2
+ 451              	.LVL9:
+  24:./board/irq.h ****         "mrs %0, primask\n"
+  25:./board/irq.h ****         "cpsid i\n"
+  26:./board/irq.h ****         : "=r" (primask)
+  27:./board/irq.h ****         :
+  28:./board/irq.h ****         : "memory"
+  29:./board/irq.h ****     );
+  30:./board/irq.h ****     return primask;
+ 452              		.loc 2 30 5 view .LVU47
+ 453              		.loc 2 30 5 is_stmt 0 view .LVU48
+ 454              		.thumb
+ 455              		.syntax unified
+ 456              	.LBE13:
+ 457              	.LBE12:
+  92:app/main.c    **** 
+ 458              		.loc 1 92 1 view .LVU49
+ 459 0006 7047     		bx	lr
+ 460              		.cfi_endproc
+ 461              	.LFE18:
+ 463              		.section	.rodata.board_init.str1.4,"aMS",%progbits,1
+ 464              		.align	2
+ 465              	.LC1:
+ 466 0000 0D0A00   		.ascii	"\015\012\000"
+ 467 0003 00       		.align	2
+ARM GAS  /tmp/cc8jU0Eq.s 			page 18
+
+
+ 468              	.LC2:
+ 469 0004 3D3D3D3D 		.ascii	"========================================\015\012\000"
+ 469      3D3D3D3D 
+ 469      3D3D3D3D 
+ 469      3D3D3D3D 
+ 469      3D3D3D3D 
+ 470 002f 00       		.align	2
+ 471              	.LC3:
+ 472 0030 20204B6C 		.ascii	"  Klipper MCU Firmware v0.1.0-mvp\015\012\000"
+ 472      69707065 
+ 472      72204D43 
+ 472      55204669 
+ 472      726D7761 
+ 473              		.align	2
+ 474              	.LC4:
+ 475 0054 20204275 		.ascii	"  Build: Jan 28 2026 11:16:41\015\012\000"
+ 475      696C643A 
+ 475      204A616E 
+ 475      20323820 
+ 475      32303236 
+ 476              		.align	2
+ 477              	.LC5:
+ 478 0074 426F6172 		.ascii	"Board initialized.\015\012\000"
+ 478      6420696E 
+ 478      69746961 
+ 478      6C697A65 
+ 478      642E0D0A 
+ 479              		.section	.text.board_init,"ax",%progbits
+ 480              		.align	1
+ 481              		.p2align 2,,3
+ 482              		.global	board_init
+ 483              		.syntax unified
+ 484              		.thumb
+ 485              		.thumb_func
+ 486              		.fpu fpv4-sp-d16
+ 488              	board_init:
+ 489              	.LFB22:
+ 371:app/main.c    ****     /* 系统初始化 (时钟、GPIO) */
+ 490              		.loc 1 371 1 is_stmt 1 view -0
+ 491              		.cfi_startproc
+ 492              		@ args = 0, pretend = 0, frame = 0
+ 493              		@ frame_needed = 0, uses_anonymous_args = 0
+ 373:app/main.c    ****     
+ 494              		.loc 1 373 5 view .LVU51
+ 371:app/main.c    ****     /* 系统初始化 (时钟、GPIO) */
+ 495              		.loc 1 371 1 is_stmt 0 view .LVU52
+ 496 0000 10B5     		push	{r4, lr}
+ 497              		.cfi_def_cfa_offset 8
+ 498              		.cfi_offset 4, -8
+ 499              		.cfi_offset 14, -4
+ 380:app/main.c    ****     serial_puts("  Klipper MCU Firmware v" CONFIG_VERSION "\r\n");
+ 500              		.loc 1 380 5 view .LVU53
+ 501 0002 0C4C     		ldr	r4, .L20
+ 373:app/main.c    ****     
+ 502              		.loc 1 373 5 view .LVU54
+ 503 0004 FFF7FEFF 		bl	system_init
+ 504              	.LVL10:
+ARM GAS  /tmp/cc8jU0Eq.s 			page 19
+
+
+ 376:app/main.c    ****     
+ 505              		.loc 1 376 5 is_stmt 1 view .LVU55
+ 506 0008 FFF7FEFF 		bl	serial_init
+ 507              	.LVL11:
+ 379:app/main.c    ****     serial_puts("========================================\r\n");
+ 508              		.loc 1 379 5 view .LVU56
+ 509 000c 0A48     		ldr	r0, .L20+4
+ 510 000e FFF7FEFF 		bl	serial_puts
+ 511              	.LVL12:
+ 380:app/main.c    ****     serial_puts("  Klipper MCU Firmware v" CONFIG_VERSION "\r\n");
+ 512              		.loc 1 380 5 view .LVU57
+ 513 0012 2046     		mov	r0, r4
+ 514 0014 FFF7FEFF 		bl	serial_puts
+ 515              	.LVL13:
+ 381:app/main.c    ****     serial_puts("  Build: " CONFIG_BUILD_DATE " " CONFIG_BUILD_TIME "\r\n");
+ 516              		.loc 1 381 5 view .LVU58
+ 517 0018 0848     		ldr	r0, .L20+8
+ 518 001a FFF7FEFF 		bl	serial_puts
+ 519              	.LVL14:
+ 382:app/main.c    ****     serial_puts("========================================\r\n");
+ 520              		.loc 1 382 5 view .LVU59
+ 521 001e 0848     		ldr	r0, .L20+12
+ 522 0020 FFF7FEFF 		bl	serial_puts
+ 523              	.LVL15:
+ 383:app/main.c    ****     serial_puts("Board initialized.\r\n");
+ 524              		.loc 1 383 5 view .LVU60
+ 525 0024 2046     		mov	r0, r4
+ 526 0026 FFF7FEFF 		bl	serial_puts
+ 527              	.LVL16:
+ 384:app/main.c    ****     
+ 528              		.loc 1 384 5 view .LVU61
+ 529 002a 0648     		ldr	r0, .L20+16
+ 530 002c FFF7FEFF 		bl	serial_puts
+ 531              	.LVL17:
+ 386:app/main.c    **** }
+ 532              		.loc 1 386 5 view .LVU62
+ 387:app/main.c    **** 
+ 533              		.loc 1 387 1 is_stmt 0 view .LVU63
+ 534 0030 0020     		movs	r0, #0
+ 535 0032 10BD     		pop	{r4, pc}
+ 536              	.L21:
+ 537              		.align	2
+ 538              	.L20:
+ 539 0034 04000000 		.word	.LC2
+ 540 0038 00000000 		.word	.LC1
+ 541 003c 30000000 		.word	.LC3
+ 542 0040 54000000 		.word	.LC4
+ 543 0044 74000000 		.word	.LC5
+ 544              		.cfi_endproc
+ 545              	.LFE22:
+ 547              		.section	.rodata.main.str1.4,"aMS",%progbits,1
+ 548              		.align	2
+ 549              	.LC6:
+ 550 0000 53636865 		.ascii	"Scheduler initialized.\015\012\000"
+ 550      64756C65 
+ 550      7220696E 
+ 550      69746961 
+ARM GAS  /tmp/cc8jU0Eq.s 			page 20
+
+
+ 550      6C697A65 
+ 551 0019 000000   		.align	2
+ 552              	.LC7:
+ 553 001c 546F6F6C 		.ascii	"Toolhead initialized.\015\012\000"
+ 553      68656164 
+ 553      20696E69 
+ 553      7469616C 
+ 553      697A6564 
+ 554              		.align	2
+ 555              	.LC8:
+ 556 0034 48656174 		.ascii	"Heater initialized.\015\012\000"
+ 556      65722069 
+ 556      6E697469 
+ 556      616C697A 
+ 556      65642E0D 
+ 557 004a 0000     		.align	2
+ 558              	.LC9:
+ 559 004c 46616E20 		.ascii	"Fan initialized.\015\012\000"
+ 559      696E6974 
+ 559      69616C69 
+ 559      7A65642E 
+ 559      0D0A00
+ 560 005f 00       		.align	2
+ 561              	.LC10:
+ 562 0060 472D636F 		.ascii	"G-code parser initialized.\015\012\000"
+ 562      64652070 
+ 562      61727365 
+ 562      7220696E 
+ 562      69746961 
+ 563 007d 000000   		.align	2
+ 564              	.LC11:
+ 565 0080 0D0A5379 		.ascii	"\015\012System ready. Entering main loop...\015\012"
+ 565      7374656D 
+ 565      20726561 
+ 565      64792E20 
+ 565      456E7465 
+ 566 00a7 00       		.ascii	"\000"
+ 567              		.align	2
+ 568              	.LC12:
+ 569 00a8 6F6B0D0A 		.ascii	"ok\015\012\000"
+ 569      00
+ 570 00ad 000000   		.align	2
+ 571              	.LC13:
+ 572 00b0 0D0A2121 		.ascii	"\015\012!!! System shutdown !!!\015\012\000"
+ 572      21205379 
+ 572      7374656D 
+ 572      20736875 
+ 572      74646F77 
+ 573              		.section	.text.startup.main,"ax",%progbits
+ 574              		.align	1
+ 575              		.p2align 2,,3
+ 576              		.global	main
+ 577              		.syntax unified
+ 578              		.thumb
+ 579              		.thumb_func
+ 580              		.fpu fpv4-sp-d16
+ 582              	main:
+ARM GAS  /tmp/cc8jU0Eq.s 			page 21
+
+
+ 583              	.LFB26:
+ 446:app/main.c    ****     }
+ 447:app/main.c    **** }
+ 448:app/main.c    **** 
+ 449:app/main.c    **** /**
+ 450:app/main.c    ****  * @brief   主函数
+ 451:app/main.c    ****  * 
+ 452:app/main.c    ****  * 程序入口点，初始化系统并进入主循环
+ 453:app/main.c    ****  * 
+ 454:app/main.c    ****  * @retval  0 (永不返回)
+ 455:app/main.c    ****  */
+ 456:app/main.c    **** int
+ 457:app/main.c    **** main(void)
+ 458:app/main.c    **** {
+ 584              		.loc 1 458 1 is_stmt 1 view -0
+ 585              		.cfi_startproc
+ 586              		@ Volatile: function does not return.
+ 587              		@ args = 0, pretend = 0, frame = 0
+ 588              		@ frame_needed = 0, uses_anonymous_args = 0
+ 459:app/main.c    ****     /* 硬件初始化 */
+ 460:app/main.c    ****     board_init();
+ 589              		.loc 1 460 5 view .LVU65
+ 458:app/main.c    ****     /* 硬件初始化 */
+ 590              		.loc 1 458 1 is_stmt 0 view .LVU66
+ 591 0000 08B5     		push	{r3, lr}
+ 592              		.cfi_def_cfa_offset 8
+ 593              		.cfi_offset 3, -8
+ 594              		.cfi_offset 14, -4
+ 595              		.loc 1 460 5 view .LVU67
+ 596 0002 FFF7FEFF 		bl	board_init
+ 597              	.LVL18:
+ 461:app/main.c    ****     
+ 462:app/main.c    ****     /* 调度器初始化 */
+ 463:app/main.c    ****     sched_init();
+ 598              		.loc 1 463 5 is_stmt 1 view .LVU68
+ 599 0006 FFF7FEFF 		bl	sched_init
+ 600              	.LVL19:
+ 464:app/main.c    ****     serial_puts("Scheduler initialized.\r\n");
+ 601              		.loc 1 464 5 view .LVU69
+ 602 000a 1B48     		ldr	r0, .L48
+ 603 000c FFF7FEFF 		bl	serial_puts
+ 604              	.LVL20:
+ 465:app/main.c    ****     
+ 466:app/main.c    ****     /* 模块初始化 (弱符号，后续任务实现) */
+ 467:app/main.c    ****     if (toolhead_init) {
+ 605              		.loc 1 467 5 view .LVU70
+ 606              		.loc 1 467 8 is_stmt 0 view .LVU71
+ 607 0010 1A4B     		ldr	r3, .L48+4
+ 608 0012 23B1     		cbz	r3, .L23
+ 468:app/main.c    ****         toolhead_init();
+ 609              		.loc 1 468 9 is_stmt 1 view .LVU72
+ 610 0014 FFF7FEFF 		bl	toolhead_init
+ 611              	.LVL21:
+ 469:app/main.c    ****         serial_puts("Toolhead initialized.\r\n");
+ 612              		.loc 1 469 9 view .LVU73
+ 613 0018 1948     		ldr	r0, .L48+8
+ 614 001a FFF7FEFF 		bl	serial_puts
+ARM GAS  /tmp/cc8jU0Eq.s 			page 22
+
+
+ 615              	.LVL22:
+ 616              	.L23:
+ 470:app/main.c    ****     }
+ 471:app/main.c    ****     
+ 472:app/main.c    ****     if (heater_init) {
+ 617              		.loc 1 472 5 view .LVU74
+ 618              		.loc 1 472 8 is_stmt 0 view .LVU75
+ 619 001e 194B     		ldr	r3, .L48+12
+ 620 0020 23B1     		cbz	r3, .L24
+ 473:app/main.c    ****         heater_init();
+ 621              		.loc 1 473 9 is_stmt 1 view .LVU76
+ 622 0022 FFF7FEFF 		bl	heater_init
+ 623              	.LVL23:
+ 474:app/main.c    ****         serial_puts("Heater initialized.\r\n");
+ 624              		.loc 1 474 9 view .LVU77
+ 625 0026 1848     		ldr	r0, .L48+16
+ 626 0028 FFF7FEFF 		bl	serial_puts
+ 627              	.LVL24:
+ 628              	.L24:
+ 475:app/main.c    ****     }
+ 476:app/main.c    ****     
+ 477:app/main.c    ****     if (fan_init) {
+ 629              		.loc 1 477 5 view .LVU78
+ 630              		.loc 1 477 8 is_stmt 0 view .LVU79
+ 631 002c 174B     		ldr	r3, .L48+20
+ 632 002e 23B1     		cbz	r3, .L25
+ 478:app/main.c    ****         fan_init();
+ 633              		.loc 1 478 9 is_stmt 1 view .LVU80
+ 634 0030 FFF7FEFF 		bl	fan_init
+ 635              	.LVL25:
+ 479:app/main.c    ****         serial_puts("Fan initialized.\r\n");
+ 636              		.loc 1 479 9 view .LVU81
+ 637 0034 1648     		ldr	r0, .L48+24
+ 638 0036 FFF7FEFF 		bl	serial_puts
+ 639              	.LVL26:
+ 640              	.L25:
+ 480:app/main.c    ****     }
+ 481:app/main.c    ****     
+ 482:app/main.c    ****     if (gcode_init) {
+ 641              		.loc 1 482 5 view .LVU82
+ 642              		.loc 1 482 8 is_stmt 0 view .LVU83
+ 643 003a 164B     		ldr	r3, .L48+28
+ 644 003c 23B1     		cbz	r3, .L26
+ 483:app/main.c    ****         gcode_init();
+ 645              		.loc 1 483 9 is_stmt 1 view .LVU84
+ 646 003e FFF7FEFF 		bl	gcode_init
+ 647              	.LVL27:
+ 484:app/main.c    ****         serial_puts("G-code parser initialized.\r\n");
+ 648              		.loc 1 484 9 view .LVU85
+ 649 0042 1548     		ldr	r0, .L48+32
+ 650 0044 FFF7FEFF 		bl	serial_puts
+ 651              	.LVL28:
+ 652              	.L26:
+ 485:app/main.c    ****     }
+ 486:app/main.c    ****     
+ 487:app/main.c    ****     /* 系统就绪 */
+ 488:app/main.c    ****     s_system_ready = 1;
+ARM GAS  /tmp/cc8jU0Eq.s 			page 23
+
+
+ 653              		.loc 1 488 5 view .LVU86
+ 654              		.loc 1 488 20 is_stmt 0 view .LVU87
+ 655 0048 144B     		ldr	r3, .L48+36
+ 489:app/main.c    ****     serial_puts("\r\nSystem ready. Entering main loop...\r\n");
+ 656              		.loc 1 489 5 view .LVU88
+ 657 004a 1548     		ldr	r0, .L48+40
+ 658 004c 154C     		ldr	r4, .L48+44
+ 488:app/main.c    ****     serial_puts("\r\nSystem ready. Entering main loop...\r\n");
+ 659              		.loc 1 488 20 view .LVU89
+ 660 004e 0122     		movs	r2, #1
+ 661 0050 1A70     		strb	r2, [r3]
+ 662              		.loc 1 489 5 is_stmt 1 view .LVU90
+ 663 0052 FFF7FEFF 		bl	serial_puts
+ 664              	.LVL29:
+ 490:app/main.c    ****     serial_puts("ok\r\n");
+ 665              		.loc 1 490 5 view .LVU91
+ 666 0056 1448     		ldr	r0, .L48+48
+ 667 0058 FFF7FEFF 		bl	serial_puts
+ 668              	.LVL30:
+ 669              	.L28:
+ 491:app/main.c    ****     
+ 492:app/main.c    ****     /* 主循环 */
+ 493:app/main.c    ****     for (;;) {
+ 670              		.loc 1 493 5 view .LVU92
+ 494:app/main.c    ****         /* 调度器主循环 - 处理定时器回调 */
+ 495:app/main.c    ****         sched_main();
+ 671              		.loc 1 495 9 view .LVU93
+ 672 005c FFF7FEFF 		bl	sched_main
+ 673              	.LVL31:
+ 496:app/main.c    ****         
+ 497:app/main.c    ****         /* 处理 G-code 输入 (弱符号，后续任务实现) */
+ 498:app/main.c    ****         if (gcode_process) {
+ 674              		.loc 1 498 9 view .LVU94
+ 499:app/main.c    ****             gcode_process();
+ 675              		.loc 1 499 13 view .LVU95
+ 498:app/main.c    ****             gcode_process();
+ 676              		.loc 1 498 12 is_stmt 0 view .LVU96
+ 677 0060 0CB1     		cbz	r4, .L27
+ 678              		.loc 1 499 13 view .LVU97
+ 679 0062 FFF7FEFF 		bl	gcode_process
+ 680              	.LVL32:
+ 681              	.L27:
+ 500:app/main.c    ****         }
+ 501:app/main.c    ****         
+ 502:app/main.c    ****         /* 检查系统是否关闭 */
+ 503:app/main.c    ****         if (sched_is_shutdown()) {
+ 682              		.loc 1 503 9 is_stmt 1 view .LVU98
+ 683              		.loc 1 503 13 is_stmt 0 view .LVU99
+ 684 0066 FFF7FEFF 		bl	sched_is_shutdown
+ 685              	.LVL33:
+ 686              		.loc 1 503 12 view .LVU100
+ 687 006a 0028     		cmp	r0, #0
+ 688 006c F6D0     		beq	.L28
+ 504:app/main.c    ****             serial_puts("\r\n!!! System shutdown !!!\r\n");
+ 689              		.loc 1 504 13 is_stmt 1 view .LVU101
+ 690 006e 0F48     		ldr	r0, .L48+52
+ 691 0070 FFF7FEFF 		bl	serial_puts
+ARM GAS  /tmp/cc8jU0Eq.s 			page 24
+
+
+ 692              	.LVL34:
+ 505:app/main.c    ****             break;
+ 693              		.loc 1 505 13 view .LVU102
+ 694              	.L29:
+ 506:app/main.c    ****         }
+ 507:app/main.c    ****     }
+ 508:app/main.c    ****     
+ 509:app/main.c    ****     /* 系统关闭后进入低功耗等待 */
+ 510:app/main.c    ****     for (;;) {
+ 695              		.loc 1 510 5 discriminator 1 view .LVU103
+ 511:app/main.c    ****         __asm__ __volatile__("wfi");
+ 696              		.loc 1 511 9 discriminator 1 view .LVU104
+ 697              		.syntax unified
+ 698              	@ 511 "app/main.c" 1
+ 699 0074 30BF     		wfi
+ 700              	@ 0 "" 2
+ 510:app/main.c    ****         __asm__ __volatile__("wfi");
+ 701              		.loc 1 510 11 discriminator 1 view .LVU105
+ 702              		.thumb
+ 703              		.syntax unified
+ 704 0076 FDE7     		b	.L29
+ 705              	.L49:
+ 706              		.align	2
+ 707              	.L48:
+ 708 0078 00000000 		.word	.LC6
+ 709 007c 00000000 		.word	toolhead_init
+ 710 0080 1C000000 		.word	.LC7
+ 711 0084 00000000 		.word	heater_init
+ 712 0088 34000000 		.word	.LC8
+ 713 008c 00000000 		.word	fan_init
+ 714 0090 4C000000 		.word	.LC9
+ 715 0094 00000000 		.word	gcode_init
+ 716 0098 60000000 		.word	.LC10
+ 717 009c 00000000 		.word	.LANCHOR0
+ 718 00a0 80000000 		.word	.LC11
+ 719 00a4 00000000 		.word	gcode_process
+ 720 00a8 A8000000 		.word	.LC12
+ 721 00ac B0000000 		.word	.LC13
+ 722              		.cfi_endproc
+ 723              	.LFE26:
+ 725              		.section	.text.Reset_Handler,"ax",%progbits
+ 726              		.align	1
+ 727              		.p2align 2,,3
+ 728              		.global	Reset_Handler
+ 729              		.syntax unified
+ 730              		.thumb
+ 731              		.thumb_func
+ 732              		.fpu fpv4-sp-d16
+ 734              	Reset_Handler:
+ 735              	.LFB23:
+ 400:app/main.c    ****     /* 初始化 BSS 段 (清零) */
+ 736              		.loc 1 400 1 view -0
+ 737              		.cfi_startproc
+ 738              		@ Volatile: function does not return.
+ 739              		@ args = 0, pretend = 0, frame = 0
+ 740              		@ frame_needed = 0, uses_anonymous_args = 0
+ 402:app/main.c    ****     
+ARM GAS  /tmp/cc8jU0Eq.s 			page 25
+
+
+ 741              		.loc 1 402 5 view .LVU107
+ 742              	.LBB14:
+ 743              	.LBI14:
+ 311:app/main.c    **** {
+ 744              		.loc 1 311 1 view .LVU108
+ 745              	.LBB15:
+ 313:app/main.c    ****     extern uint32_t _ebss;
+ 746              		.loc 1 313 5 view .LVU109
+ 314:app/main.c    ****     
+ 747              		.loc 1 314 5 view .LVU110
+ 316:app/main.c    ****     while (p_dst < &_ebss) {
+ 748              		.loc 1 316 5 view .LVU111
+ 749              	.LVL35:
+ 317:app/main.c    ****         *p_dst++ = 0;
+ 750              		.loc 1 317 5 view .LVU112
+ 317:app/main.c    ****         *p_dst++ = 0;
+ 751              		.loc 1 317 11 view .LVU113
+ 752 0000 1348     		ldr	r0, .L54
+ 753 0002 144A     		ldr	r2, .L54+4
+ 754 0004 9042     		cmp	r0, r2
+ 755              	.LBE15:
+ 756              	.LBE14:
+ 400:app/main.c    ****     /* 初始化 BSS 段 (清零) */
+ 757              		.loc 1 400 1 is_stmt 0 view .LVU114
+ 758 0006 08B5     		push	{r3, lr}
+ 759              		.cfi_def_cfa_offset 8
+ 760              		.cfi_offset 3, -8
+ 761              		.cfi_offset 14, -4
+ 762              	.LBB17:
+ 763              	.LBB16:
+ 317:app/main.c    ****         *p_dst++ = 0;
+ 764              		.loc 1 317 11 view .LVU115
+ 765 0008 07D2     		bcs	.L51
+ 318:app/main.c    ****     }
+ 766              		.loc 1 318 18 view .LVU116
+ 767 000a 013A     		subs	r2, r2, #1
+ 768 000c 121A     		subs	r2, r2, r0
+ 769 000e 22F00302 		bic	r2, r2, #3
+ 770 0012 0432     		adds	r2, r2, #4
+ 771 0014 0021     		movs	r1, #0
+ 772 0016 FFF7FEFF 		bl	memset
+ 773              	.LVL36:
+ 774              	.L51:
+ 318:app/main.c    ****     }
+ 775              		.loc 1 318 18 view .LVU117
+ 776              	.LBE16:
+ 777              	.LBE17:
+ 778              	.LBB18:
+ 779              	.LBB19:
+ 335:app/main.c    ****         *p_dst++ = *p_src++;
+ 780              		.loc 1 335 11 is_stmt 1 view .LVU118
+ 781 001a 0F48     		ldr	r0, .L54+8
+ 782 001c 0F4A     		ldr	r2, .L54+12
+ 783 001e 9042     		cmp	r0, r2
+ 784 0020 07D2     		bcs	.L52
+ 336:app/main.c    ****     }
+ 785              		.loc 1 336 18 is_stmt 0 view .LVU119
+ARM GAS  /tmp/cc8jU0Eq.s 			page 26
+
+
+ 786 0022 013A     		subs	r2, r2, #1
+ 787 0024 121A     		subs	r2, r2, r0
+ 788 0026 22F00302 		bic	r2, r2, #3
+ 789 002a 0D49     		ldr	r1, .L54+16
+ 790 002c 0432     		adds	r2, r2, #4
+ 791 002e FFF7FEFF 		bl	memcpy
+ 792              	.LVL37:
+ 793              	.L52:
+ 336:app/main.c    ****     }
+ 794              		.loc 1 336 18 view .LVU120
+ 795              	.LBE19:
+ 796              	.LBE18:
+ 408:app/main.c    ****     
+ 797              		.loc 1 408 5 is_stmt 1 view .LVU121
+ 798              	.LBB20:
+ 799              	.LBI20:
+ 344:app/main.c    **** {
+ 800              		.loc 1 344 1 view .LVU122
+ 801              	.LBB21:
+ 348:app/main.c    ****     *p_cpacr |= ((3UL << 20) | (3UL << 22));
+ 802              		.loc 1 348 5 view .LVU123
+ 349:app/main.c    ****     
+ 803              		.loc 1 349 5 view .LVU124
+ 349:app/main.c    ****     
+ 804              		.loc 1 349 14 is_stmt 0 view .LVU125
+ 805 0032 4FF0E022 		mov	r2, #-536813568
+ 806 0036 D2F8883D 		ldr	r3, [r2, #3464]
+ 807 003a 43F47003 		orr	r3, r3, #15728640
+ 808 003e C2F8883D 		str	r3, [r2, #3464]
+ 352:app/main.c    ****     __asm__ __volatile__("isb" ::: "memory");
+ 809              		.loc 1 352 5 is_stmt 1 view .LVU126
+ 810              		.syntax unified
+ 811              	@ 352 "app/main.c" 1
+ 812 0042 BFF34F8F 		dsb
+ 813              	@ 0 "" 2
+ 353:app/main.c    **** }
+ 814              		.loc 1 353 5 view .LVU127
+ 815              	@ 353 "app/main.c" 1
+ 816 0046 BFF36F8F 		isb
+ 817              	@ 0 "" 2
+ 818              		.thumb
+ 819              		.syntax unified
+ 820              	.LBE21:
+ 821              	.LBE20:
+ 411:app/main.c    ****     main();
+ 822              		.loc 1 411 5 view .LVU128
+ 412:app/main.c    ****     
+ 823              		.loc 1 412 5 view .LVU129
+ 824 004a FFF7FEFF 		bl	main
+ 825              	.LVL38:
+ 826              	.L55:
+ 827 004e 00BF     		.align	2
+ 828              	.L54:
+ 829 0050 00000000 		.word	_sbss
+ 830 0054 00000000 		.word	_ebss
+ 831 0058 00000000 		.word	_sdata
+ 832 005c 00000000 		.word	_edata
+ARM GAS  /tmp/cc8jU0Eq.s 			page 27
+
+
+ 833 0060 00000000 		.word	_sidata
+ 834              		.cfi_endproc
+ 835              	.LFE23:
+ 837              		.section	.text.debug_putc,"ax",%progbits
+ 838              		.align	1
+ 839              		.p2align 2,,3
+ 840              		.global	debug_putc
+ 841              		.syntax unified
+ 842              		.thumb
+ 843              		.thumb_func
+ 844              		.fpu fpv4-sp-d16
+ 846              	debug_putc:
+ 847              	.LVL39:
+ 848              	.LFB27:
+ 512:app/main.c    ****     }
+ 513:app/main.c    ****     
+ 514:app/main.c    ****     return 0;
+ 515:app/main.c    **** }
+ 516:app/main.c    **** 
+ 517:app/main.c    **** /* ========== 调试输出函数 ========== */
+ 518:app/main.c    **** 
+ 519:app/main.c    **** /**
+ 520:app/main.c    ****  * @brief   输出调试字符
+ 521:app/main.c    ****  * @param   c   字符
+ 522:app/main.c    ****  */
+ 523:app/main.c    **** void
+ 524:app/main.c    **** debug_putc(char c)
+ 525:app/main.c    **** {
+ 849              		.loc 1 525 1 view -0
+ 850              		.cfi_startproc
+ 851              		@ args = 0, pretend = 0, frame = 0
+ 852              		@ frame_needed = 0, uses_anonymous_args = 0
+ 853              		@ link register save eliminated.
+ 526:app/main.c    ****     serial_putc((uint8_t)c);
+ 854              		.loc 1 526 5 view .LVU131
+ 855 0000 FFF7FEBF 		b	serial_putc
+ 856              	.LVL40:
+ 857              		.loc 1 526 5 is_stmt 0 view .LVU132
+ 858              		.cfi_endproc
+ 859              	.LFE27:
+ 861              		.section	.text.debug_puts,"ax",%progbits
+ 862              		.align	1
+ 863              		.p2align 2,,3
+ 864              		.global	debug_puts
+ 865              		.syntax unified
+ 866              		.thumb
+ 867              		.thumb_func
+ 868              		.fpu fpv4-sp-d16
+ 870              	debug_puts:
+ 871              	.LVL41:
+ 872              	.LFB28:
+ 527:app/main.c    **** }
+ 528:app/main.c    **** 
+ 529:app/main.c    **** /**
+ 530:app/main.c    ****  * @brief   输出调试字符串
+ 531:app/main.c    ****  * @param   str 字符串
+ 532:app/main.c    ****  */
+ARM GAS  /tmp/cc8jU0Eq.s 			page 28
+
+
+ 533:app/main.c    **** void
+ 534:app/main.c    **** debug_puts(const char* str)
+ 535:app/main.c    **** {
+ 873              		.loc 1 535 1 is_stmt 1 view -0
+ 874              		.cfi_startproc
+ 875              		@ args = 0, pretend = 0, frame = 0
+ 876              		@ frame_needed = 0, uses_anonymous_args = 0
+ 877              		@ link register save eliminated.
+ 536:app/main.c    ****     serial_puts(str);
+ 878              		.loc 1 536 5 view .LVU134
+ 879 0000 FFF7FEBF 		b	serial_puts
+ 880              	.LVL42:
+ 881              		.loc 1 536 5 is_stmt 0 view .LVU135
+ 882              		.cfi_endproc
+ 883              	.LFE28:
+ 885              		.section	.text.debug_hex,"ax",%progbits
+ 886              		.align	1
+ 887              		.p2align 2,,3
+ 888              		.global	debug_hex
+ 889              		.syntax unified
+ 890              		.thumb
+ 891              		.thumb_func
+ 892              		.fpu fpv4-sp-d16
+ 894              	debug_hex:
+ 895              	.LVL43:
+ 896              	.LFB29:
+ 537:app/main.c    **** }
+ 538:app/main.c    **** 
+ 539:app/main.c    **** /**
+ 540:app/main.c    ****  * @brief   输出调试十六进制值
+ 541:app/main.c    ****  * @param   val 值
+ 542:app/main.c    ****  */
+ 543:app/main.c    **** void
+ 544:app/main.c    **** debug_hex(uint32_t val)
+ 545:app/main.c    **** {
+ 897              		.loc 1 545 1 is_stmt 1 view -0
+ 898              		.cfi_startproc
+ 899              		@ args = 0, pretend = 0, frame = 16
+ 900              		@ frame_needed = 0, uses_anonymous_args = 0
+ 546:app/main.c    ****     static const char hex_chars[] = "0123456789ABCDEF";
+ 901              		.loc 1 546 5 view .LVU137
+ 547:app/main.c    ****     char buf[11];
+ 902              		.loc 1 547 5 view .LVU138
+ 548:app/main.c    ****     int i;
+ 903              		.loc 1 548 5 view .LVU139
+ 549:app/main.c    ****     
+ 550:app/main.c    ****     buf[0] = '0';
+ 904              		.loc 1 550 5 view .LVU140
+ 545:app/main.c    ****     static const char hex_chars[] = "0123456789ABCDEF";
+ 905              		.loc 1 545 1 is_stmt 0 view .LVU141
+ 906 0000 10B5     		push	{r4, lr}
+ 907              		.cfi_def_cfa_offset 8
+ 908              		.cfi_offset 4, -8
+ 909              		.cfi_offset 14, -4
+ 910 0002 84B0     		sub	sp, sp, #16
+ 911              		.cfi_def_cfa_offset 24
+ 551:app/main.c    ****     buf[1] = 'x';
+ARM GAS  /tmp/cc8jU0Eq.s 			page 29
+
+
+ 912              		.loc 1 551 12 view .LVU142
+ 913 0004 7823     		movs	r3, #120
+ 550:app/main.c    ****     buf[1] = 'x';
+ 914              		.loc 1 550 12 view .LVU143
+ 915 0006 3022     		movs	r2, #48
+ 916 0008 0C4C     		ldr	r4, .L62
+ 917              		.loc 1 551 12 view .LVU144
+ 918 000a 8DF80530 		strb	r3, [sp, #5]
+ 550:app/main.c    ****     buf[1] = 'x';
+ 919              		.loc 1 550 12 view .LVU145
+ 920 000e 8DF80420 		strb	r2, [sp, #4]
+ 921              		.loc 1 551 5 is_stmt 1 view .LVU146
+ 552:app/main.c    ****     
+ 553:app/main.c    ****     for (i = 0; i < 8; i++) {
+ 922              		.loc 1 553 5 view .LVU147
+ 923              	.LVL44:
+ 924              		.loc 1 553 17 view .LVU148
+ 925 0012 0DF10D03 		add	r3, sp, #13
+ 926 0016 0DF10501 		add	r1, sp, #5
+ 927              	.LVL45:
+ 928              	.L59:
+ 554:app/main.c    ****         buf[9 - i] = hex_chars[val & 0x0F];
+ 929              		.loc 1 554 9 discriminator 3 view .LVU149
+ 930              		.loc 1 554 36 is_stmt 0 discriminator 3 view .LVU150
+ 931 001a 00F00F02 		and	r2, r0, #15
+ 555:app/main.c    ****         val >>= 4;
+ 932              		.loc 1 555 13 discriminator 3 view .LVU151
+ 933 001e 0009     		lsrs	r0, r0, #4
+ 934              	.LVL46:
+ 554:app/main.c    ****         buf[9 - i] = hex_chars[val & 0x0F];
+ 935              		.loc 1 554 20 discriminator 3 view .LVU152
+ 936 0020 A25C     		ldrb	r2, [r4, r2]	@ zero_extendqisi2
+ 937 0022 03F80129 		strb	r2, [r3], #-1
+ 938              	.LVL47:
+ 939              		.loc 1 555 9 is_stmt 1 discriminator 3 view .LVU153
+ 553:app/main.c    ****         buf[9 - i] = hex_chars[val & 0x0F];
+ 940              		.loc 1 553 24 discriminator 3 view .LVU154
+ 553:app/main.c    ****         buf[9 - i] = hex_chars[val & 0x0F];
+ 941              		.loc 1 553 17 discriminator 3 view .LVU155
+ 553:app/main.c    ****         buf[9 - i] = hex_chars[val & 0x0F];
+ 942              		.loc 1 553 5 is_stmt 0 discriminator 3 view .LVU156
+ 943 0026 8B42     		cmp	r3, r1
+ 944 0028 F7D1     		bne	.L59
+ 556:app/main.c    ****     }
+ 557:app/main.c    ****     buf[10] = '\0';
+ 945              		.loc 1 557 5 is_stmt 1 view .LVU157
+ 946              		.loc 1 557 13 is_stmt 0 view .LVU158
+ 947 002a 0023     		movs	r3, #0
+ 948              	.LVL48:
+ 558:app/main.c    ****     
+ 559:app/main.c    ****     serial_puts(buf);
+ 949              		.loc 1 559 5 view .LVU159
+ 950 002c 01A8     		add	r0, sp, #4
+ 951              	.LVL49:
+ 557:app/main.c    ****     
+ 952              		.loc 1 557 13 view .LVU160
+ 953 002e 8DF80E30 		strb	r3, [sp, #14]
+ARM GAS  /tmp/cc8jU0Eq.s 			page 30
+
+
+ 954              		.loc 1 559 5 is_stmt 1 view .LVU161
+ 955 0032 FFF7FEFF 		bl	serial_puts
+ 956              	.LVL50:
+ 560:app/main.c    **** }
+ 957              		.loc 1 560 1 is_stmt 0 view .LVU162
+ 958 0036 04B0     		add	sp, sp, #16
+ 959              		.cfi_def_cfa_offset 8
+ 960              		@ sp needed
+ 961 0038 10BD     		pop	{r4, pc}
+ 962              	.L63:
+ 963              		.loc 1 560 1 view .LVU163
+ 964 003a 00BF     		.align	2
+ 965              	.L62:
+ 966 003c 00000000 		.word	.LANCHOR1
+ 967              		.cfi_endproc
+ 968              	.LFE29:
+ 970              		.section	.rodata.panic.str1.4,"aMS",%progbits,1
+ 971              		.align	2
+ 972              	.LC14:
+ 973 0000 0D0A2121 		.ascii	"\015\012!!! PANIC: \000"
+ 973      21205041 
+ 973      4E49433A 
+ 973      2000
+ 974 000e 0000     		.align	2
+ 975              	.LC15:
+ 976 0010 20212121 		.ascii	" !!!\015\012\000"
+ 976      0D0A00
+ 977              		.section	.text.panic,"ax",%progbits
+ 978              		.align	1
+ 979              		.p2align 2,,3
+ 980              		.global	panic
+ 981              		.syntax unified
+ 982              		.thumb
+ 983              		.thumb_func
+ 984              		.fpu fpv4-sp-d16
+ 986              	panic:
+ 987              	.LVL51:
+ 988              	.LFB30:
+ 561:app/main.c    **** 
+ 562:app/main.c    **** /**
+ 563:app/main.c    ****  * @brief   系统崩溃处理
+ 564:app/main.c    ****  * @param   msg 崩溃信息
+ 565:app/main.c    ****  */
+ 566:app/main.c    **** void
+ 567:app/main.c    **** panic(const char* msg)
+ 568:app/main.c    **** {
+ 989              		.loc 1 568 1 is_stmt 1 view -0
+ 990              		.cfi_startproc
+ 991              		@ Volatile: function does not return.
+ 992              		@ args = 0, pretend = 0, frame = 0
+ 993              		@ frame_needed = 0, uses_anonymous_args = 0
+ 569:app/main.c    ****     /* 禁用中断 */
+ 570:app/main.c    ****     irq_disable();
+ 994              		.loc 1 570 5 view .LVU165
+ 995              	.LBB22:
+ 996              	.LBI22:
+  20:./board/irq.h **** {
+ARM GAS  /tmp/cc8jU0Eq.s 			page 31
+
+
+ 997              		.loc 2 20 24 view .LVU166
+ 998              	.LBB23:
+  22:./board/irq.h ****     __asm__ __volatile__(
+ 999              		.loc 2 22 5 view .LVU167
+  23:./board/irq.h ****         "mrs %0, primask\n"
+ 1000              		.loc 2 23 5 view .LVU168
+ 1001              	.LBE23:
+ 1002              	.LBE22:
+ 568:app/main.c    ****     /* 禁用中断 */
+ 1003              		.loc 1 568 1 is_stmt 0 view .LVU169
+ 1004 0000 08B5     		push	{r3, lr}
+ 1005              		.cfi_def_cfa_offset 8
+ 1006              		.cfi_offset 3, -8
+ 1007              		.cfi_offset 14, -4
+ 568:app/main.c    ****     /* 禁用中断 */
+ 1008              		.loc 1 568 1 view .LVU170
+ 1009 0002 0446     		mov	r4, r0
+ 1010              	.LBB25:
+ 1011              	.LBB24:
+  23:./board/irq.h ****         "mrs %0, primask\n"
+ 1012              		.loc 2 23 5 view .LVU171
+ 1013              		.syntax unified
+ 1014              	@ 23 "./board/irq.h" 1
+ 1015 0004 EFF31083 		mrs r3, primask
+ 1016 0008 72B6     	cpsid i
+ 1017              	
+ 1018              	@ 0 "" 2
+ 1019              	.LVL52:
+ 1020              		.loc 2 30 5 is_stmt 1 view .LVU172
+ 1021              		.loc 2 30 5 is_stmt 0 view .LVU173
+ 1022              		.thumb
+ 1023              		.syntax unified
+ 1024              	.LBE24:
+ 1025              	.LBE25:
+ 571:app/main.c    ****     
+ 572:app/main.c    ****     /* 输出崩溃信息 */
+ 573:app/main.c    ****     serial_puts("\r\n!!! PANIC: ");
+ 1026              		.loc 1 573 5 is_stmt 1 view .LVU174
+ 1027 000a 0548     		ldr	r0, .L67
+ 1028              	.LVL53:
+ 1029              		.loc 1 573 5 is_stmt 0 view .LVU175
+ 1030 000c FFF7FEFF 		bl	serial_puts
+ 1031              	.LVL54:
+ 574:app/main.c    ****     serial_puts(msg);
+ 1032              		.loc 1 574 5 is_stmt 1 view .LVU176
+ 1033 0010 2046     		mov	r0, r4
+ 1034 0012 FFF7FEFF 		bl	serial_puts
+ 1035              	.LVL55:
+ 575:app/main.c    ****     serial_puts(" !!!\r\n");
+ 1036              		.loc 1 575 5 view .LVU177
+ 1037 0016 0348     		ldr	r0, .L67+4
+ 1038 0018 FFF7FEFF 		bl	serial_puts
+ 1039              	.LVL56:
+ 1040              	.L65:
+ 576:app/main.c    ****     
+ 577:app/main.c    ****     /* 进入死循环 */
+ 578:app/main.c    ****     for (;;) {
+ARM GAS  /tmp/cc8jU0Eq.s 			page 32
+
+
+ 1041              		.loc 1 578 5 discriminator 1 view .LVU178
+ 579:app/main.c    ****         __asm__ __volatile__("nop");
+ 1042              		.loc 1 579 9 discriminator 1 view .LVU179
+ 1043              		.syntax unified
+ 1044              	@ 579 "app/main.c" 1
+ 1045 001c 00BF     		nop
+ 1046              	@ 0 "" 2
+ 578:app/main.c    ****         __asm__ __volatile__("nop");
+ 1047              		.loc 1 578 11 discriminator 1 view .LVU180
+ 1048              		.thumb
+ 1049              		.syntax unified
+ 1050 001e FDE7     		b	.L65
+ 1051              	.L68:
+ 1052              		.align	2
+ 1053              	.L67:
+ 1054 0020 00000000 		.word	.LC14
+ 1055 0024 10000000 		.word	.LC15
+ 1056              		.cfi_endproc
+ 1057              	.LFE30:
+ 1059              		.global	g_vector_table
+ 1060              		.section	.bss.s_system_ready,"aw",%nobits
+ 1061              		.set	.LANCHOR0,. + 0
+ 1064              	s_system_ready:
+ 1065 0000 00       		.space	1
+ 1066              		.section	.isr_vector,"a"
+ 1067              		.align	2
+ 1070              	g_vector_table:
+ 1071 0000 00000000 		.word	_estack
+ 1072 0004 00000000 		.word	Reset_Handler
+ 1073 0008 00000000 		.word	NMI_Handler
+ 1074 000c 00000000 		.word	HardFault_Handler
+ 1075 0010 00000000 		.word	MemManage_Handler
+ 1076 0014 00000000 		.word	BusFault_Handler
+ 1077 0018 00000000 		.word	UsageFault_Handler
+ 1078 001c 00000000 		.word	0
+ 1079 0020 00000000 		.word	0
+ 1080 0024 00000000 		.word	0
+ 1081 0028 00000000 		.word	0
+ 1082 002c 00000000 		.word	SVC_Handler
+ 1083 0030 00000000 		.word	DebugMon_Handler
+ 1084 0034 00000000 		.word	0
+ 1085 0038 00000000 		.word	PendSV_Handler
+ 1086 003c 00000000 		.word	SysTick_Handler
+ 1087 0040 00000000 		.word	WWDG_IRQHandler
+ 1088 0044 00000000 		.word	PVD_IRQHandler
+ 1089 0048 00000000 		.word	TAMP_STAMP_IRQHandler
+ 1090 004c 00000000 		.word	RTC_WKUP_IRQHandler
+ 1091 0050 00000000 		.word	FLASH_IRQHandler
+ 1092 0054 00000000 		.word	RCC_IRQHandler
+ 1093 0058 00000000 		.word	EXTI0_IRQHandler
+ 1094 005c 00000000 		.word	EXTI1_IRQHandler
+ 1095 0060 00000000 		.word	EXTI2_IRQHandler
+ 1096 0064 00000000 		.word	EXTI3_IRQHandler
+ 1097 0068 00000000 		.word	EXTI4_IRQHandler
+ 1098 006c 00000000 		.word	DMA1_Stream0_IRQHandler
+ 1099 0070 00000000 		.word	DMA1_Stream1_IRQHandler
+ 1100 0074 00000000 		.word	DMA1_Stream2_IRQHandler
+ARM GAS  /tmp/cc8jU0Eq.s 			page 33
+
+
+ 1101 0078 00000000 		.word	DMA1_Stream3_IRQHandler
+ 1102 007c 00000000 		.word	DMA1_Stream4_IRQHandler
+ 1103 0080 00000000 		.word	DMA1_Stream5_IRQHandler
+ 1104 0084 00000000 		.word	DMA1_Stream6_IRQHandler
+ 1105 0088 00000000 		.word	ADC_IRQHandler
+ 1106 008c 00000000 		.word	CAN1_TX_IRQHandler
+ 1107 0090 00000000 		.word	CAN1_RX0_IRQHandler
+ 1108 0094 00000000 		.word	CAN1_RX1_IRQHandler
+ 1109 0098 00000000 		.word	CAN1_SCE_IRQHandler
+ 1110 009c 00000000 		.word	EXTI9_5_IRQHandler
+ 1111 00a0 00000000 		.word	TIM1_BRK_TIM9_IRQHandler
+ 1112 00a4 00000000 		.word	TIM1_UP_TIM10_IRQHandler
+ 1113 00a8 00000000 		.word	TIM1_TRG_COM_TIM11_IRQHandler
+ 1114 00ac 00000000 		.word	TIM1_CC_IRQHandler
+ 1115 00b0 00000000 		.word	TIM2_IRQHandler
+ 1116 00b4 00000000 		.word	TIM3_IRQHandler
+ 1117 00b8 00000000 		.word	TIM4_IRQHandler
+ 1118 00bc 00000000 		.word	I2C1_EV_IRQHandler
+ 1119 00c0 00000000 		.word	I2C1_ER_IRQHandler
+ 1120 00c4 00000000 		.word	I2C2_EV_IRQHandler
+ 1121 00c8 00000000 		.word	I2C2_ER_IRQHandler
+ 1122 00cc 00000000 		.word	SPI1_IRQHandler
+ 1123 00d0 00000000 		.word	SPI2_IRQHandler
+ 1124 00d4 00000000 		.word	USART1_IRQHandler
+ 1125 00d8 00000000 		.word	USART2_IRQHandler
+ 1126 00dc 00000000 		.word	USART3_IRQHandler
+ 1127 00e0 00000000 		.word	EXTI15_10_IRQHandler
+ 1128 00e4 00000000 		.word	RTC_Alarm_IRQHandler
+ 1129 00e8 00000000 		.word	OTG_FS_WKUP_IRQHandler
+ 1130 00ec 00000000 		.word	TIM8_BRK_TIM12_IRQHandler
+ 1131 00f0 00000000 		.word	TIM8_UP_TIM13_IRQHandler
+ 1132 00f4 00000000 		.word	TIM8_TRG_COM_TIM14_IRQHandler
+ 1133 00f8 00000000 		.word	TIM8_CC_IRQHandler
+ 1134 00fc 00000000 		.word	DMA1_Stream7_IRQHandler
+ 1135 0100 00000000 		.word	FSMC_IRQHandler
+ 1136 0104 00000000 		.word	SDIO_IRQHandler
+ 1137 0108 00000000 		.word	TIM5_IRQHandler
+ 1138 010c 00000000 		.word	SPI3_IRQHandler
+ 1139 0110 00000000 		.word	UART4_IRQHandler
+ 1140 0114 00000000 		.word	UART5_IRQHandler
+ 1141 0118 00000000 		.word	TIM6_DAC_IRQHandler
+ 1142 011c 00000000 		.word	TIM7_IRQHandler
+ 1143 0120 00000000 		.word	DMA2_Stream0_IRQHandler
+ 1144 0124 00000000 		.word	DMA2_Stream1_IRQHandler
+ 1145 0128 00000000 		.word	DMA2_Stream2_IRQHandler
+ 1146 012c 00000000 		.word	DMA2_Stream3_IRQHandler
+ 1147 0130 00000000 		.word	DMA2_Stream4_IRQHandler
+ 1148 0134 00000000 		.word	ETH_IRQHandler
+ 1149 0138 00000000 		.word	ETH_WKUP_IRQHandler
+ 1150 013c 00000000 		.word	CAN2_TX_IRQHandler
+ 1151 0140 00000000 		.word	CAN2_RX0_IRQHandler
+ 1152 0144 00000000 		.word	CAN2_RX1_IRQHandler
+ 1153 0148 00000000 		.word	CAN2_SCE_IRQHandler
+ 1154 014c 00000000 		.word	OTG_FS_IRQHandler
+ 1155 0150 00000000 		.word	DMA2_Stream5_IRQHandler
+ 1156 0154 00000000 		.word	DMA2_Stream6_IRQHandler
+ 1157 0158 00000000 		.word	DMA2_Stream7_IRQHandler
+ARM GAS  /tmp/cc8jU0Eq.s 			page 34
+
+
+ 1158 015c 00000000 		.word	USART6_IRQHandler
+ 1159 0160 00000000 		.word	I2C3_EV_IRQHandler
+ 1160 0164 00000000 		.word	I2C3_ER_IRQHandler
+ 1161 0168 00000000 		.word	OTG_HS_EP1_OUT_IRQHandler
+ 1162 016c 00000000 		.word	OTG_HS_EP1_IN_IRQHandler
+ 1163 0170 00000000 		.word	OTG_HS_WKUP_IRQHandler
+ 1164 0174 00000000 		.word	OTG_HS_IRQHandler
+ 1165 0178 00000000 		.word	DCMI_IRQHandler
+ 1166 017c 00000000 		.word	CRYP_IRQHandler
+ 1167 0180 00000000 		.word	HASH_RNG_IRQHandler
+ 1168 0184 00000000 		.word	FPU_IRQHandler
+ 1169              		.section	.rodata.hex_chars.0,"a"
+ 1170              		.align	2
+ 1171              		.set	.LANCHOR1,. + 0
+ 1174              	hex_chars.0:
+ 1175 0000 30313233 		.ascii	"0123456789ABCDEF\000"
+ 1175      34353637 
+ 1175      38394142 
+ 1175      43444546 
+ 1175      00
+ 1176              		.weak	gcode_process
+ 1177              		.weak	gcode_init
+ 1178              		.weak	fan_init
+ 1179              		.weak	heater_init
+ 1180              		.weak	toolhead_init
+ 1181              		.text
+ 1182              	.Letext0:
+ 1183              		.file 3 "/usr/lib/gcc/arm-none-eabi/10.3.1/include/stdint.h"
+ 1184              		.file 4 "./src/stm32/serial.h"
+ 1185              		.file 5 "./src/sched.h"
+ 1186              		.file 6 "<built-in>"
+ 1187              		.file 7 "./src/stm32/internal.h"
+ARM GAS  /tmp/cc8jU0Eq.s 			page 35
+
+
+DEFINED SYMBOLS
+                            *ABS*:0000000000000000 main.c
+     /tmp/cc8jU0Eq.s:18     .text.Default_Handler:0000000000000000 $t
+     /tmp/cc8jU0Eq.s:27     .text.Default_Handler:0000000000000000 Default_Handler
+     /tmp/cc8jU0Eq.s:27     .text.Default_Handler:0000000000000000 FPU_IRQHandler
+     /tmp/cc8jU0Eq.s:27     .text.Default_Handler:0000000000000000 HASH_RNG_IRQHandler
+     /tmp/cc8jU0Eq.s:27     .text.Default_Handler:0000000000000000 CRYP_IRQHandler
+     /tmp/cc8jU0Eq.s:27     .text.Default_Handler:0000000000000000 DCMI_IRQHandler
+     /tmp/cc8jU0Eq.s:27     .text.Default_Handler:0000000000000000 OTG_HS_IRQHandler
+     /tmp/cc8jU0Eq.s:27     .text.Default_Handler:0000000000000000 OTG_HS_WKUP_IRQHandler
+     /tmp/cc8jU0Eq.s:27     .text.Default_Handler:0000000000000000 OTG_HS_EP1_IN_IRQHandler
+     /tmp/cc8jU0Eq.s:27     .text.Default_Handler:0000000000000000 OTG_HS_EP1_OUT_IRQHandler
+     /tmp/cc8jU0Eq.s:27     .text.Default_Handler:0000000000000000 I2C3_ER_IRQHandler
+     /tmp/cc8jU0Eq.s:27     .text.Default_Handler:0000000000000000 I2C3_EV_IRQHandler
+     /tmp/cc8jU0Eq.s:27     .text.Default_Handler:0000000000000000 USART6_IRQHandler
+     /tmp/cc8jU0Eq.s:27     .text.Default_Handler:0000000000000000 DMA2_Stream7_IRQHandler
+     /tmp/cc8jU0Eq.s:27     .text.Default_Handler:0000000000000000 DMA2_Stream6_IRQHandler
+     /tmp/cc8jU0Eq.s:27     .text.Default_Handler:0000000000000000 DMA2_Stream5_IRQHandler
+     /tmp/cc8jU0Eq.s:27     .text.Default_Handler:0000000000000000 OTG_FS_IRQHandler
+     /tmp/cc8jU0Eq.s:27     .text.Default_Handler:0000000000000000 CAN2_SCE_IRQHandler
+     /tmp/cc8jU0Eq.s:27     .text.Default_Handler:0000000000000000 CAN2_RX1_IRQHandler
+     /tmp/cc8jU0Eq.s:27     .text.Default_Handler:0000000000000000 CAN2_RX0_IRQHandler
+     /tmp/cc8jU0Eq.s:27     .text.Default_Handler:0000000000000000 CAN2_TX_IRQHandler
+     /tmp/cc8jU0Eq.s:27     .text.Default_Handler:0000000000000000 ETH_WKUP_IRQHandler
+     /tmp/cc8jU0Eq.s:27     .text.Default_Handler:0000000000000000 ETH_IRQHandler
+     /tmp/cc8jU0Eq.s:27     .text.Default_Handler:0000000000000000 DMA2_Stream4_IRQHandler
+     /tmp/cc8jU0Eq.s:27     .text.Default_Handler:0000000000000000 DMA2_Stream3_IRQHandler
+     /tmp/cc8jU0Eq.s:27     .text.Default_Handler:0000000000000000 DMA2_Stream2_IRQHandler
+     /tmp/cc8jU0Eq.s:27     .text.Default_Handler:0000000000000000 DMA2_Stream1_IRQHandler
+     /tmp/cc8jU0Eq.s:27     .text.Default_Handler:0000000000000000 DMA2_Stream0_IRQHandler
+     /tmp/cc8jU0Eq.s:27     .text.Default_Handler:0000000000000000 TIM7_IRQHandler
+     /tmp/cc8jU0Eq.s:27     .text.Default_Handler:0000000000000000 TIM6_DAC_IRQHandler
+     /tmp/cc8jU0Eq.s:27     .text.Default_Handler:0000000000000000 UART5_IRQHandler
+     /tmp/cc8jU0Eq.s:27     .text.Default_Handler:0000000000000000 UART4_IRQHandler
+     /tmp/cc8jU0Eq.s:27     .text.Default_Handler:0000000000000000 SPI3_IRQHandler
+     /tmp/cc8jU0Eq.s:27     .text.Default_Handler:0000000000000000 TIM5_IRQHandler
+     /tmp/cc8jU0Eq.s:27     .text.Default_Handler:0000000000000000 SDIO_IRQHandler
+     /tmp/cc8jU0Eq.s:27     .text.Default_Handler:0000000000000000 FSMC_IRQHandler
+     /tmp/cc8jU0Eq.s:27     .text.Default_Handler:0000000000000000 DMA1_Stream7_IRQHandler
+     /tmp/cc8jU0Eq.s:27     .text.Default_Handler:0000000000000000 TIM8_CC_IRQHandler
+     /tmp/cc8jU0Eq.s:27     .text.Default_Handler:0000000000000000 TIM8_TRG_COM_TIM14_IRQHandler
+     /tmp/cc8jU0Eq.s:27     .text.Default_Handler:0000000000000000 TIM8_UP_TIM13_IRQHandler
+     /tmp/cc8jU0Eq.s:27     .text.Default_Handler:0000000000000000 TIM8_BRK_TIM12_IRQHandler
+     /tmp/cc8jU0Eq.s:27     .text.Default_Handler:0000000000000000 OTG_FS_WKUP_IRQHandler
+     /tmp/cc8jU0Eq.s:27     .text.Default_Handler:0000000000000000 RTC_Alarm_IRQHandler
+     /tmp/cc8jU0Eq.s:27     .text.Default_Handler:0000000000000000 EXTI15_10_IRQHandler
+     /tmp/cc8jU0Eq.s:27     .text.Default_Handler:0000000000000000 USART3_IRQHandler
+     /tmp/cc8jU0Eq.s:27     .text.Default_Handler:0000000000000000 USART2_IRQHandler
+     /tmp/cc8jU0Eq.s:27     .text.Default_Handler:0000000000000000 USART1_IRQHandler
+     /tmp/cc8jU0Eq.s:27     .text.Default_Handler:0000000000000000 SPI2_IRQHandler
+     /tmp/cc8jU0Eq.s:27     .text.Default_Handler:0000000000000000 SPI1_IRQHandler
+     /tmp/cc8jU0Eq.s:27     .text.Default_Handler:0000000000000000 I2C2_ER_IRQHandler
+     /tmp/cc8jU0Eq.s:27     .text.Default_Handler:0000000000000000 I2C2_EV_IRQHandler
+     /tmp/cc8jU0Eq.s:27     .text.Default_Handler:0000000000000000 I2C1_ER_IRQHandler
+     /tmp/cc8jU0Eq.s:27     .text.Default_Handler:0000000000000000 I2C1_EV_IRQHandler
+     /tmp/cc8jU0Eq.s:27     .text.Default_Handler:0000000000000000 TIM4_IRQHandler
+     /tmp/cc8jU0Eq.s:27     .text.Default_Handler:0000000000000000 TIM3_IRQHandler
+ARM GAS  /tmp/cc8jU0Eq.s 			page 36
+
+
+     /tmp/cc8jU0Eq.s:27     .text.Default_Handler:0000000000000000 TIM2_IRQHandler
+     /tmp/cc8jU0Eq.s:27     .text.Default_Handler:0000000000000000 TIM1_CC_IRQHandler
+     /tmp/cc8jU0Eq.s:27     .text.Default_Handler:0000000000000000 TIM1_TRG_COM_TIM11_IRQHandler
+     /tmp/cc8jU0Eq.s:27     .text.Default_Handler:0000000000000000 TIM1_UP_TIM10_IRQHandler
+     /tmp/cc8jU0Eq.s:27     .text.Default_Handler:0000000000000000 TIM1_BRK_TIM9_IRQHandler
+     /tmp/cc8jU0Eq.s:27     .text.Default_Handler:0000000000000000 EXTI9_5_IRQHandler
+     /tmp/cc8jU0Eq.s:27     .text.Default_Handler:0000000000000000 CAN1_SCE_IRQHandler
+     /tmp/cc8jU0Eq.s:27     .text.Default_Handler:0000000000000000 CAN1_RX1_IRQHandler
+     /tmp/cc8jU0Eq.s:27     .text.Default_Handler:0000000000000000 CAN1_RX0_IRQHandler
+     /tmp/cc8jU0Eq.s:27     .text.Default_Handler:0000000000000000 CAN1_TX_IRQHandler
+     /tmp/cc8jU0Eq.s:27     .text.Default_Handler:0000000000000000 ADC_IRQHandler
+     /tmp/cc8jU0Eq.s:27     .text.Default_Handler:0000000000000000 DMA1_Stream6_IRQHandler
+     /tmp/cc8jU0Eq.s:27     .text.Default_Handler:0000000000000000 DMA1_Stream5_IRQHandler
+     /tmp/cc8jU0Eq.s:27     .text.Default_Handler:0000000000000000 DMA1_Stream4_IRQHandler
+     /tmp/cc8jU0Eq.s:27     .text.Default_Handler:0000000000000000 DMA1_Stream3_IRQHandler
+     /tmp/cc8jU0Eq.s:27     .text.Default_Handler:0000000000000000 DMA1_Stream2_IRQHandler
+     /tmp/cc8jU0Eq.s:27     .text.Default_Handler:0000000000000000 DMA1_Stream1_IRQHandler
+     /tmp/cc8jU0Eq.s:27     .text.Default_Handler:0000000000000000 DMA1_Stream0_IRQHandler
+     /tmp/cc8jU0Eq.s:27     .text.Default_Handler:0000000000000000 EXTI4_IRQHandler
+     /tmp/cc8jU0Eq.s:27     .text.Default_Handler:0000000000000000 EXTI3_IRQHandler
+     /tmp/cc8jU0Eq.s:27     .text.Default_Handler:0000000000000000 EXTI2_IRQHandler
+     /tmp/cc8jU0Eq.s:27     .text.Default_Handler:0000000000000000 EXTI1_IRQHandler
+     /tmp/cc8jU0Eq.s:27     .text.Default_Handler:0000000000000000 EXTI0_IRQHandler
+     /tmp/cc8jU0Eq.s:27     .text.Default_Handler:0000000000000000 RCC_IRQHandler
+     /tmp/cc8jU0Eq.s:27     .text.Default_Handler:0000000000000000 FLASH_IRQHandler
+     /tmp/cc8jU0Eq.s:27     .text.Default_Handler:0000000000000000 RTC_WKUP_IRQHandler
+     /tmp/cc8jU0Eq.s:27     .text.Default_Handler:0000000000000000 TAMP_STAMP_IRQHandler
+     /tmp/cc8jU0Eq.s:27     .text.Default_Handler:0000000000000000 PVD_IRQHandler
+     /tmp/cc8jU0Eq.s:27     .text.Default_Handler:0000000000000000 WWDG_IRQHandler
+     /tmp/cc8jU0Eq.s:27     .text.Default_Handler:0000000000000000 PendSV_Handler
+     /tmp/cc8jU0Eq.s:27     .text.Default_Handler:0000000000000000 DebugMon_Handler
+     /tmp/cc8jU0Eq.s:27     .text.Default_Handler:0000000000000000 SVC_Handler
+     /tmp/cc8jU0Eq.s:27     .text.Default_Handler:0000000000000000 UsageFault_Handler
+     /tmp/cc8jU0Eq.s:27     .text.Default_Handler:0000000000000000 BusFault_Handler
+     /tmp/cc8jU0Eq.s:27     .text.Default_Handler:0000000000000000 MemManage_Handler
+     /tmp/cc8jU0Eq.s:27     .text.Default_Handler:0000000000000000 NMI_Handler
+     /tmp/cc8jU0Eq.s:229    .rodata.HardFault_Handler.str1.4:0000000000000000 $d
+     /tmp/cc8jU0Eq.s:233    .text.HardFault_Handler:0000000000000000 $t
+     /tmp/cc8jU0Eq.s:241    .text.HardFault_Handler:0000000000000000 HardFault_Handler
+     /tmp/cc8jU0Eq.s:271    .text.HardFault_Handler:000000000000000c $d
+     /tmp/cc8jU0Eq.s:276    .text.nvic_enable_irq:0000000000000000 $t
+     /tmp/cc8jU0Eq.s:284    .text.nvic_enable_irq:0000000000000000 nvic_enable_irq
+     /tmp/cc8jU0Eq.s:313    .text.nvic_disable_irq:0000000000000000 $t
+     /tmp/cc8jU0Eq.s:321    .text.nvic_disable_irq:0000000000000000 nvic_disable_irq
+     /tmp/cc8jU0Eq.s:347    .text.nvic_disable_irq:0000000000000014 $d
+     /tmp/cc8jU0Eq.s:352    .text.nvic_set_priority:0000000000000000 $t
+     /tmp/cc8jU0Eq.s:360    .text.nvic_set_priority:0000000000000000 nvic_set_priority
+     /tmp/cc8jU0Eq.s:383    .text.nvic_clear_pending:0000000000000000 $t
+     /tmp/cc8jU0Eq.s:391    .text.nvic_clear_pending:0000000000000000 nvic_clear_pending
+     /tmp/cc8jU0Eq.s:417    .text.nvic_clear_pending:0000000000000014 $d
+     /tmp/cc8jU0Eq.s:422    .text.irq_save:0000000000000000 $t
+     /tmp/cc8jU0Eq.s:430    .text.irq_save:0000000000000000 irq_save
+     /tmp/cc8jU0Eq.s:464    .rodata.board_init.str1.4:0000000000000000 $d
+     /tmp/cc8jU0Eq.s:480    .text.board_init:0000000000000000 $t
+     /tmp/cc8jU0Eq.s:488    .text.board_init:0000000000000000 board_init
+     /tmp/cc8jU0Eq.s:539    .text.board_init:0000000000000034 $d
+     /tmp/cc8jU0Eq.s:548    .rodata.main.str1.4:0000000000000000 $d
+ARM GAS  /tmp/cc8jU0Eq.s 			page 37
+
+
+     /tmp/cc8jU0Eq.s:574    .text.startup.main:0000000000000000 $t
+     /tmp/cc8jU0Eq.s:582    .text.startup.main:0000000000000000 main
+     /tmp/cc8jU0Eq.s:708    .text.startup.main:0000000000000078 $d
+     /tmp/cc8jU0Eq.s:726    .text.Reset_Handler:0000000000000000 $t
+     /tmp/cc8jU0Eq.s:734    .text.Reset_Handler:0000000000000000 Reset_Handler
+     /tmp/cc8jU0Eq.s:829    .text.Reset_Handler:0000000000000050 $d
+     /tmp/cc8jU0Eq.s:838    .text.debug_putc:0000000000000000 $t
+     /tmp/cc8jU0Eq.s:846    .text.debug_putc:0000000000000000 debug_putc
+     /tmp/cc8jU0Eq.s:862    .text.debug_puts:0000000000000000 $t
+     /tmp/cc8jU0Eq.s:870    .text.debug_puts:0000000000000000 debug_puts
+     /tmp/cc8jU0Eq.s:886    .text.debug_hex:0000000000000000 $t
+     /tmp/cc8jU0Eq.s:894    .text.debug_hex:0000000000000000 debug_hex
+     /tmp/cc8jU0Eq.s:966    .text.debug_hex:000000000000003c $d
+     /tmp/cc8jU0Eq.s:971    .rodata.panic.str1.4:0000000000000000 $d
+     /tmp/cc8jU0Eq.s:978    .text.panic:0000000000000000 $t
+     /tmp/cc8jU0Eq.s:986    .text.panic:0000000000000000 panic
+     /tmp/cc8jU0Eq.s:1054   .text.panic:0000000000000020 $d
+     /tmp/cc8jU0Eq.s:1070   .isr_vector:0000000000000000 g_vector_table
+     /tmp/cc8jU0Eq.s:1064   .bss.s_system_ready:0000000000000000 s_system_ready
+     /tmp/cc8jU0Eq.s:1065   .bss.s_system_ready:0000000000000000 $d
+     /tmp/cc8jU0Eq.s:1067   .isr_vector:0000000000000000 $d
+     /tmp/cc8jU0Eq.s:1170   .rodata.hex_chars.0:0000000000000000 $d
+     /tmp/cc8jU0Eq.s:1174   .rodata.hex_chars.0:0000000000000000 hex_chars.0
+
+UNDEFINED SYMBOLS
+serial_puts
+system_init
+serial_init
+sched_init
+toolhead_init
+heater_init
+fan_init
+gcode_init
+sched_main
+gcode_process
+sched_is_shutdown
+memset
+memcpy
+_sbss
+_ebss
+_sdata
+_edata
+_sidata
+serial_putc
+_estack
+SysTick_Handler

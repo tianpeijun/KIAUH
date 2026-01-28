@@ -1,0 +1,212 @@
+# =============================================================================
+# Klipper MCU 移植项目 - 主机编译 Makefile
+# 用于在 Linux/macOS 上使用 GCC 编译验证代码
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# 工具链配置
+# -----------------------------------------------------------------------------
+CC          = gcc
+LD          = gcc
+OBJCOPY     = objcopy
+SIZE        = size
+
+# -----------------------------------------------------------------------------
+# 目标配置
+# -----------------------------------------------------------------------------
+TARGET      = klipper-mcu-host.elf
+BUILD_DIR   = build-host
+
+# -----------------------------------------------------------------------------
+# 目录配置
+# -----------------------------------------------------------------------------
+SRC_DIR     = src
+CHELPER_DIR = chelper
+APP_DIR     = app
+BOARD_DIR   = board
+
+# -----------------------------------------------------------------------------
+# 源文件
+# -----------------------------------------------------------------------------
+
+# 应用层 (app/) - 使用主机版本的 main
+APP_SRCS    = \
+    $(APP_DIR)/main_host.c \
+    $(APP_DIR)/gcode.c \
+    $(APP_DIR)/toolhead.c \
+    $(APP_DIR)/heater.c \
+    $(APP_DIR)/fan.c
+
+# 运动库层 (chelper/)
+CHELPER_SRCS = \
+    $(CHELPER_DIR)/mem_pool.c \
+    $(CHELPER_DIR)/trapq.c \
+    $(CHELPER_DIR)/itersolve.c \
+    $(CHELPER_DIR)/kin_cartesian.c
+
+# 主机桩文件
+HOST_STUBS  = $(BUILD_DIR)/host_stubs.c
+
+# 汇总所有源文件
+C_SOURCES   = $(APP_SRCS) $(CHELPER_SRCS) $(HOST_STUBS)
+
+# -----------------------------------------------------------------------------
+# 头文件路径
+# -----------------------------------------------------------------------------
+C_INCLUDES  = \
+    -I. \
+    -I$(SRC_DIR) \
+    -I$(SRC_DIR)/stm32 \
+    -I$(CHELPER_DIR) \
+    -I$(APP_DIR) \
+    -I$(BOARD_DIR)
+
+# -----------------------------------------------------------------------------
+# 编译选项
+# -----------------------------------------------------------------------------
+CFLAGS      = -O2 -g
+CFLAGS     += -Wall -Wextra
+CFLAGS     += -Wno-unused-parameter
+CFLAGS     += -Wno-unused-function
+CFLAGS     += -std=c99
+CFLAGS     += $(C_INCLUDES)
+
+# 预处理器定义
+CFLAGS     += -DHOST_BUILD
+CFLAGS     += -DMCU_BUILD
+
+# -----------------------------------------------------------------------------
+# 链接选项
+# -----------------------------------------------------------------------------
+LDFLAGS     = -lm
+
+# -----------------------------------------------------------------------------
+# 构建目标
+# -----------------------------------------------------------------------------
+
+# 默认目标
+all: $(BUILD_DIR)/$(TARGET) $(BUILD_DIR)/$(TARGET:.elf=.bin) size
+
+# 目标文件列表
+OBJECTS     = $(addprefix $(BUILD_DIR)/,$(notdir $(C_SOURCES:.c=.o)))
+vpath %.c $(sort $(dir $(C_SOURCES)))
+
+# 创建构建目录
+$(BUILD_DIR):
+	mkdir -p $@
+
+# 生成主机桩文件
+$(HOST_STUBS): | $(BUILD_DIR)
+	@echo "[GEN] 生成主机桩文件..."
+	@echo '/* 自动生成的主机桩文件 */' > $@
+	@echo '#include <stdint.h>' >> $@
+	@echo '#include <stdio.h>' >> $@
+	@echo '#include <string.h>' >> $@
+	@echo '' >> $@
+	@echo '/* ========== ADC 桩 ========== */' >> $@
+	@echo 'static int32_t s_mock_adc[16] = {2048, 2048, 2048, 2048, 2048, 2048, 2048, 2048, 2048, 2048, 2048, 2048, 2048, 2048, 2048, 2048};' >> $@
+	@echo '' >> $@
+	@echo 'void adc_init(void) { }' >> $@
+	@echo 'int adc_setup(uint8_t gpio, int sample_time) { (void)gpio; (void)sample_time; return 0; }' >> $@
+	@echo 'int32_t adc_read(uint8_t gpio) {' >> $@
+	@echo '    uint8_t port = (gpio >> 4) & 0x0F;' >> $@
+	@echo '    uint8_t pin = gpio & 0x0F;' >> $@
+	@echo '    int ch = -1;' >> $@
+	@echo '    if (port == 0 && pin <= 7) ch = pin;' >> $@
+	@echo '    else if (port == 1 && pin <= 1) ch = 8 + pin;' >> $@
+	@echo '    else if (port == 2 && pin <= 5) ch = 10 + pin;' >> $@
+	@echo '    return (ch >= 0 && ch < 16) ? s_mock_adc[ch] : -1;' >> $@
+	@echo '}' >> $@
+	@echo '' >> $@
+	@echo '/* ========== PWM 桩 ========== */' >> $@
+	@echo 'typedef struct { uint8_t pin; uint32_t cycle_time; uint16_t max_value; uint8_t invert; uint8_t use_hardware; } pwm_config_t;' >> $@
+	@echo 'static float s_pwm_duty[4] = {0};' >> $@
+	@echo 'static uint8_t s_pwm_enabled[4] = {0};' >> $@
+	@echo '' >> $@
+	@echo 'int pwm_init(void) { return 0; }' >> $@
+	@echo 'int pwm_config(int id, const pwm_config_t* cfg) { (void)id; (void)cfg; return 0; }' >> $@
+	@echo 'void pwm_enable(int id, int en) { if (id >= 0 && id < 4) s_pwm_enabled[id] = en ? 1 : 0; }' >> $@
+	@echo 'void pwm_set_duty(int id, float duty) { if (id >= 0 && id < 4) s_pwm_duty[id] = duty; }' >> $@
+	@echo 'float pwm_get_duty(int id) { return (id >= 0 && id < 4) ? s_pwm_duty[id] : -1.0f; }' >> $@
+	@echo '' >> $@
+	@echo '/* ========== Serial 桩 ========== */' >> $@
+	@echo 'static char s_serial_buf[256];' >> $@
+	@echo 'static int s_serial_len = 0;' >> $@
+	@echo '' >> $@
+	@echo 'void serial_init(uint32_t baud) { (void)baud; }' >> $@
+	@echo 'void serial_putc(char c) { putchar(c); }' >> $@
+	@echo 'void serial_puts(const char* s) { printf("%s", s); }' >> $@
+	@echo 'int serial_line_available(void) { return 0; }' >> $@
+	@echo 'int serial_readline(char* buf, int max) { (void)buf; (void)max; return 0; }' >> $@
+	@echo '' >> $@
+	@echo '/* ========== GPIO 桩 ========== */' >> $@
+	@echo 'void gpio_out_setup(uint8_t pin, uint8_t val) { (void)pin; (void)val; }' >> $@
+	@echo 'void gpio_out_write(uint8_t pin, uint8_t val) { (void)pin; (void)val; }' >> $@
+	@echo 'uint8_t gpio_in_read(uint8_t pin) { (void)pin; return 0; }' >> $@
+	@echo 'void gpio_in_setup(uint8_t pin, int pull) { (void)pin; (void)pull; }' >> $@
+	@echo '' >> $@
+	@echo '/* ========== Scheduler 桩 ========== */' >> $@
+	@echo 'void sched_init(void) { }' >> $@
+	@echo 'void sched_main(void) { }' >> $@
+	@echo 'uint32_t sched_get_time(void) { return 0; }' >> $@
+	@echo '' >> $@
+	@echo '/* ========== Stepper 桩 ========== */' >> $@
+	@echo 'void stepper_init(void) { }' >> $@
+	@echo 'int stepper_config(int id, uint8_t step, uint8_t dir, uint8_t en) { (void)id; (void)step; (void)dir; (void)en; return 0; }' >> $@
+	@echo 'void stepper_enable(int id, int en) { (void)id; (void)en; }' >> $@
+	@echo 'void stepper_set_next_step_time(int id, uint32_t time) { (void)id; (void)time; }' >> $@
+	@echo '' >> $@
+	@echo '/* ========== Endstop 桩 ========== */' >> $@
+	@echo 'void endstop_init(void) { }' >> $@
+	@echo 'int endstop_config(int id, uint8_t pin, int pull) { (void)id; (void)pin; (void)pull; return 0; }' >> $@
+	@echo 'int endstop_read(int id) { (void)id; return 0; }' >> $@
+	@echo 'int endstop_is_triggered(int id) { (void)id; return 0; }' >> $@
+	@echo 'void endstop_set_callback(int id, void (*cb)(int, void*), void* arg) { (void)id; (void)cb; (void)arg; }' >> $@
+	@echo 'void endstop_home_start(int id) { (void)id; }' >> $@
+	@echo 'void endstop_home_end(int id) { (void)id; }' >> $@
+	@echo '' >> $@
+	@echo '/* ========== Stepper 扩展桩 ========== */' >> $@
+	@echo 'int stepper_is_moving(int id) { (void)id; return 0; }' >> $@
+	@echo 'void stepper_stop(int id) { (void)id; }' >> $@
+	@echo 'void stepper_stop_all(void) { }' >> $@
+	@echo '' >> $@
+	@echo '/* ========== Serial 扩展桩 ========== */' >> $@
+	@echo 'void serial_printf(const char* fmt, ...) { (void)fmt; }' >> $@
+	@echo '' >> $@
+
+# 编译 C 文件
+$(BUILD_DIR)/%.o: %.c Makefile.host | $(BUILD_DIR) $(HOST_STUBS)
+	@echo "[CC] $<"
+	@$(CC) -c $(CFLAGS) $< -o $@
+
+# 链接
+$(BUILD_DIR)/$(TARGET): $(OBJECTS)
+	@echo "[LD] $@"
+	@$(LD) $(OBJECTS) $(LDFLAGS) -o $@
+
+# 生成 BIN 文件
+$(BUILD_DIR)/$(TARGET:.elf=.bin): $(BUILD_DIR)/$(TARGET)
+	@echo "[BIN] $@"
+	@$(OBJCOPY) -O binary $< $@
+
+# 显示大小信息
+size: $(BUILD_DIR)/$(TARGET)
+	@echo ""
+	@echo "========== 可执行文件大小 =========="
+	@$(SIZE) $< || ls -lh $@
+	@echo ""
+
+# 运行
+run: $(BUILD_DIR)/$(TARGET)
+	@echo "[RUN] 运行程序..."
+	@./$<
+
+# -----------------------------------------------------------------------------
+# 清理目标
+# -----------------------------------------------------------------------------
+clean:
+	@echo "[CLEAN] 清理构建目录..."
+	rm -rf $(BUILD_DIR)
+
+# 伪目标声明
+.PHONY: all clean size run

@@ -1,0 +1,2854 @@
+ARM GAS  /tmp/cc8XC8Jn.s 			page 1
+
+
+   1              		.cpu cortex-m4
+   2              		.eabi_attribute 27, 1
+   3              		.eabi_attribute 28, 1
+   4              		.eabi_attribute 20, 1
+   5              		.eabi_attribute 21, 1
+   6              		.eabi_attribute 23, 3
+   7              		.eabi_attribute 24, 1
+   8              		.eabi_attribute 25, 1
+   9              		.eabi_attribute 26, 1
+  10              		.eabi_attribute 30, 2
+  11              		.eabi_attribute 34, 1
+  12              		.eabi_attribute 18, 4
+  13              		.file	"heater.c"
+  14              		.text
+  15              	.Ltext0:
+  16              		.cfi_sections	.debug_frame
+  17              		.section	.text.heater_init.part.0,"ax",%progbits
+  18              		.align	1
+  19              		.p2align 2,,3
+  20              		.arch armv7e-m
+  21              		.syntax unified
+  22              		.thumb
+  23              		.thumb_func
+  24              		.fpu fpv4-sp-d16
+  26              	heater_init.part.0:
+  27              	.LFB25:
+  28              		.file 1 "app/heater.c"
+   1:app/heater.c  **** /**
+   2:app/heater.c  ****  * @file    heater.c
+   3:app/heater.c  ****  * @brief   温度 PID 控制器实现
+   4:app/heater.c  ****  * 
+   5:app/heater.c  ****  * 移植自 klippy/extras/heaters.py
+   6:app/heater.c  ****  * 实现温度读取和 PID 控制功能
+   7:app/heater.c  ****  * 
+   8:app/heater.c  ****  * 验收标准: 3.1.1 - 3.1.3 (温度读取)
+   9:app/heater.c  ****  *          3.2.1 - 3.2.3 (PID 控制)
+  10:app/heater.c  ****  *          3.3.1, 3.3.2 (加热器控制)
+  11:app/heater.c  ****  */
+  12:app/heater.c  **** 
+  13:app/heater.c  **** #include "heater.h"
+  14:app/heater.c  **** #include "config.h"
+  15:app/heater.c  **** #include "src/stm32/adc.h"
+  16:app/heater.c  **** #include "src/pwmcmds.h"
+  17:app/heater.c  **** #include "board/gpio.h"
+  18:app/heater.c  **** #include <math.h>
+  19:app/heater.c  **** 
+  20:app/heater.c  **** /* ========== PID 控制参数 ========== */
+  21:app/heater.c  **** 
+  22:app/heater.c  **** /* PID 控制周期 (100ms = 0.1s) */
+  23:app/heater.c  **** #define PID_DT                  0.1f
+  24:app/heater.c  **** 
+  25:app/heater.c  **** /* 积分限幅 (防止积分饱和) */
+  26:app/heater.c  **** #define PID_INTEGRAL_MAX        100.0f
+  27:app/heater.c  **** 
+  28:app/heater.c  **** /* 目标温度变化阈值 (超过此值重置 PID 状态) */
+  29:app/heater.c  **** #define PID_TARGET_CHANGE_THRESHOLD  10.0f
+  30:app/heater.c  **** 
+ARM GAS  /tmp/cc8XC8Jn.s 			page 2
+
+
+  31:app/heater.c  **** /* ========== NTC 热敏电阻参数 ========== */
+  32:app/heater.c  **** 
+  33:app/heater.c  **** /*
+  34:app/heater.c  ****  * 100K NTC 热敏电阻参数 (Beta = 3950)
+  35:app/heater.c  ****  * 
+  36:app/heater.c  ****  * 使用 Steinhart-Hart 简化公式:
+  37:app/heater.c  ****  * 1/T = 1/T0 + (1/B) * ln(R/R0)
+  38:app/heater.c  ****  * 
+  39:app/heater.c  ****  * 其中:
+  40:app/heater.c  ****  * - T0 = 298.15K (25°C)
+  41:app/heater.c  ****  * - R0 = 100K (25°C 时的电阻)
+  42:app/heater.c  ****  * - B = 3950 (Beta 值)
+  43:app/heater.c  ****  */
+  44:app/heater.c  **** #define NTC_BETA                3950.0f     /* Beta 值 */
+  45:app/heater.c  **** #define NTC_R0                  100000.0f   /* 25°C 时的电阻 (100K) */
+  46:app/heater.c  **** #define NTC_T0                  298.15f     /* 参考温度 (25°C = 298.15K) */
+  47:app/heater.c  **** 
+  48:app/heater.c  **** /* 分压电阻值 (上拉电阻) */
+  49:app/heater.c  **** #define NTC_PULLUP_R            4700.0f     /* 4.7K 上拉电阻 */
+  50:app/heater.c  **** 
+  51:app/heater.c  **** /* ADC 参考电压 */
+  52:app/heater.c  **** #define ADC_VREF                3.3f        /* 3.3V 参考电压 */
+  53:app/heater.c  **** 
+  54:app/heater.c  **** /* ========== NTC 温度查表 ========== */
+  55:app/heater.c  **** 
+  56:app/heater.c  **** /*
+  57:app/heater.c  ****  * NTC 100K (Beta=3950) 温度查表
+  58:app/heater.c  ****  * 
+  59:app/heater.c  ****  * 表格格式: { ADC值, 温度(°C) }
+  60:app/heater.c  ****  * ADC 值基于 12 位分辨率 (0-4095)
+  61:app/heater.c  ****  * 假设使用 4.7K 上拉电阻，3.3V 参考电压
+  62:app/heater.c  ****  * 
+  63:app/heater.c  ****  * 计算公式:
+  64:app/heater.c  ****  * R_ntc = R_pullup * ADC / (4095 - ADC)
+  65:app/heater.c  ****  * T = 1 / (1/T0 + ln(R_ntc/R0)/B) - 273.15
+  66:app/heater.c  ****  */
+  67:app/heater.c  **** typedef struct {
+  68:app/heater.c  ****     uint16_t adc;               /* ADC 值 */
+  69:app/heater.c  ****     int16_t temp;               /* 温度 (°C * 10，用于提高精度) */
+  70:app/heater.c  **** } ntc_table_entry_t;
+  71:app/heater.c  **** 
+  72:app/heater.c  **** /* NTC 温度查表 (从高温到低温排列，ADC 值从小到大) */
+  73:app/heater.c  **** static const ntc_table_entry_t s_ntc_table[] = {
+  74:app/heater.c  ****     /* ADC,   Temp*10 */
+  75:app/heater.c  ****     {   23,    3000 },          /* 300°C */
+  76:app/heater.c  ****     {   31,    2900 },          /* 290°C */
+  77:app/heater.c  ****     {   41,    2800 },          /* 280°C */
+  78:app/heater.c  ****     {   54,    2700 },          /* 270°C */
+  79:app/heater.c  ****     {   71,    2600 },          /* 260°C */
+  80:app/heater.c  ****     {   93,    2500 },          /* 250°C */
+  81:app/heater.c  ****     {  120,    2400 },          /* 240°C */
+  82:app/heater.c  ****     {  154,    2300 },          /* 230°C */
+  83:app/heater.c  ****     {  196,    2200 },          /* 220°C */
+  84:app/heater.c  ****     {  248,    2100 },          /* 210°C */
+  85:app/heater.c  ****     {  311,    2000 },          /* 200°C */
+  86:app/heater.c  ****     {  386,    1900 },          /* 190°C */
+  87:app/heater.c  ****     {  475,    1800 },          /* 180°C */
+ARM GAS  /tmp/cc8XC8Jn.s 			page 3
+
+
+  88:app/heater.c  ****     {  578,    1700 },          /* 170°C */
+  89:app/heater.c  ****     {  696,    1600 },          /* 160°C */
+  90:app/heater.c  ****     {  829,    1500 },          /* 150°C */
+  91:app/heater.c  ****     {  976,    1400 },          /* 140°C */
+  92:app/heater.c  ****     { 1136,    1300 },          /* 130°C */
+  93:app/heater.c  ****     { 1307,    1200 },          /* 120°C */
+  94:app/heater.c  ****     { 1486,    1100 },          /* 110°C */
+  95:app/heater.c  ****     { 1670,    1000 },          /* 100°C */
+  96:app/heater.c  ****     { 1855,     900 },          /*  90°C */
+  97:app/heater.c  ****     { 2037,     800 },          /*  80°C */
+  98:app/heater.c  ****     { 2213,     700 },          /*  70°C */
+  99:app/heater.c  ****     { 2379,     600 },          /*  60°C */
+ 100:app/heater.c  ****     { 2534,     500 },          /*  50°C */
+ 101:app/heater.c  ****     { 2676,     400 },          /*  40°C */
+ 102:app/heater.c  ****     { 2804,     300 },          /*  30°C */
+ 103:app/heater.c  ****     { 2918,     200 },          /*  20°C */
+ 104:app/heater.c  ****     { 3018,     100 },          /*  10°C */
+ 105:app/heater.c  ****     { 3105,       0 },          /*   0°C */
+ 106:app/heater.c  ****     { 3180,    -100 },          /* -10°C */
+ 107:app/heater.c  ****     { 3244,    -200 },          /* -20°C */
+ 108:app/heater.c  **** };
+ 109:app/heater.c  **** 
+ 110:app/heater.c  **** #define NTC_TABLE_SIZE          (sizeof(s_ntc_table) / sizeof(s_ntc_table[0]))
+ 111:app/heater.c  **** 
+ 112:app/heater.c  **** /* ========== 私有变量 ========== */
+ 113:app/heater.c  **** 
+ 114:app/heater.c  **** /* 加热器状态 */
+ 115:app/heater.c  **** typedef struct {
+ 116:app/heater.c  ****     float current_temp;         /* 当前温度 */
+ 117:app/heater.c  ****     float target_temp;          /* 目标温度 */
+ 118:app/heater.c  ****     float prev_error;           /* 上次误差 (PID 用) */
+ 119:app/heater.c  ****     float integral;             /* 积分累计 (PID 用) */
+ 120:app/heater.c  ****     float output;               /* PWM 输出 (0-1) */
+ 121:app/heater.c  ****     uint8_t initialized;        /* 初始化标志 */
+ 122:app/heater.c  ****     uint8_t pwm_enabled;        /* PWM 输出已启用 */
+ 123:app/heater.c  **** } heater_state_t;
+ 124:app/heater.c  **** 
+ 125:app/heater.c  **** /* 加热器到 PWM 通道的映射 */
+ 126:app/heater.c  **** static const pwm_channel_t s_heater_pwm_channel[HEATER_COUNT] = {
+ 127:app/heater.c  ****     PWM_CHANNEL_HEATER_HOTEND,  /* HEATER_HOTEND */
+ 128:app/heater.c  ****     PWM_CHANNEL_HEATER_BED      /* HEATER_BED */
+ 129:app/heater.c  **** };
+ 130:app/heater.c  **** 
+ 131:app/heater.c  **** /* 加热器配置 */
+ 132:app/heater.c  **** static const heater_config_t s_heater_config[HEATER_COUNT] = {
+ 133:app/heater.c  ****     /* HEATER_HOTEND */
+ 134:app/heater.c  ****     {
+ 135:app/heater.c  ****         .adc_channel = TEMP_HOTEND_ADC_CH,
+ 136:app/heater.c  ****         .pwm_pin = HEATER_HOTEND_PIN,
+ 137:app/heater.c  ****         .max_power = 1.0f,
+ 138:app/heater.c  ****         .pid = {
+ 139:app/heater.c  ****             .kp = HOTEND_PID_KP,
+ 140:app/heater.c  ****             .ki = HOTEND_PID_KI,
+ 141:app/heater.c  ****             .kd = HOTEND_PID_KD
+ 142:app/heater.c  ****         }
+ 143:app/heater.c  ****     },
+ 144:app/heater.c  ****     /* HEATER_BED */
+ARM GAS  /tmp/cc8XC8Jn.s 			page 4
+
+
+ 145:app/heater.c  ****     {
+ 146:app/heater.c  ****         .adc_channel = TEMP_BED_ADC_CH,
+ 147:app/heater.c  ****         .pwm_pin = HEATER_BED_PIN,
+ 148:app/heater.c  ****         .max_power = 1.0f,
+ 149:app/heater.c  ****         .pid = {
+ 150:app/heater.c  ****             .kp = BED_PID_KP,
+ 151:app/heater.c  ****             .ki = BED_PID_KI,
+ 152:app/heater.c  ****             .kd = BED_PID_KD
+ 153:app/heater.c  ****         }
+ 154:app/heater.c  ****     }
+ 155:app/heater.c  **** };
+ 156:app/heater.c  **** 
+ 157:app/heater.c  **** /* 加热器状态数组 */
+ 158:app/heater.c  **** static heater_state_t s_heater_state[HEATER_COUNT];
+ 159:app/heater.c  **** 
+ 160:app/heater.c  **** /* 模块初始化标志 */
+ 161:app/heater.c  **** static uint8_t s_module_initialized = 0;
+ 162:app/heater.c  **** 
+ 163:app/heater.c  **** /* ========== 私有函数 ========== */
+ 164:app/heater.c  **** 
+ 165:app/heater.c  **** /**
+ 166:app/heater.c  ****  * @brief   通过查表将 ADC 值转换为温度
+ 167:app/heater.c  ****  * @param   adc_value   ADC 读数 (0-4095)
+ 168:app/heater.c  ****  * @return  温度 (°C)，错误时返回 HEATER_TEMP_INVALID
+ 169:app/heater.c  ****  * 
+ 170:app/heater.c  ****  * 使用线性插值在查表中查找温度值。
+ 171:app/heater.c  ****  * 精度要求: ±2°C
+ 172:app/heater.c  ****  */
+ 173:app/heater.c  **** static float
+ 174:app/heater.c  **** ntc_adc_to_temp(int32_t adc_value)
+ 175:app/heater.c  **** {
+ 176:app/heater.c  ****     /* 检查 ADC 值有效性 */
+ 177:app/heater.c  ****     if (adc_value < 0 || adc_value > ADC_MAX_VALUE) {
+ 178:app/heater.c  ****         return HEATER_TEMP_INVALID;
+ 179:app/heater.c  ****     }
+ 180:app/heater.c  ****     
+ 181:app/heater.c  ****     /* 检查是否超出表格范围 */
+ 182:app/heater.c  ****     if (adc_value < (int32_t)s_ntc_table[0].adc) {
+ 183:app/heater.c  ****         /* ADC 值太小，温度超过最高值 */
+ 184:app/heater.c  ****         return HEATER_TEMP_MAX;
+ 185:app/heater.c  ****     }
+ 186:app/heater.c  ****     
+ 187:app/heater.c  ****     if (adc_value > (int32_t)s_ntc_table[NTC_TABLE_SIZE - 1].adc) {
+ 188:app/heater.c  ****         /* ADC 值太大，温度低于最低值 */
+ 189:app/heater.c  ****         return HEATER_TEMP_MIN;
+ 190:app/heater.c  ****     }
+ 191:app/heater.c  ****     
+ 192:app/heater.c  ****     /* 在表格中查找并线性插值 */
+ 193:app/heater.c  ****     for (uint32_t i = 0; i < NTC_TABLE_SIZE - 1; i++) {
+ 194:app/heater.c  ****         if (adc_value >= (int32_t)s_ntc_table[i].adc && 
+ 195:app/heater.c  ****             adc_value <= (int32_t)s_ntc_table[i + 1].adc) {
+ 196:app/heater.c  ****             /* 找到区间，进行线性插值 */
+ 197:app/heater.c  ****             int32_t adc_low = s_ntc_table[i].adc;
+ 198:app/heater.c  ****             int32_t adc_high = s_ntc_table[i + 1].adc;
+ 199:app/heater.c  ****             int32_t temp_low = s_ntc_table[i].temp;
+ 200:app/heater.c  ****             int32_t temp_high = s_ntc_table[i + 1].temp;
+ 201:app/heater.c  ****             
+ARM GAS  /tmp/cc8XC8Jn.s 			page 5
+
+
+ 202:app/heater.c  ****             /* 线性插值计算 */
+ 203:app/heater.c  ****             float ratio = (float)(adc_value - adc_low) / (float)(adc_high - adc_low);
+ 204:app/heater.c  ****             float temp = (float)temp_low + ratio * (float)(temp_high - temp_low);
+ 205:app/heater.c  ****             
+ 206:app/heater.c  ****             /* 转换为实际温度 (表中存储的是 temp * 10) */
+ 207:app/heater.c  ****             return temp / 10.0f;
+ 208:app/heater.c  ****         }
+ 209:app/heater.c  ****     }
+ 210:app/heater.c  ****     
+ 211:app/heater.c  ****     /* 不应该到达这里 */
+ 212:app/heater.c  ****     return HEATER_TEMP_INVALID;
+ 213:app/heater.c  **** }
+ 214:app/heater.c  **** 
+ 215:app/heater.c  **** /**
+ 216:app/heater.c  ****  * @brief   使用 Steinhart-Hart 公式计算温度 (备用方法)
+ 217:app/heater.c  ****  * @param   adc_value   ADC 读数 (0-4095)
+ 218:app/heater.c  ****  * @return  温度 (°C)，错误时返回 HEATER_TEMP_INVALID
+ 219:app/heater.c  ****  * 
+ 220:app/heater.c  ****  * 使用简化的 Beta 公式:
+ 221:app/heater.c  ****  * 1/T = 1/T0 + (1/B) * ln(R/R0)
+ 222:app/heater.c  ****  * 
+ 223:app/heater.c  ****  * 注意: 此函数作为备用方法保留，当前使用查表法 (ntc_adc_to_temp)
+ 224:app/heater.c  ****  */
+ 225:app/heater.c  **** #if 0  /* 备用方法，当前未使用 */
+ 226:app/heater.c  **** static float
+ 227:app/heater.c  **** ntc_adc_to_temp_formula(int32_t adc_value)
+ 228:app/heater.c  **** {
+ 229:app/heater.c  ****     /* 检查 ADC 值有效性 */
+ 230:app/heater.c  ****     if (adc_value <= 0 || adc_value >= ADC_MAX_VALUE) {
+ 231:app/heater.c  ****         return HEATER_TEMP_INVALID;
+ 232:app/heater.c  ****     }
+ 233:app/heater.c  ****     
+ 234:app/heater.c  ****     /* 计算 NTC 电阻值 */
+ 235:app/heater.c  ****     /* 分压公式: V_adc = V_ref * R_ntc / (R_pullup + R_ntc) */
+ 236:app/heater.c  ****     /* 解出: R_ntc = R_pullup * ADC / (ADC_MAX - ADC) */
+ 237:app/heater.c  ****     float r_ntc = NTC_PULLUP_R * (float)adc_value / (float)(ADC_MAX_VALUE - adc_value);
+ 238:app/heater.c  ****     
+ 239:app/heater.c  ****     /* 使用 Beta 公式计算温度 */
+ 240:app/heater.c  ****     /* 1/T = 1/T0 + (1/B) * ln(R/R0) */
+ 241:app/heater.c  ****     float ln_r = logf(r_ntc / NTC_R0);
+ 242:app/heater.c  ****     float inv_t = (1.0f / NTC_T0) + (ln_r / NTC_BETA);
+ 243:app/heater.c  ****     
+ 244:app/heater.c  ****     /* 转换为摄氏度 */
+ 245:app/heater.c  ****     float temp_k = 1.0f / inv_t;
+ 246:app/heater.c  ****     float temp_c = temp_k - 273.15f;
+ 247:app/heater.c  ****     
+ 248:app/heater.c  ****     /* 限制温度范围 */
+ 249:app/heater.c  ****     if (temp_c < HEATER_TEMP_MIN) {
+ 250:app/heater.c  ****         temp_c = HEATER_TEMP_MIN;
+ 251:app/heater.c  ****     } else if (temp_c > HEATER_TEMP_MAX) {
+ 252:app/heater.c  ****         temp_c = HEATER_TEMP_MAX;
+ 253:app/heater.c  ****     }
+ 254:app/heater.c  ****     
+ 255:app/heater.c  ****     return temp_c;
+ 256:app/heater.c  **** }
+ 257:app/heater.c  **** #endif  /* 备用方法 */
+ 258:app/heater.c  **** 
+ARM GAS  /tmp/cc8XC8Jn.s 			page 6
+
+
+ 259:app/heater.c  **** /**
+ 260:app/heater.c  ****  * @brief   获取 ADC 通道对应的 GPIO 引脚
+ 261:app/heater.c  ****  * @param   channel ADC 通道号
+ 262:app/heater.c  ****  * @return  GPIO 引脚编码
+ 263:app/heater.c  ****  */
+ 264:app/heater.c  **** static uint8_t
+ 265:app/heater.c  **** get_adc_gpio(uint8_t channel)
+ 266:app/heater.c  **** {
+ 267:app/heater.c  ****     /* ADC 通道 0-7 对应 PA0-PA7 */
+ 268:app/heater.c  ****     if (channel <= 7) {
+ 269:app/heater.c  ****         return GPIO(GPIO_PORT_A, channel);
+ 270:app/heater.c  ****     }
+ 271:app/heater.c  ****     /* ADC 通道 8-9 对应 PB0-PB1 */
+ 272:app/heater.c  ****     if (channel <= 9) {
+ 273:app/heater.c  ****         return GPIO(GPIO_PORT_B, channel - 8);
+ 274:app/heater.c  ****     }
+ 275:app/heater.c  ****     /* ADC 通道 10-15 对应 PC0-PC5 */
+ 276:app/heater.c  ****     if (channel <= 15) {
+ 277:app/heater.c  ****         return GPIO(GPIO_PORT_C, channel - 10);
+ 278:app/heater.c  ****     }
+ 279:app/heater.c  ****     
+ 280:app/heater.c  ****     return GPIO_INVALID;
+ 281:app/heater.c  **** }
+ 282:app/heater.c  **** 
+ 283:app/heater.c  **** /**
+ 284:app/heater.c  ****  * @brief   PID 控制器更新
+ 285:app/heater.c  ****  * @param   state   加热器状态
+ 286:app/heater.c  ****  * @param   params  PID 参数
+ 287:app/heater.c  ****  * @param   current_temp 当前温度
+ 288:app/heater.c  ****  * @param   dt      时间间隔 (秒)
+ 289:app/heater.c  ****  * @return  PID 输出 (0.0 - 1.0)
+ 290:app/heater.c  ****  * 
+ 291:app/heater.c  ****  * 实现带积分限幅 (anti-windup) 的 PID 算法
+ 292:app/heater.c  ****  * 
+ 293:app/heater.c  ****  * 验收标准: 3.2.1 - 移植 klippy/extras/heaters.py 的 ControlPID 类
+ 294:app/heater.c  ****  *          3.2.2 - 支持 Kp/Ki/Kd 配置
+ 295:app/heater.c  ****  */
+ 296:app/heater.c  **** static float
+ 297:app/heater.c  **** pid_update(heater_state_t* state, const pid_params_t* params, 
+ 298:app/heater.c  ****            float current_temp, float dt)
+ 299:app/heater.c  **** {
+ 300:app/heater.c  ****     float error;
+ 301:app/heater.c  ****     float derivative;
+ 302:app/heater.c  ****     float output;
+ 303:app/heater.c  ****     
+ 304:app/heater.c  ****     /* 计算误差 */
+ 305:app/heater.c  ****     error = state->target_temp - current_temp;
+ 306:app/heater.c  ****     
+ 307:app/heater.c  ****     /* 积分项 (带 anti-windup) */
+ 308:app/heater.c  ****     state->integral += error * dt;
+ 309:app/heater.c  ****     
+ 310:app/heater.c  ****     /* 积分限幅 - 防止积分饱和 */
+ 311:app/heater.c  ****     if (state->integral > PID_INTEGRAL_MAX) {
+ 312:app/heater.c  ****         state->integral = PID_INTEGRAL_MAX;
+ 313:app/heater.c  ****     } else if (state->integral < -PID_INTEGRAL_MAX) {
+ 314:app/heater.c  ****         state->integral = -PID_INTEGRAL_MAX;
+ 315:app/heater.c  ****     }
+ARM GAS  /tmp/cc8XC8Jn.s 			page 7
+
+
+ 316:app/heater.c  ****     
+ 317:app/heater.c  ****     /* 微分项 */
+ 318:app/heater.c  ****     derivative = (error - state->prev_error) / dt;
+ 319:app/heater.c  ****     state->prev_error = error;
+ 320:app/heater.c  ****     
+ 321:app/heater.c  ****     /* PID 输出计算 */
+ 322:app/heater.c  ****     output = params->kp * error 
+ 323:app/heater.c  ****            + params->ki * state->integral 
+ 324:app/heater.c  ****            + params->kd * derivative;
+ 325:app/heater.c  ****     
+ 326:app/heater.c  ****     /* 输出限幅 (0.0 - 1.0) */
+ 327:app/heater.c  ****     if (output < 0.0f) {
+ 328:app/heater.c  ****         output = 0.0f;
+ 329:app/heater.c  ****         /* 当输出饱和且误差为负时，停止积分累积 (anti-windup) */
+ 330:app/heater.c  ****         if (error < 0.0f && state->integral < 0.0f) {
+ 331:app/heater.c  ****             state->integral -= error * dt;
+ 332:app/heater.c  ****         }
+ 333:app/heater.c  ****     } else if (output > 1.0f) {
+ 334:app/heater.c  ****         output = 1.0f;
+ 335:app/heater.c  ****         /* 当输出饱和且误差为正时，停止积分累积 (anti-windup) */
+ 336:app/heater.c  ****         if (error > 0.0f && state->integral > 0.0f) {
+ 337:app/heater.c  ****             state->integral -= error * dt;
+ 338:app/heater.c  ****         }
+ 339:app/heater.c  ****     }
+ 340:app/heater.c  ****     
+ 341:app/heater.c  ****     state->output = output;
+ 342:app/heater.c  ****     return output;
+ 343:app/heater.c  **** }
+ 344:app/heater.c  **** 
+ 345:app/heater.c  **** /**
+ 346:app/heater.c  ****  * @brief   设置加热器 PWM 输出
+ 347:app/heater.c  ****  * @param   id      加热器 ID
+ 348:app/heater.c  ****  * @param   duty    占空比 (0.0 - 1.0)
+ 349:app/heater.c  ****  * 
+ 350:app/heater.c  ****  * 验收标准: 3.3.1 - 复用 Klipper src/pwmcmds.c
+ 351:app/heater.c  ****  */
+ 352:app/heater.c  **** static void
+ 353:app/heater.c  **** heater_set_pwm(heater_id_t id, float duty)
+ 354:app/heater.c  **** {
+ 355:app/heater.c  ****     pwm_channel_t pwm_ch;
+ 356:app/heater.c  ****     float max_power;
+ 357:app/heater.c  ****     
+ 358:app/heater.c  ****     if (id >= HEATER_COUNT) {
+ 359:app/heater.c  ****         return;
+ 360:app/heater.c  ****     }
+ 361:app/heater.c  ****     
+ 362:app/heater.c  ****     pwm_ch = s_heater_pwm_channel[id];
+ 363:app/heater.c  ****     max_power = s_heater_config[id].max_power;
+ 364:app/heater.c  ****     
+ 365:app/heater.c  ****     /* 限制输出不超过最大功率 */
+ 366:app/heater.c  ****     if (duty > max_power) {
+ 367:app/heater.c  ****         duty = max_power;
+ 368:app/heater.c  ****     }
+ 369:app/heater.c  ****     
+ 370:app/heater.c  ****     /* 设置 PWM 占空比 */
+ 371:app/heater.c  ****     pwm_set_duty(pwm_ch, duty);
+ 372:app/heater.c  **** }
+ARM GAS  /tmp/cc8XC8Jn.s 			page 8
+
+
+ 373:app/heater.c  **** 
+ 374:app/heater.c  **** /* ========== 公共函数 ========== */
+ 375:app/heater.c  **** 
+ 376:app/heater.c  **** /**
+ 377:app/heater.c  ****  * @brief   初始化加热器模块
+ 378:app/heater.c  ****  */
+ 379:app/heater.c  **** void
+ 380:app/heater.c  **** heater_init(void)
+  29              		.loc 1 380 1 view -0
+  30              		.cfi_startproc
+  31              		@ args = 0, pretend = 0, frame = 16
+  32              		@ frame_needed = 0, uses_anonymous_args = 0
+ 381:app/heater.c  **** {
+ 382:app/heater.c  ****     pwm_config_t pwm_cfg;
+ 383:app/heater.c  ****     
+ 384:app/heater.c  ****     if (s_module_initialized) {
+ 385:app/heater.c  ****         return;
+ 386:app/heater.c  ****     }
+ 387:app/heater.c  ****     
+ 388:app/heater.c  ****     /* 初始化 ADC 子系统 */
+ 389:app/heater.c  ****     adc_init();
+  33              		.loc 1 389 5 view .LVU1
+ 380:app/heater.c  **** {
+  34              		.loc 1 380 1 is_stmt 0 view .LVU2
+  35 0000 2DE9F04F 		push	{r4, r5, r6, r7, r8, r9, r10, fp, lr}
+  36              		.cfi_def_cfa_offset 36
+  37              		.cfi_offset 4, -36
+  38              		.cfi_offset 5, -32
+  39              		.cfi_offset 6, -28
+  40              		.cfi_offset 7, -24
+  41              		.cfi_offset 8, -20
+  42              		.cfi_offset 9, -16
+  43              		.cfi_offset 10, -12
+  44              		.cfi_offset 11, -8
+  45              		.cfi_offset 14, -4
+ 390:app/heater.c  ****     
+ 391:app/heater.c  ****     /* 初始化 PWM 子系统 */
+ 392:app/heater.c  ****     pwm_init();
+  46              		.loc 1 392 5 view .LVU3
+  47 0004 4FF00009 		mov	r9, #0
+ 380:app/heater.c  **** {
+  48              		.loc 1 380 1 view .LVU4
+  49 0008 85B0     		sub	sp, sp, #20
+  50              		.cfi_def_cfa_offset 56
+ 389:app/heater.c  ****     
+  51              		.loc 1 389 5 view .LVU5
+  52 000a FFF7FEFF 		bl	adc_init
+  53              	.LVL0:
+  54              		.loc 1 392 5 is_stmt 1 view .LVU6
+  55 000e 294D     		ldr	r5, .L13
+  56 0010 DFF8AC80 		ldr	r8, .L13+12
+  57 0014 284C     		ldr	r4, .L13+4
+  58 0016 FFF7FEFF 		bl	pwm_init
+  59              	.LVL1:
+ 393:app/heater.c  ****     
+ 394:app/heater.c  ****     /* 配置每个加热器的 ADC 通道和 PWM 输出 */
+ 395:app/heater.c  ****     for (uint8_t i = 0; i < HEATER_COUNT; i++) {
+ARM GAS  /tmp/cc8XC8Jn.s 			page 9
+
+
+  60              		.loc 1 395 5 view .LVU7
+  61              	.LBB27:
+  62              		.loc 1 395 10 view .LVU8
+  63              		.loc 1 395 25 view .LVU9
+  64              	.LBE27:
+ 392:app/heater.c  ****     
+  65              		.loc 1 392 5 is_stmt 0 view .LVU10
+  66 001a 4846     		mov	r0, r9
+  67              	.LBB53:
+  68              	.LBB28:
+  69              	.LBB29:
+  70              	.LBB30:
+ 268:app/heater.c  ****         return GPIO(GPIO_PORT_A, channel);
+  71              		.loc 1 268 8 view .LVU11
+  72 001c 0728     		cmp	r0, #7
+  73 001e 05F11407 		add	r7, r5, #20
+  74              	.LBE30:
+  75              	.LBE29:
+ 396:app/heater.c  ****         uint8_t gpio = get_adc_gpio(s_heater_config[i].adc_channel);
+ 397:app/heater.c  ****         
+ 398:app/heater.c  ****         if (gpio != GPIO_INVALID) {
+ 399:app/heater.c  ****             /* 配置 ADC 通道，使用较长的采样时间以提高精度 */
+ 400:app/heater.c  ****             adc_setup(gpio, ADC_SAMPLETIME_480CYCLES);
+ 401:app/heater.c  ****         }
+ 402:app/heater.c  ****         
+ 403:app/heater.c  ****         /* 配置 PWM 通道 */
+ 404:app/heater.c  ****         pwm_cfg.pin = s_heater_config[i].pwm_pin;
+ 405:app/heater.c  ****         pwm_cfg.cycle_time = 1000;      /* 1kHz PWM 频率 */
+ 406:app/heater.c  ****         pwm_cfg.max_value = 255;        /* 8 位分辨率 */
+ 407:app/heater.c  ****         pwm_cfg.invert = 0;             /* 不反相 */
+ 408:app/heater.c  ****         pwm_cfg.use_hardware = 0;       /* 使用软件 PWM */
+ 409:app/heater.c  ****         pwm_config(s_heater_pwm_channel[i], &pwm_cfg);
+ 410:app/heater.c  ****         
+ 411:app/heater.c  ****         /* 初始化加热器状态 */
+ 412:app/heater.c  ****         s_heater_state[i].current_temp = 0.0f;
+  76              		.loc 1 412 40 view .LVU12
+  77 0022 4FF0000B 		mov	fp, #0
+  78              	.LBE28:
+  79              	.LBE53:
+ 392:app/heater.c  ****     
+  80              		.loc 1 392 5 view .LVU13
+  81 0026 4FF0140A 		mov	r10, #20
+  82              	.LBB54:
+  83              	.LBB49:
+ 405:app/heater.c  ****         pwm_cfg.max_value = 255;        /* 8 位分辨率 */
+  84              		.loc 1 405 28 view .LVU14
+  85 002a 4FF47A76 		mov	r6, #1000
+  86              	.LVL2:
+ 396:app/heater.c  ****         uint8_t gpio = get_adc_gpio(s_heater_config[i].adc_channel);
+  87              		.loc 1 396 9 is_stmt 1 view .LVU15
+  88              	.LBB44:
+  89              	.LBI29:
+ 265:app/heater.c  **** {
+  90              		.loc 1 265 1 view .LVU16
+  91              	.LBB39:
+ 268:app/heater.c  ****         return GPIO(GPIO_PORT_A, channel);
+  92              		.loc 1 268 5 view .LVU17
+ARM GAS  /tmp/cc8XC8Jn.s 			page 10
+
+
+ 272:app/heater.c  ****         return GPIO(GPIO_PORT_B, channel - 8);
+  93              		.loc 1 272 5 view .LVU18
+  94              	.LBB31:
+  95              	.LBI31:
+ 265:app/heater.c  **** {
+  96              		.loc 1 265 1 view .LVU19
+  97              	.LBB32:
+ 276:app/heater.c  ****         return GPIO(GPIO_PORT_C, channel - 10);
+  98              		.loc 1 276 5 view .LVU20
+  99              	.LBE32:
+ 100              	.LBE31:
+ 268:app/heater.c  ****         return GPIO(GPIO_PORT_A, channel);
+ 101              		.loc 1 268 8 is_stmt 0 view .LVU21
+ 102 002e 2BD9     		bls	.L2
+ 103              	.LVL3:
+ 104              	.L12:
+ 272:app/heater.c  ****         return GPIO(GPIO_PORT_B, channel - 8);
+ 105              		.loc 1 272 8 view .LVU22
+ 106 0030 0928     		cmp	r0, #9
+ 107 0032 37D9     		bls	.L10
+ 108              	.LBB36:
+ 109              	.LBB33:
+ 277:app/heater.c  ****     }
+ 110              		.loc 1 277 9 is_stmt 1 view .LVU23
+ 277:app/heater.c  ****     }
+ 111              		.loc 1 277 16 is_stmt 0 view .LVU24
+ 112 0034 A0F10A03 		sub	r3, r0, #10
+ 276:app/heater.c  ****         return GPIO(GPIO_PORT_C, channel - 10);
+ 113              		.loc 1 276 8 view .LVU25
+ 114 0038 0F28     		cmp	r0, #15
+ 277:app/heater.c  ****     }
+ 115              		.loc 1 277 16 view .LVU26
+ 116 003a 43F02003 		orr	r3, r3, #32
+ 276:app/heater.c  ****         return GPIO(GPIO_PORT_C, channel - 10);
+ 117              		.loc 1 276 8 view .LVU27
+ 118 003e 2CD9     		bls	.L11
+ 119              	.L4:
+ 276:app/heater.c  ****         return GPIO(GPIO_PORT_C, channel - 10);
+ 120              		.loc 1 276 8 view .LVU28
+ 121              	.LBE33:
+ 122              	.LBE36:
+ 123              	.LBE39:
+ 124              	.LBE44:
+ 404:app/heater.c  ****         pwm_cfg.cycle_time = 1000;      /* 1kHz PWM 频率 */
+ 125              		.loc 1 404 9 is_stmt 1 view .LVU29
+ 406:app/heater.c  ****         pwm_cfg.invert = 0;             /* 不反相 */
+ 126              		.loc 1 406 27 is_stmt 0 view .LVU30
+ 127 0040 FF23     		movs	r3, #255
+ 409:app/heater.c  ****         
+ 128              		.loc 1 409 9 view .LVU31
+ 129 0042 01A9     		add	r1, sp, #4
+ 130 0044 4846     		mov	r0, r9
+ 406:app/heater.c  ****         pwm_cfg.invert = 0;             /* 不反相 */
+ 131              		.loc 1 406 27 view .LVU32
+ 132 0046 CDE90263 		strd	r6, r3, [sp, #8]
+ 404:app/heater.c  ****         pwm_cfg.cycle_time = 1000;      /* 1kHz PWM 频率 */
+ 133              		.loc 1 404 21 view .LVU33
+ARM GAS  /tmp/cc8XC8Jn.s 			page 11
+
+
+ 134 004a 8DF804A0 		strb	r10, [sp, #4]
+ 405:app/heater.c  ****         pwm_cfg.max_value = 255;        /* 8 位分辨率 */
+ 135              		.loc 1 405 9 is_stmt 1 view .LVU34
+ 406:app/heater.c  ****         pwm_cfg.invert = 0;             /* 不反相 */
+ 136              		.loc 1 406 9 view .LVU35
+ 407:app/heater.c  ****         pwm_cfg.use_hardware = 0;       /* 使用软件 PWM */
+ 137              		.loc 1 407 9 view .LVU36
+ 408:app/heater.c  ****         pwm_config(s_heater_pwm_channel[i], &pwm_cfg);
+ 138              		.loc 1 408 9 view .LVU37
+ 409:app/heater.c  ****         
+ 139              		.loc 1 409 9 view .LVU38
+ 140 004e FFF7FEFF 		bl	pwm_config
+ 141              	.LVL4:
+ 142              		.loc 1 412 9 view .LVU39
+ 413:app/heater.c  ****         s_heater_state[i].target_temp = 0.0f;
+ 414:app/heater.c  ****         s_heater_state[i].prev_error = 0.0f;
+ 415:app/heater.c  ****         s_heater_state[i].integral = 0.0f;
+ 416:app/heater.c  ****         s_heater_state[i].output = 0.0f;
+ 417:app/heater.c  ****         s_heater_state[i].initialized = 1;
+ 143              		.loc 1 417 39 is_stmt 0 view .LVU40
+ 144 0052 0123     		movs	r3, #1
+ 418:app/heater.c  ****         s_heater_state[i].pwm_enabled = 0;
+ 145              		.loc 1 418 39 view .LVU41
+ 146 0054 0022     		movs	r2, #0
+ 147              	.LBE49:
+ 395:app/heater.c  ****         uint8_t gpio = get_adc_gpio(s_heater_config[i].adc_channel);
+ 148              		.loc 1 395 5 view .LVU42
+ 149 0056 BD42     		cmp	r5, r7
+ 150              	.LBB50:
+ 412:app/heater.c  ****         s_heater_state[i].target_temp = 0.0f;
+ 151              		.loc 1 412 40 view .LVU43
+ 152 0058 C4F800B0 		str	fp, [r4]	@ float
+ 413:app/heater.c  ****         s_heater_state[i].prev_error = 0.0f;
+ 153              		.loc 1 413 9 is_stmt 1 view .LVU44
+ 413:app/heater.c  ****         s_heater_state[i].prev_error = 0.0f;
+ 154              		.loc 1 413 39 is_stmt 0 view .LVU45
+ 155 005c C4F804B0 		str	fp, [r4, #4]	@ float
+ 414:app/heater.c  ****         s_heater_state[i].integral = 0.0f;
+ 156              		.loc 1 414 9 is_stmt 1 view .LVU46
+ 414:app/heater.c  ****         s_heater_state[i].integral = 0.0f;
+ 157              		.loc 1 414 38 is_stmt 0 view .LVU47
+ 158 0060 C4F808B0 		str	fp, [r4, #8]	@ float
+ 415:app/heater.c  ****         s_heater_state[i].output = 0.0f;
+ 159              		.loc 1 415 9 is_stmt 1 view .LVU48
+ 415:app/heater.c  ****         s_heater_state[i].output = 0.0f;
+ 160              		.loc 1 415 36 is_stmt 0 view .LVU49
+ 161 0064 C4F80CB0 		str	fp, [r4, #12]	@ float
+ 416:app/heater.c  ****         s_heater_state[i].initialized = 1;
+ 162              		.loc 1 416 9 is_stmt 1 view .LVU50
+ 416:app/heater.c  ****         s_heater_state[i].initialized = 1;
+ 163              		.loc 1 416 34 is_stmt 0 view .LVU51
+ 164 0068 C4F810B0 		str	fp, [r4, #16]	@ float
+ 417:app/heater.c  ****         s_heater_state[i].pwm_enabled = 0;
+ 165              		.loc 1 417 9 is_stmt 1 view .LVU52
+ 417:app/heater.c  ****         s_heater_state[i].pwm_enabled = 0;
+ 166              		.loc 1 417 39 is_stmt 0 view .LVU53
+ 167 006c 2375     		strb	r3, [r4, #20]
+ARM GAS  /tmp/cc8XC8Jn.s 			page 12
+
+
+ 168              		.loc 1 418 9 is_stmt 1 view .LVU54
+ 169              		.loc 1 418 39 is_stmt 0 view .LVU55
+ 170 006e 6275     		strb	r2, [r4, #21]
+ 171              	.LBE50:
+ 395:app/heater.c  ****         uint8_t gpio = get_adc_gpio(s_heater_config[i].adc_channel);
+ 172              		.loc 1 395 43 is_stmt 1 view .LVU56
+ 173              	.LVL5:
+ 395:app/heater.c  ****         uint8_t gpio = get_adc_gpio(s_heater_config[i].adc_channel);
+ 174              		.loc 1 395 25 view .LVU57
+ 395:app/heater.c  ****         uint8_t gpio = get_adc_gpio(s_heater_config[i].adc_channel);
+ 175              		.loc 1 395 5 is_stmt 0 view .LVU58
+ 176 0070 04F11804 		add	r4, r4, #24
+ 177 0074 0CD0     		beq	.L5
+ 178              	.LBB51:
+ 396:app/heater.c  ****         
+ 179              		.loc 1 396 24 view .LVU59
+ 180 0076 287D     		ldrb	r0, [r5, #20]	@ zero_extendqisi2
+ 404:app/heater.c  ****         pwm_cfg.cycle_time = 1000;      /* 1kHz PWM 频率 */
+ 181              		.loc 1 404 41 view .LVU60
+ 182 0078 95F815A0 		ldrb	r10, [r5, #21]	@ zero_extendqisi2
+ 409:app/heater.c  ****         
+ 183              		.loc 1 409 9 view .LVU61
+ 184 007c 18F8019B 		ldrb	r9, [r8], #1	@ zero_extendqisi2
+ 185              	.LVL6:
+ 396:app/heater.c  ****         
+ 186              		.loc 1 396 9 is_stmt 1 view .LVU62
+ 187              	.LBB45:
+ 265:app/heater.c  **** {
+ 188              		.loc 1 265 1 view .LVU63
+ 189              	.LBB40:
+ 268:app/heater.c  ****         return GPIO(GPIO_PORT_A, channel);
+ 190              		.loc 1 268 5 view .LVU64
+ 272:app/heater.c  ****         return GPIO(GPIO_PORT_B, channel - 8);
+ 191              		.loc 1 272 5 view .LVU65
+ 192              	.LBB37:
+ 265:app/heater.c  **** {
+ 193              		.loc 1 265 1 view .LVU66
+ 194              	.LBB34:
+ 276:app/heater.c  ****         return GPIO(GPIO_PORT_C, channel - 10);
+ 195              		.loc 1 276 5 view .LVU67
+ 196              	.LBE34:
+ 197              	.LBE37:
+ 268:app/heater.c  ****         return GPIO(GPIO_PORT_A, channel);
+ 198              		.loc 1 268 8 is_stmt 0 view .LVU68
+ 199 0080 0728     		cmp	r0, #7
+ 200 0082 05F11405 		add	r5, r5, #20
+ 201 0086 D3D8     		bhi	.L12
+ 202              	.LVL7:
+ 203              	.L2:
+ 268:app/heater.c  ****         return GPIO(GPIO_PORT_A, channel);
+ 204              		.loc 1 268 8 view .LVU69
+ 205              	.LBE40:
+ 206              	.LBE45:
+ 398:app/heater.c  ****             /* 配置 ADC 通道，使用较长的采样时间以提高精度 */
+ 207              		.loc 1 398 9 is_stmt 1 view .LVU70
+ 400:app/heater.c  ****         }
+ 208              		.loc 1 400 13 view .LVU71
+ARM GAS  /tmp/cc8XC8Jn.s 			page 13
+
+
+ 209 0088 0721     		movs	r1, #7
+ 210 008a FFF7FEFF 		bl	adc_setup
+ 211              	.LVL8:
+ 400:app/heater.c  ****         }
+ 212              		.loc 1 400 13 is_stmt 0 view .LVU72
+ 213 008e D7E7     		b	.L4
+ 214              	.LVL9:
+ 215              	.L5:
+ 400:app/heater.c  ****         }
+ 216              		.loc 1 400 13 view .LVU73
+ 217              	.LBE51:
+ 218              	.LBE54:
+ 419:app/heater.c  ****     }
+ 420:app/heater.c  ****     
+ 421:app/heater.c  ****     s_module_initialized = 1;
+ 219              		.loc 1 421 5 is_stmt 1 view .LVU74
+ 220              		.loc 1 421 26 is_stmt 0 view .LVU75
+ 221 0090 0A4A     		ldr	r2, .L13+8
+ 222 0092 1370     		strb	r3, [r2]
+ 422:app/heater.c  **** }
+ 223              		.loc 1 422 1 view .LVU76
+ 224 0094 05B0     		add	sp, sp, #20
+ 225              		.cfi_remember_state
+ 226              		.cfi_def_cfa_offset 36
+ 227              		@ sp needed
+ 228 0096 BDE8F08F 		pop	{r4, r5, r6, r7, r8, r9, r10, fp, pc}
+ 229              	.LVL10:
+ 230              	.L11:
+ 231              		.cfi_restore_state
+ 232              	.LBB55:
+ 233              	.LBB52:
+ 234              	.LBB46:
+ 235              	.LBB41:
+ 236              	.LBB38:
+ 237              	.LBB35:
+ 277:app/heater.c  ****     }
+ 238              		.loc 1 277 16 view .LVU77
+ 239 009a D8B2     		uxtb	r0, r3
+ 240              	.LVL11:
+ 277:app/heater.c  ****     }
+ 241              		.loc 1 277 16 view .LVU78
+ 242              	.LBE35:
+ 243              	.LBE38:
+ 244              	.LBE41:
+ 245              	.LBE46:
+ 398:app/heater.c  ****             /* 配置 ADC 通道，使用较长的采样时间以提高精度 */
+ 246              		.loc 1 398 9 is_stmt 1 view .LVU79
+ 400:app/heater.c  ****         }
+ 247              		.loc 1 400 13 view .LVU80
+ 248 009c 0721     		movs	r1, #7
+ 249 009e FFF7FEFF 		bl	adc_setup
+ 250              	.LVL12:
+ 400:app/heater.c  ****         }
+ 251              		.loc 1 400 13 is_stmt 0 view .LVU81
+ 252 00a2 CDE7     		b	.L4
+ 253              	.L10:
+ 254              	.LBB47:
+ARM GAS  /tmp/cc8XC8Jn.s 			page 14
+
+
+ 255              	.LBB42:
+ 273:app/heater.c  ****     }
+ 256              		.loc 1 273 9 is_stmt 1 view .LVU82
+ 273:app/heater.c  ****     }
+ 257              		.loc 1 273 16 is_stmt 0 view .LVU83
+ 258 00a4 0838     		subs	r0, r0, #8
+ 259 00a6 40F01000 		orr	r0, r0, #16
+ 260              	.LBE42:
+ 261              	.LBE47:
+ 400:app/heater.c  ****         }
+ 262              		.loc 1 400 13 view .LVU84
+ 263 00aa 0721     		movs	r1, #7
+ 264              	.LBB48:
+ 265              	.LBB43:
+ 273:app/heater.c  ****     }
+ 266              		.loc 1 273 16 view .LVU85
+ 267 00ac C0B2     		uxtb	r0, r0
+ 268              	.LVL13:
+ 273:app/heater.c  ****     }
+ 269              		.loc 1 273 16 view .LVU86
+ 270              	.LBE43:
+ 271              	.LBE48:
+ 398:app/heater.c  ****             /* 配置 ADC 通道，使用较长的采样时间以提高精度 */
+ 272              		.loc 1 398 9 is_stmt 1 view .LVU87
+ 400:app/heater.c  ****         }
+ 273              		.loc 1 400 13 view .LVU88
+ 274 00ae FFF7FEFF 		bl	adc_setup
+ 275              	.LVL14:
+ 400:app/heater.c  ****         }
+ 276              		.loc 1 400 13 is_stmt 0 view .LVU89
+ 277 00b2 C5E7     		b	.L4
+ 278              	.L14:
+ 279              		.align	2
+ 280              	.L13:
+ 281 00b4 00000000 		.word	.LANCHOR0
+ 282 00b8 00000000 		.word	.LANCHOR2
+ 283 00bc 00000000 		.word	.LANCHOR3
+ 284 00c0 01000000 		.word	.LANCHOR1+1
+ 285              	.LBE52:
+ 286              	.LBE55:
+ 287              		.cfi_endproc
+ 288              	.LFE25:
+ 290              		.section	.text.heater_get_temp.part.0,"ax",%progbits
+ 291              		.align	1
+ 292              		.p2align 2,,3
+ 293              		.syntax unified
+ 294              		.thumb
+ 295              		.thumb_func
+ 296              		.fpu fpv4-sp-d16
+ 298              	heater_get_temp.part.0:
+ 299              	.LVL15:
+ 300              	.LFB26:
+ 423:app/heater.c  **** 
+ 424:app/heater.c  **** /**
+ 425:app/heater.c  ****  * @brief   设置目标温度
+ 426:app/heater.c  ****  * 
+ 427:app/heater.c  ****  * 验收标准: 3.3.2 - 支持 M104/M109 指令
+ARM GAS  /tmp/cc8XC8Jn.s 			page 15
+
+
+ 428:app/heater.c  ****  */
+ 429:app/heater.c  **** void
+ 430:app/heater.c  **** heater_set_temp(heater_id_t id, float target)
+ 431:app/heater.c  **** {
+ 432:app/heater.c  ****     float old_target;
+ 433:app/heater.c  ****     float target_diff;
+ 434:app/heater.c  ****     
+ 435:app/heater.c  ****     if (id >= HEATER_COUNT) {
+ 436:app/heater.c  ****         return;
+ 437:app/heater.c  ****     }
+ 438:app/heater.c  ****     
+ 439:app/heater.c  ****     /* 限制目标温度范围 */
+ 440:app/heater.c  ****     if (target < HEATER_TEMP_MIN) {
+ 441:app/heater.c  ****         target = HEATER_TEMP_MIN;
+ 442:app/heater.c  ****     } else if (target > HEATER_TEMP_MAX) {
+ 443:app/heater.c  ****         target = HEATER_TEMP_MAX;
+ 444:app/heater.c  ****     }
+ 445:app/heater.c  ****     
+ 446:app/heater.c  ****     /* 保存旧目标温度 */
+ 447:app/heater.c  ****     old_target = s_heater_state[id].target_temp;
+ 448:app/heater.c  ****     
+ 449:app/heater.c  ****     /* 计算目标温度变化量 */
+ 450:app/heater.c  ****     target_diff = target - old_target;
+ 451:app/heater.c  ****     if (target_diff < 0.0f) {
+ 452:app/heater.c  ****         target_diff = -target_diff;
+ 453:app/heater.c  ****     }
+ 454:app/heater.c  ****     
+ 455:app/heater.c  ****     /* 设置新目标温度 */
+ 456:app/heater.c  ****     s_heater_state[id].target_temp = target;
+ 457:app/heater.c  ****     
+ 458:app/heater.c  ****     /* 如果目标温度变化较大，重置 PID 状态 */
+ 459:app/heater.c  ****     if (target_diff > PID_TARGET_CHANGE_THRESHOLD) {
+ 460:app/heater.c  ****         s_heater_state[id].integral = 0.0f;
+ 461:app/heater.c  ****         s_heater_state[id].prev_error = 0.0f;
+ 462:app/heater.c  ****     }
+ 463:app/heater.c  ****     
+ 464:app/heater.c  ****     /* 如果目标温度为 0，关闭加热器 */
+ 465:app/heater.c  ****     if (target <= 0.0f) {
+ 466:app/heater.c  ****         s_heater_state[id].integral = 0.0f;
+ 467:app/heater.c  ****         s_heater_state[id].prev_error = 0.0f;
+ 468:app/heater.c  ****         s_heater_state[id].output = 0.0f;
+ 469:app/heater.c  ****         
+ 470:app/heater.c  ****         /* 关闭 PWM 输出 */
+ 471:app/heater.c  ****         heater_set_pwm(id, 0.0f);
+ 472:app/heater.c  ****         pwm_enable(s_heater_pwm_channel[id], 0);
+ 473:app/heater.c  ****         s_heater_state[id].pwm_enabled = 0;
+ 474:app/heater.c  ****     } else {
+ 475:app/heater.c  ****         /* 启用 PWM 输出 */
+ 476:app/heater.c  ****         if (!s_heater_state[id].pwm_enabled) {
+ 477:app/heater.c  ****             pwm_enable(s_heater_pwm_channel[id], 1);
+ 478:app/heater.c  ****             s_heater_state[id].pwm_enabled = 1;
+ 479:app/heater.c  ****         }
+ 480:app/heater.c  ****     }
+ 481:app/heater.c  **** }
+ 482:app/heater.c  **** 
+ 483:app/heater.c  **** /**
+ 484:app/heater.c  ****  * @brief   获取当前温度
+ARM GAS  /tmp/cc8XC8Jn.s 			page 16
+
+
+ 485:app/heater.c  ****  */
+ 486:app/heater.c  **** float
+ 487:app/heater.c  **** heater_get_temp(heater_id_t id)
+ 301              		.loc 1 487 1 is_stmt 1 view -0
+ 302              		.cfi_startproc
+ 303              		@ args = 0, pretend = 0, frame = 0
+ 304              		@ frame_needed = 0, uses_anonymous_args = 0
+ 488:app/heater.c  **** {
+ 489:app/heater.c  ****     if (id >= HEATER_COUNT) {
+ 490:app/heater.c  ****         return HEATER_TEMP_INVALID;
+ 491:app/heater.c  ****     }
+ 492:app/heater.c  ****     
+ 493:app/heater.c  ****     /* 确保模块已初始化 */
+ 494:app/heater.c  ****     if (!s_module_initialized) {
+ 305              		.loc 1 494 5 view .LVU91
+ 487:app/heater.c  **** {
+ 306              		.loc 1 487 1 is_stmt 0 view .LVU92
+ 307 0000 38B5     		push	{r3, r4, r5, lr}
+ 308              		.cfi_def_cfa_offset 16
+ 309              		.cfi_offset 3, -16
+ 310              		.cfi_offset 4, -12
+ 311              		.cfi_offset 5, -8
+ 312              		.cfi_offset 14, -4
+ 313              		.loc 1 494 9 view .LVU93
+ 314 0002 404B     		ldr	r3, .L38
+ 315              		.loc 1 494 8 view .LVU94
+ 316 0004 1B78     		ldrb	r3, [r3]	@ zero_extendqisi2
+ 487:app/heater.c  **** {
+ 317              		.loc 1 487 1 view .LVU95
+ 318 0006 0446     		mov	r4, r0
+ 319              		.loc 1 494 8 view .LVU96
+ 320 0008 002B     		cmp	r3, #0
+ 321 000a 3DD0     		beq	.L34
+ 322              	.LVL16:
+ 323              	.L16:
+ 495:app/heater.c  ****         heater_init();
+ 496:app/heater.c  ****     }
+ 497:app/heater.c  ****     
+ 498:app/heater.c  ****     /* 获取 ADC 通道对应的 GPIO */
+ 499:app/heater.c  ****     uint8_t gpio = get_adc_gpio(s_heater_config[id].adc_channel);
+ 324              		.loc 1 499 5 is_stmt 1 view .LVU97
+ 325              		.loc 1 499 20 is_stmt 0 view .LVU98
+ 326 000c 3E4B     		ldr	r3, .L38+4
+ 327 000e 04EB8402 		add	r2, r4, r4, lsl #2
+ 328 0012 13F82200 		ldrb	r0, [r3, r2, lsl #2]	@ zero_extendqisi2
+ 329              	.LVL17:
+ 330              	.LBB66:
+ 331              	.LBI66:
+ 265:app/heater.c  **** {
+ 332              		.loc 1 265 1 is_stmt 1 view .LVU99
+ 333              	.LBB67:
+ 268:app/heater.c  ****         return GPIO(GPIO_PORT_A, channel);
+ 334              		.loc 1 268 5 view .LVU100
+ 268:app/heater.c  ****         return GPIO(GPIO_PORT_A, channel);
+ 335              		.loc 1 268 8 is_stmt 0 view .LVU101
+ 336 0016 0728     		cmp	r0, #7
+ 337 0018 08D9     		bls	.L17
+ARM GAS  /tmp/cc8XC8Jn.s 			page 17
+
+
+ 272:app/heater.c  ****         return GPIO(GPIO_PORT_B, channel - 8);
+ 338              		.loc 1 272 5 is_stmt 1 view .LVU102
+ 272:app/heater.c  ****         return GPIO(GPIO_PORT_B, channel - 8);
+ 339              		.loc 1 272 8 is_stmt 0 view .LVU103
+ 340 001a 0928     		cmp	r0, #9
+ 341 001c 28D9     		bls	.L35
+ 342              	.LVL18:
+ 343              	.LBB68:
+ 344              	.LBI68:
+ 265:app/heater.c  **** {
+ 345              		.loc 1 265 1 is_stmt 1 view .LVU104
+ 346              	.LBB69:
+ 276:app/heater.c  ****         return GPIO(GPIO_PORT_C, channel - 10);
+ 347              		.loc 1 276 5 view .LVU105
+ 276:app/heater.c  ****         return GPIO(GPIO_PORT_C, channel - 10);
+ 348              		.loc 1 276 8 is_stmt 0 view .LVU106
+ 349 001e 0F28     		cmp	r0, #15
+ 350 0020 23D8     		bhi	.L23
+ 277:app/heater.c  ****     }
+ 351              		.loc 1 277 9 is_stmt 1 view .LVU107
+ 277:app/heater.c  ****     }
+ 352              		.loc 1 277 16 is_stmt 0 view .LVU108
+ 353 0022 A0F10A03 		sub	r3, r0, #10
+ 354 0026 43F02003 		orr	r3, r3, #32
+ 355 002a D8B2     		uxtb	r0, r3
+ 356              	.LVL19:
+ 357              	.L17:
+ 277:app/heater.c  ****     }
+ 358              		.loc 1 277 16 view .LVU109
+ 359              	.LBE69:
+ 360              	.LBE68:
+ 361              	.LBE67:
+ 362              	.LBE66:
+ 500:app/heater.c  ****     
+ 501:app/heater.c  ****     if (gpio == GPIO_INVALID) {
+ 363              		.loc 1 501 5 is_stmt 1 view .LVU110
+ 502:app/heater.c  ****         return HEATER_TEMP_INVALID;
+ 503:app/heater.c  ****     }
+ 504:app/heater.c  ****     
+ 505:app/heater.c  ****     /* 读取 ADC 值 */
+ 506:app/heater.c  ****     int32_t adc_value = adc_read(gpio);
+ 364              		.loc 1 506 5 view .LVU111
+ 365              		.loc 1 506 25 is_stmt 0 view .LVU112
+ 366 002c FFF7FEFF 		bl	adc_read
+ 367              	.LVL20:
+ 368              	.LBB71:
+ 369              	.LBB72:
+ 177:app/heater.c  ****         return HEATER_TEMP_INVALID;
+ 370              		.loc 1 177 8 view .LVU113
+ 371 0030 B0F5805F 		cmp	r0, #4096
+ 372              	.LBE72:
+ 373              	.LBE71:
+ 374              		.loc 1 506 25 view .LVU114
+ 375 0034 0246     		mov	r2, r0
+ 376              	.LVL21:
+ 507:app/heater.c  ****     
+ 508:app/heater.c  ****     if (adc_value < 0) {
+ARM GAS  /tmp/cc8XC8Jn.s 			page 18
+
+
+ 377              		.loc 1 508 5 is_stmt 1 view .LVU115
+ 509:app/heater.c  ****         /* ADC 读取错误 */
+ 510:app/heater.c  ****         return HEATER_TEMP_INVALID;
+ 511:app/heater.c  ****     }
+ 512:app/heater.c  ****     
+ 513:app/heater.c  ****     /* 使用查表法转换为温度 */
+ 514:app/heater.c  ****     float temp = ntc_adc_to_temp(adc_value);
+ 378              		.loc 1 514 5 view .LVU116
+ 379              	.LBB85:
+ 380              	.LBI71:
+ 174:app/heater.c  **** {
+ 381              		.loc 1 174 1 view .LVU117
+ 382              	.LBB79:
+ 177:app/heater.c  ****         return HEATER_TEMP_INVALID;
+ 383              		.loc 1 177 5 view .LVU118
+ 177:app/heater.c  ****         return HEATER_TEMP_INVALID;
+ 384              		.loc 1 177 8 is_stmt 0 view .LVU119
+ 385 0036 18D2     		bcs	.L23
+ 386              	.L32:
+ 182:app/heater.c  ****         /* ADC 值太小，温度超过最高值 */
+ 387              		.loc 1 182 5 is_stmt 1 view .LVU120
+ 182:app/heater.c  ****         /* ADC 值太小，温度超过最高值 */
+ 388              		.loc 1 182 8 is_stmt 0 view .LVU121
+ 389 0038 162A     		cmp	r2, #22
+ 390 003a 32DD     		ble	.L26
+ 187:app/heater.c  ****         /* ADC 值太大，温度低于最低值 */
+ 391              		.loc 1 187 5 is_stmt 1 view .LVU122
+ 187:app/heater.c  ****         /* ADC 值太大，温度低于最低值 */
+ 392              		.loc 1 187 8 is_stmt 0 view .LVU123
+ 393 003c 40F6AC43 		movw	r3, #3244
+ 394 0040 9A42     		cmp	r2, r3
+ 395 0042 24DC     		bgt	.L27
+ 396              	.LBB73:
+ 195:app/heater.c  ****             /* 找到区间，进行线性插值 */
+ 397              		.loc 1 195 53 view .LVU124
+ 398 0044 314D     		ldr	r5, .L38+8
+ 399              	.LBE73:
+ 400 0046 0123     		movs	r3, #1
+ 401 0048 1721     		movs	r1, #23
+ 402 004a 02E0     		b	.L24
+ 403              	.LVL22:
+ 404              	.L37:
+ 405              	.LBB76:
+ 194:app/heater.c  ****             adc_value <= (int32_t)s_ntc_table[i + 1].adc) {
+ 406              		.loc 1 194 49 view .LVU125
+ 407 004c 35F82310 		ldrh	r1, [r5, r3, lsl #2]
+ 408 0050 0346     		mov	r3, r0
+ 409              	.LVL23:
+ 410              	.L24:
+ 193:app/heater.c  ****         if (adc_value >= (int32_t)s_ntc_table[i].adc && 
+ 411              		.loc 1 193 50 is_stmt 1 view .LVU126
+ 193:app/heater.c  ****         if (adc_value >= (int32_t)s_ntc_table[i].adc && 
+ 412              		.loc 1 193 26 view .LVU127
+ 194:app/heater.c  ****             adc_value <= (int32_t)s_ntc_table[i + 1].adc) {
+ 413              		.loc 1 194 12 is_stmt 0 view .LVU128
+ 414 0052 8A42     		cmp	r2, r1
+ 415 0054 03F1FF3E 		add	lr, r3, #-1
+ARM GAS  /tmp/cc8XC8Jn.s 			page 19
+
+
+ 416              	.LVL24:
+ 194:app/heater.c  ****             adc_value <= (int32_t)s_ntc_table[i + 1].adc) {
+ 417              		.loc 1 194 9 is_stmt 1 view .LVU129
+ 193:app/heater.c  ****         if (adc_value >= (int32_t)s_ntc_table[i].adc && 
+ 418              		.loc 1 193 5 is_stmt 0 view .LVU130
+ 419 0058 03F10100 		add	r0, r3, #1
+ 194:app/heater.c  ****             adc_value <= (int32_t)s_ntc_table[i + 1].adc) {
+ 420              		.loc 1 194 12 view .LVU131
+ 421 005c 03DB     		blt	.L22
+ 195:app/heater.c  ****             /* 找到区间，进行线性插值 */
+ 422              		.loc 1 195 26 view .LVU132
+ 423 005e 35F823C0 		ldrh	ip, [r5, r3, lsl #2]
+ 194:app/heater.c  ****             adc_value <= (int32_t)s_ntc_table[i + 1].adc) {
+ 424              		.loc 1 194 54 view .LVU133
+ 425 0062 6245     		cmp	r2, ip
+ 426 0064 20DD     		ble	.L36
+ 427              	.L22:
+ 193:app/heater.c  ****         if (adc_value >= (int32_t)s_ntc_table[i].adc && 
+ 428              		.loc 1 193 5 view .LVU134
+ 429 0066 202B     		cmp	r3, #32
+ 430 0068 F0D1     		bne	.L37
+ 431              	.LVL25:
+ 432              	.L23:
+ 193:app/heater.c  ****         if (adc_value >= (int32_t)s_ntc_table[i].adc && 
+ 433              		.loc 1 193 5 view .LVU135
+ 434              	.LBE76:
+ 435              	.LBE79:
+ 436              	.LBE85:
+ 502:app/heater.c  ****     }
+ 437              		.loc 1 502 16 view .LVU136
+ 438 006a 9FED290A 		vldr.32	s0, .L38+12
+ 515:app/heater.c  ****     
+ 516:app/heater.c  ****     /* 更新当前温度状态 */
+ 517:app/heater.c  ****     if (temp != HEATER_TEMP_INVALID) {
+ 518:app/heater.c  ****         s_heater_state[id].current_temp = temp;
+ 519:app/heater.c  ****     }
+ 520:app/heater.c  ****     
+ 521:app/heater.c  ****     return temp;
+ 522:app/heater.c  **** }
+ 439              		.loc 1 522 1 view .LVU137
+ 440 006e 38BD     		pop	{r3, r4, r5, pc}
+ 441              	.LVL26:
+ 442              	.L35:
+ 443              	.LBB86:
+ 444              	.LBB70:
+ 273:app/heater.c  ****     }
+ 445              		.loc 1 273 9 is_stmt 1 view .LVU138
+ 273:app/heater.c  ****     }
+ 446              		.loc 1 273 16 is_stmt 0 view .LVU139
+ 447 0070 A0F10803 		sub	r3, r0, #8
+ 448 0074 43F01003 		orr	r3, r3, #16
+ 449 0078 D8B2     		uxtb	r0, r3
+ 450              	.LVL27:
+ 273:app/heater.c  ****     }
+ 451              		.loc 1 273 16 view .LVU140
+ 452              	.LBE70:
+ 453              	.LBE86:
+ARM GAS  /tmp/cc8XC8Jn.s 			page 20
+
+
+ 501:app/heater.c  ****         return HEATER_TEMP_INVALID;
+ 454              		.loc 1 501 5 is_stmt 1 view .LVU141
+ 506:app/heater.c  ****     
+ 455              		.loc 1 506 5 view .LVU142
+ 506:app/heater.c  ****     
+ 456              		.loc 1 506 25 is_stmt 0 view .LVU143
+ 457 007a FFF7FEFF 		bl	adc_read
+ 458              	.LVL28:
+ 459              	.LBB87:
+ 460              	.LBB80:
+ 177:app/heater.c  ****         return HEATER_TEMP_INVALID;
+ 461              		.loc 1 177 8 view .LVU144
+ 462 007e B0F5805F 		cmp	r0, #4096
+ 463              	.LBE80:
+ 464              	.LBE87:
+ 506:app/heater.c  ****     
+ 465              		.loc 1 506 25 view .LVU145
+ 466 0082 0246     		mov	r2, r0
+ 467              	.LVL29:
+ 508:app/heater.c  ****         /* ADC 读取错误 */
+ 468              		.loc 1 508 5 is_stmt 1 view .LVU146
+ 514:app/heater.c  ****     
+ 469              		.loc 1 514 5 view .LVU147
+ 470              	.LBB88:
+ 174:app/heater.c  **** {
+ 471              		.loc 1 174 1 view .LVU148
+ 472              	.LBB81:
+ 177:app/heater.c  ****         return HEATER_TEMP_INVALID;
+ 473              		.loc 1 177 5 view .LVU149
+ 177:app/heater.c  ****         return HEATER_TEMP_INVALID;
+ 474              		.loc 1 177 8 is_stmt 0 view .LVU150
+ 475 0084 D8D3     		bcc	.L32
+ 476 0086 F0E7     		b	.L23
+ 477              	.LVL30:
+ 478              	.L34:
+ 177:app/heater.c  ****         return HEATER_TEMP_INVALID;
+ 479              		.loc 1 177 8 view .LVU151
+ 480              	.LBE81:
+ 481              	.LBE88:
+ 495:app/heater.c  ****     }
+ 482              		.loc 1 495 9 is_stmt 1 view .LVU152
+ 483              	.LBB89:
+ 484              	.LBI89:
+ 380:app/heater.c  **** {
+ 485              		.loc 1 380 1 view .LVU153
+ 486              	.LBB90:
+ 382:app/heater.c  ****     
+ 487              		.loc 1 382 5 view .LVU154
+ 384:app/heater.c  ****         return;
+ 488              		.loc 1 384 5 view .LVU155
+ 489 0088 FFF7FEFF 		bl	heater_init.part.0
+ 490              	.LVL31:
+ 384:app/heater.c  ****         return;
+ 491              		.loc 1 384 5 is_stmt 0 view .LVU156
+ 492 008c BEE7     		b	.L16
+ 493              	.LVL32:
+ 494              	.L27:
+ARM GAS  /tmp/cc8XC8Jn.s 			page 21
+
+
+ 384:app/heater.c  ****         return;
+ 495              		.loc 1 384 5 view .LVU157
+ 496              	.LBE90:
+ 497              	.LBE89:
+ 498              	.LBB91:
+ 499              	.LBB82:
+ 189:app/heater.c  ****     }
+ 500              		.loc 1 189 16 view .LVU158
+ 501 008e 9FED210A 		vldr.32	s0, .L38+16
+ 502              	.LVL33:
+ 503              	.L21:
+ 189:app/heater.c  ****     }
+ 504              		.loc 1 189 16 view .LVU159
+ 505              	.LBE82:
+ 506              	.LBE91:
+ 518:app/heater.c  ****     }
+ 507              		.loc 1 518 9 is_stmt 1 view .LVU160
+ 518:app/heater.c  ****     }
+ 508              		.loc 1 518 41 is_stmt 0 view .LVU161
+ 509 0092 214B     		ldr	r3, .L38+20
+ 510 0094 04EB4404 		add	r4, r4, r4, lsl #1
+ 511 0098 03EBC404 		add	r4, r3, r4, lsl #3
+ 512 009c 84ED000A 		vstr.32	s0, [r4]
+ 513              	.LVL34:
+ 514              		.loc 1 522 1 view .LVU162
+ 515 00a0 38BD     		pop	{r3, r4, r5, pc}
+ 516              	.LVL35:
+ 517              	.L26:
+ 518              	.LBB92:
+ 519              	.LBB83:
+ 184:app/heater.c  ****     }
+ 520              		.loc 1 184 16 view .LVU163
+ 521 00a2 9FED1E0A 		vldr.32	s0, .L38+24
+ 522 00a6 F4E7     		b	.L21
+ 523              	.LVL36:
+ 524              	.L36:
+ 525              	.LBB77:
+ 526              	.LBB74:
+ 197:app/heater.c  ****             int32_t adc_high = s_ntc_table[i + 1].adc;
+ 527              		.loc 1 197 13 is_stmt 1 view .LVU164
+ 198:app/heater.c  ****             int32_t temp_low = s_ntc_table[i].temp;
+ 528              		.loc 1 198 13 view .LVU165
+ 199:app/heater.c  ****             int32_t temp_high = s_ntc_table[i + 1].temp;
+ 529              		.loc 1 199 13 view .LVU166
+ 203:app/heater.c  ****             float temp = (float)temp_low + ratio * (float)(temp_high - temp_low);
+ 530              		.loc 1 203 45 is_stmt 0 view .LVU167
+ 531 00a8 521A     		subs	r2, r2, r1
+ 532              	.LVL37:
+ 203:app/heater.c  ****             float temp = (float)temp_low + ratio * (float)(temp_high - temp_low);
+ 533              		.loc 1 203 75 view .LVU168
+ 534 00aa ACEB0101 		sub	r1, ip, r1
+ 535              	.LVL38:
+ 203:app/heater.c  ****             float temp = (float)temp_low + ratio * (float)(temp_high - temp_low);
+ 536              		.loc 1 203 27 view .LVU169
+ 537 00ae 07EE902A 		vmov	s15, r2	@ int
+ 203:app/heater.c  ****             float temp = (float)temp_low + ratio * (float)(temp_high - temp_low);
+ 538              		.loc 1 203 58 view .LVU170
+ARM GAS  /tmp/cc8XC8Jn.s 			page 22
+
+
+ 539 00b2 07EE101A 		vmov	s14, r1	@ int
+ 203:app/heater.c  ****             float temp = (float)temp_low + ratio * (float)(temp_high - temp_low);
+ 540              		.loc 1 203 27 view .LVU171
+ 541 00b6 F8EEE77A 		vcvt.f32.s32	s15, s15
+ 203:app/heater.c  ****             float temp = (float)temp_low + ratio * (float)(temp_high - temp_low);
+ 542              		.loc 1 203 58 view .LVU172
+ 543 00ba B8EEC77A 		vcvt.f32.s32	s14, s14
+ 199:app/heater.c  ****             int32_t temp_high = s_ntc_table[i + 1].temp;
+ 544              		.loc 1 199 46 view .LVU173
+ 545 00be 05EB8E0E 		add	lr, r5, lr, lsl #2
+ 546              	.LVL39:
+ 203:app/heater.c  ****             float temp = (float)temp_low + ratio * (float)(temp_high - temp_low);
+ 547              		.loc 1 203 19 view .LVU174
+ 548 00c2 C7EE876A 		vdiv.f32	s13, s15, s14
+ 200:app/heater.c  ****             
+ 549              		.loc 1 200 51 view .LVU175
+ 550 00c6 05EB8303 		add	r3, r5, r3, lsl #2
+ 551              	.LVL40:
+ 199:app/heater.c  ****             int32_t temp_high = s_ntc_table[i + 1].temp;
+ 552              		.loc 1 199 46 view .LVU176
+ 553 00ca BEF90220 		ldrsh	r2, [lr, #2]
+ 554              	.LVL41:
+ 200:app/heater.c  ****             
+ 555              		.loc 1 200 13 is_stmt 1 view .LVU177
+ 203:app/heater.c  ****             float temp = (float)temp_low + ratio * (float)(temp_high - temp_low);
+ 556              		.loc 1 203 13 view .LVU178
+ 204:app/heater.c  ****             
+ 557              		.loc 1 204 13 view .LVU179
+ 207:app/heater.c  ****         }
+ 558              		.loc 1 207 13 view .LVU180
+ 200:app/heater.c  ****             
+ 559              		.loc 1 200 21 is_stmt 0 view .LVU181
+ 560 00ce B3F90230 		ldrsh	r3, [r3, #2]
+ 204:app/heater.c  ****             
+ 561              		.loc 1 204 70 view .LVU182
+ 562 00d2 9B1A     		subs	r3, r3, r2
+ 204:app/heater.c  ****             
+ 563              		.loc 1 204 26 view .LVU183
+ 564 00d4 07EE902A 		vmov	s15, r2	@ int
+ 565 00d8 F8EEE75A 		vcvt.f32.s32	s11, s15
+ 204:app/heater.c  ****             
+ 566              		.loc 1 204 70 view .LVU184
+ 567 00dc 07EE903A 		vmov	s15, r3	@ int
+ 204:app/heater.c  ****             
+ 568              		.loc 1 204 52 view .LVU185
+ 569 00e0 F8EEE77A 		vcvt.f32.s32	s15, s15
+ 207:app/heater.c  ****         }
+ 570              		.loc 1 207 25 view .LVU186
+ 571 00e4 B2EE046A 		vmov.f32	s12, #1.0e+1
+ 204:app/heater.c  ****             
+ 572              		.loc 1 204 50 view .LVU187
+ 573 00e8 66EEA77A 		vmul.f32	s15, s13, s15
+ 574              	.LBE74:
+ 575              	.LBE77:
+ 576              	.LBE83:
+ 577              	.LBE92:
+ 517:app/heater.c  ****         s_heater_state[id].current_temp = temp;
+ARM GAS  /tmp/cc8XC8Jn.s 			page 23
+
+
+ 578              		.loc 1 517 8 view .LVU188
+ 579 00ec 9FED087A 		vldr.32	s14, .L38+12
+ 580              	.LBB93:
+ 581              	.LBB84:
+ 582              	.LBB78:
+ 583              	.LBB75:
+ 204:app/heater.c  ****             
+ 584              		.loc 1 204 19 view .LVU189
+ 585 00f0 77EEA57A 		vadd.f32	s15, s15, s11
+ 207:app/heater.c  ****         }
+ 586              		.loc 1 207 25 view .LVU190
+ 587 00f4 87EE860A 		vdiv.f32	s0, s15, s12
+ 588              	.LVL42:
+ 207:app/heater.c  ****         }
+ 589              		.loc 1 207 25 view .LVU191
+ 590              	.LBE75:
+ 591              	.LBE78:
+ 592              	.LBE84:
+ 593              	.LBE93:
+ 517:app/heater.c  ****         s_heater_state[id].current_temp = temp;
+ 594              		.loc 1 517 5 is_stmt 1 view .LVU192
+ 517:app/heater.c  ****         s_heater_state[id].current_temp = temp;
+ 595              		.loc 1 517 8 is_stmt 0 view .LVU193
+ 596 00f8 B4EE470A 		vcmp.f32	s0, s14
+ 597 00fc F1EE10FA 		vmrs	APSR_nzcv, FPSCR
+ 598 0100 C7D1     		bne	.L21
+ 599 0102 B2E7     		b	.L23
+ 600              	.L39:
+ 601              		.align	2
+ 602              	.L38:
+ 603 0104 00000000 		.word	.LANCHOR3
+ 604 0108 00000000 		.word	.LANCHOR0
+ 605 010c 00000000 		.word	.LANCHOR4
+ 606 0110 00C079C4 		.word	-998653952
+ 607 0114 00000000 		.word	0
+ 608 0118 00000000 		.word	.LANCHOR2
+ 609 011c 00009643 		.word	1133903872
+ 610              		.cfi_endproc
+ 611              	.LFE26:
+ 613              		.section	.text.heater_init,"ax",%progbits
+ 614              		.align	1
+ 615              		.p2align 2,,3
+ 616              		.global	heater_init
+ 617              		.syntax unified
+ 618              		.thumb
+ 619              		.thumb_func
+ 620              		.fpu fpv4-sp-d16
+ 622              	heater_init:
+ 623              	.LFB16:
+ 381:app/heater.c  ****     pwm_config_t pwm_cfg;
+ 624              		.loc 1 381 1 is_stmt 1 view -0
+ 625              		.cfi_startproc
+ 626              		@ args = 0, pretend = 0, frame = 0
+ 627              		@ frame_needed = 0, uses_anonymous_args = 0
+ 628              		@ link register save eliminated.
+ 382:app/heater.c  ****     
+ 629              		.loc 1 382 5 view .LVU195
+ARM GAS  /tmp/cc8XC8Jn.s 			page 24
+
+
+ 384:app/heater.c  ****         return;
+ 630              		.loc 1 384 5 view .LVU196
+ 384:app/heater.c  ****         return;
+ 631              		.loc 1 384 9 is_stmt 0 view .LVU197
+ 632 0000 024B     		ldr	r3, .L43
+ 384:app/heater.c  ****         return;
+ 633              		.loc 1 384 8 view .LVU198
+ 634 0002 1B78     		ldrb	r3, [r3]	@ zero_extendqisi2
+ 635 0004 03B1     		cbz	r3, .L42
+ 422:app/heater.c  **** 
+ 636              		.loc 1 422 1 view .LVU199
+ 637 0006 7047     		bx	lr
+ 638              	.L42:
+ 639 0008 FFF7FEBF 		b	heater_init.part.0
+ 640              	.LVL43:
+ 641              	.L44:
+ 642              		.align	2
+ 643              	.L43:
+ 644 000c 00000000 		.word	.LANCHOR3
+ 645              		.cfi_endproc
+ 646              	.LFE16:
+ 648              		.section	.text.heater_set_temp,"ax",%progbits
+ 649              		.align	1
+ 650              		.p2align 2,,3
+ 651              		.global	heater_set_temp
+ 652              		.syntax unified
+ 653              		.thumb
+ 654              		.thumb_func
+ 655              		.fpu fpv4-sp-d16
+ 657              	heater_set_temp:
+ 658              	.LVL44:
+ 659              	.LFB17:
+ 431:app/heater.c  ****     float old_target;
+ 660              		.loc 1 431 1 is_stmt 1 view -0
+ 661              		.cfi_startproc
+ 662              		@ args = 0, pretend = 0, frame = 8
+ 663              		@ frame_needed = 0, uses_anonymous_args = 0
+ 432:app/heater.c  ****     float target_diff;
+ 664              		.loc 1 432 5 view .LVU201
+ 433:app/heater.c  ****     
+ 665              		.loc 1 433 5 view .LVU202
+ 435:app/heater.c  ****         return;
+ 666              		.loc 1 435 5 view .LVU203
+ 435:app/heater.c  ****         return;
+ 667              		.loc 1 435 8 is_stmt 0 view .LVU204
+ 668 0000 0128     		cmp	r0, #1
+ 669 0002 41D8     		bhi	.L67
+ 431:app/heater.c  ****     float old_target;
+ 670              		.loc 1 431 1 view .LVU205
+ 671 0004 70B5     		push	{r4, r5, r6, lr}
+ 672              		.cfi_def_cfa_offset 16
+ 673              		.cfi_offset 4, -16
+ 674              		.cfi_offset 5, -12
+ 675              		.cfi_offset 6, -8
+ 676              		.cfi_offset 14, -4
+ 440:app/heater.c  ****         target = HEATER_TEMP_MIN;
+ 677              		.loc 1 440 8 view .LVU206
+ARM GAS  /tmp/cc8XC8Jn.s 			page 25
+
+
+ 678 0006 B5EEC00A 		vcmpe.f32	s0, #0
+ 679 000a F1EE10FA 		vmrs	APSR_nzcv, FPSCR
+ 431:app/heater.c  ****     float old_target;
+ 680              		.loc 1 431 1 view .LVU207
+ 681 000e 82B0     		sub	sp, sp, #8
+ 682              		.cfi_def_cfa_offset 24
+ 683 0010 0446     		mov	r4, r0
+ 440:app/heater.c  ****         target = HEATER_TEMP_MIN;
+ 684              		.loc 1 440 5 is_stmt 1 view .LVU208
+ 440:app/heater.c  ****         target = HEATER_TEMP_MIN;
+ 685              		.loc 1 440 8 is_stmt 0 view .LVU209
+ 686 0012 36D4     		bmi	.L59
+ 442:app/heater.c  ****         target = HEATER_TEMP_MAX;
+ 687              		.loc 1 442 12 is_stmt 1 view .LVU210
+ 442:app/heater.c  ****         target = HEATER_TEMP_MAX;
+ 688              		.loc 1 442 15 is_stmt 0 view .LVU211
+ 689 0014 DFED357A 		vldr.32	s15, .L72
+ 443:app/heater.c  ****     }
+ 690              		.loc 1 443 16 view .LVU212
+ 691 0018 B4EE670A 		vcmp.f32	s0, s15
+ 692 001c F1EE10FA 		vmrs	APSR_nzcv, FPSCR
+ 693 0020 C8BF     		it	gt
+ 694 0022 B0EE670A 		vmovgt.f32	s0, s15
+ 695              	.LVL45:
+ 696              	.L48:
+ 447:app/heater.c  ****     
+ 697              		.loc 1 447 5 is_stmt 1 view .LVU213
+ 450:app/heater.c  ****     if (target_diff < 0.0f) {
+ 698              		.loc 1 450 5 view .LVU214
+ 447:app/heater.c  ****     
+ 699              		.loc 1 447 16 is_stmt 0 view .LVU215
+ 700 0026 324D     		ldr	r5, .L72+4
+ 701 0028 04EB4403 		add	r3, r4, r4, lsl #1
+ 702 002c 05EBC303 		add	r3, r5, r3, lsl #3
+ 450:app/heater.c  ****     if (target_diff < 0.0f) {
+ 703              		.loc 1 450 17 view .LVU216
+ 704 0030 D3ED017A 		vldr.32	s15, [r3, #4]
+ 705 0034 70EE677A 		vsub.f32	s15, s0, s15
+ 706              	.LVL46:
+ 451:app/heater.c  ****         target_diff = -target_diff;
+ 707              		.loc 1 451 5 is_stmt 1 view .LVU217
+ 447:app/heater.c  ****     
+ 708              		.loc 1 447 16 is_stmt 0 view .LVU218
+ 709 0038 6600     		lsls	r6, r4, #1
+ 451:app/heater.c  ****         target_diff = -target_diff;
+ 710              		.loc 1 451 8 view .LVU219
+ 711 003a F5EEC07A 		vcmpe.f32	s15, #0
+ 712 003e F1EE10FA 		vmrs	APSR_nzcv, FPSCR
+ 452:app/heater.c  ****     }
+ 713              		.loc 1 452 9 is_stmt 1 view .LVU220
+ 452:app/heater.c  ****     }
+ 714              		.loc 1 452 21 is_stmt 0 view .LVU221
+ 715 0042 48BF     		it	mi
+ 716 0044 F1EE677A 		vnegmi.f32	s15, s15
+ 717              	.LVL47:
+ 456:app/heater.c  ****     
+ 718              		.loc 1 456 5 is_stmt 1 view .LVU222
+ARM GAS  /tmp/cc8XC8Jn.s 			page 26
+
+
+ 459:app/heater.c  ****         s_heater_state[id].integral = 0.0f;
+ 719              		.loc 1 459 8 is_stmt 0 view .LVU223
+ 720 0048 B2EE047A 		vmov.f32	s14, #1.0e+1
+ 456:app/heater.c  ****     
+ 721              		.loc 1 456 36 view .LVU224
+ 722 004c 3319     		adds	r3, r6, r4
+ 459:app/heater.c  ****         s_heater_state[id].integral = 0.0f;
+ 723              		.loc 1 459 8 view .LVU225
+ 724 004e F4EEC77A 		vcmpe.f32	s15, s14
+ 456:app/heater.c  ****     
+ 725              		.loc 1 456 36 view .LVU226
+ 726 0052 05EBC303 		add	r3, r5, r3, lsl #3
+ 459:app/heater.c  ****         s_heater_state[id].integral = 0.0f;
+ 727              		.loc 1 459 8 view .LVU227
+ 728 0056 F1EE10FA 		vmrs	APSR_nzcv, FPSCR
+ 456:app/heater.c  ****     
+ 729              		.loc 1 456 36 view .LVU228
+ 730 005a 83ED010A 		vstr.32	s0, [r3, #4]
+ 731              	.LVL48:
+ 459:app/heater.c  ****         s_heater_state[id].integral = 0.0f;
+ 732              		.loc 1 459 5 is_stmt 1 view .LVU229
+ 459:app/heater.c  ****         s_heater_state[id].integral = 0.0f;
+ 733              		.loc 1 459 8 is_stmt 0 view .LVU230
+ 734 005e 02DD     		ble	.L52
+ 460:app/heater.c  ****         s_heater_state[id].prev_error = 0.0f;
+ 735              		.loc 1 460 9 is_stmt 1 view .LVU231
+ 460:app/heater.c  ****         s_heater_state[id].prev_error = 0.0f;
+ 736              		.loc 1 460 37 is_stmt 0 view .LVU232
+ 737 0060 0022     		movs	r2, #0
+ 738 0062 DA60     		str	r2, [r3, #12]	@ float
+ 461:app/heater.c  ****     }
+ 739              		.loc 1 461 9 is_stmt 1 view .LVU233
+ 461:app/heater.c  ****     }
+ 740              		.loc 1 461 39 is_stmt 0 view .LVU234
+ 741 0064 9A60     		str	r2, [r3, #8]	@ float
+ 742              	.L52:
+ 465:app/heater.c  ****         s_heater_state[id].integral = 0.0f;
+ 743              		.loc 1 465 5 is_stmt 1 view .LVU235
+ 465:app/heater.c  ****         s_heater_state[id].integral = 0.0f;
+ 744              		.loc 1 465 8 is_stmt 0 view .LVU236
+ 745 0066 DFED237A 		vldr.32	s15, .L72+8
+ 746              	.LVL49:
+ 465:app/heater.c  ****         s_heater_state[id].integral = 0.0f;
+ 747              		.loc 1 465 8 view .LVU237
+ 748 006a B4EEE70A 		vcmpe.f32	s0, s15
+ 749 006e F1EE10FA 		vmrs	APSR_nzcv, FPSCR
+ 750 0072 0AD9     		bls	.L70
+ 476:app/heater.c  ****             pwm_enable(s_heater_pwm_channel[id], 1);
+ 751              		.loc 1 476 9 is_stmt 1 view .LVU238
+ 476:app/heater.c  ****             pwm_enable(s_heater_pwm_channel[id], 1);
+ 752              		.loc 1 476 32 is_stmt 0 view .LVU239
+ 753 0074 2644     		add	r6, r6, r4
+ 754 0076 05EBC605 		add	r5, r5, r6, lsl #3
+ 476:app/heater.c  ****             pwm_enable(s_heater_pwm_channel[id], 1);
+ 755              		.loc 1 476 12 view .LVU240
+ 756 007a 6B7D     		ldrb	r3, [r5, #21]	@ zero_extendqisi2
+ 757 007c 63B3     		cbz	r3, .L71
+ARM GAS  /tmp/cc8XC8Jn.s 			page 27
+
+
+ 481:app/heater.c  **** 
+ 758              		.loc 1 481 1 view .LVU241
+ 759 007e 02B0     		add	sp, sp, #8
+ 760              		.cfi_remember_state
+ 761              		.cfi_def_cfa_offset 16
+ 762              		@ sp needed
+ 763 0080 70BD     		pop	{r4, r5, r6, pc}
+ 764              	.L59:
+ 765              		.cfi_restore_state
+ 441:app/heater.c  ****     } else if (target > HEATER_TEMP_MAX) {
+ 766              		.loc 1 441 16 view .LVU242
+ 767 0082 9FED1C0A 		vldr.32	s0, .L72+8
+ 768              	.LVL50:
+ 441:app/heater.c  ****     } else if (target > HEATER_TEMP_MAX) {
+ 769              		.loc 1 441 16 view .LVU243
+ 770 0086 CEE7     		b	.L48
+ 771              	.LVL51:
+ 772              	.L67:
+ 773              		.cfi_def_cfa_offset 0
+ 774              		.cfi_restore 4
+ 775              		.cfi_restore 5
+ 776              		.cfi_restore 6
+ 777              		.cfi_restore 14
+ 441:app/heater.c  ****     } else if (target > HEATER_TEMP_MAX) {
+ 778              		.loc 1 441 16 view .LVU244
+ 779 0088 7047     		bx	lr
+ 780              	.L70:
+ 781              		.cfi_def_cfa_offset 24
+ 782              		.cfi_offset 4, -16
+ 783              		.cfi_offset 5, -12
+ 784              		.cfi_offset 6, -8
+ 785              		.cfi_offset 14, -4
+ 466:app/heater.c  ****         s_heater_state[id].prev_error = 0.0f;
+ 786              		.loc 1 466 9 is_stmt 1 view .LVU245
+ 466:app/heater.c  ****         s_heater_state[id].prev_error = 0.0f;
+ 787              		.loc 1 466 37 is_stmt 0 view .LVU246
+ 788 008a 3319     		adds	r3, r6, r4
+ 789 008c 05EBC303 		add	r3, r5, r3, lsl #3
+ 790              	.LBB98:
+ 791              	.LBB99:
+ 792              	.LBB100:
+ 793              	.LBB101:
+ 363:app/heater.c  ****     
+ 794              		.loc 1 363 15 view .LVU247
+ 795 0090 194A     		ldr	r2, .L72+12
+ 796              	.LBE101:
+ 797              	.LBE100:
+ 798              	.LBE99:
+ 799              	.LBE98:
+ 466:app/heater.c  ****         s_heater_state[id].prev_error = 0.0f;
+ 800              		.loc 1 466 37 view .LVU248
+ 801 0092 C3ED037A 		vstr.32	s15, [r3, #12]
+ 467:app/heater.c  ****         s_heater_state[id].output = 0.0f;
+ 802              		.loc 1 467 9 is_stmt 1 view .LVU249
+ 467:app/heater.c  ****         s_heater_state[id].output = 0.0f;
+ 803              		.loc 1 467 39 is_stmt 0 view .LVU250
+ 804 0096 C3ED027A 		vstr.32	s15, [r3, #8]
+ARM GAS  /tmp/cc8XC8Jn.s 			page 28
+
+
+ 468:app/heater.c  ****         
+ 805              		.loc 1 468 9 is_stmt 1 view .LVU251
+ 468:app/heater.c  ****         
+ 806              		.loc 1 468 35 is_stmt 0 view .LVU252
+ 807 009a C3ED047A 		vstr.32	s15, [r3, #16]
+ 471:app/heater.c  ****         pwm_enable(s_heater_pwm_channel[id], 0);
+ 808              		.loc 1 471 9 is_stmt 1 view .LVU253
+ 809              	.LVL52:
+ 810              	.LBB105:
+ 811              	.LBI98:
+ 353:app/heater.c  **** {
+ 812              		.loc 1 353 1 view .LVU254
+ 813              	.LBB104:
+ 355:app/heater.c  ****     float max_power;
+ 814              		.loc 1 355 5 view .LVU255
+ 356:app/heater.c  ****     
+ 815              		.loc 1 356 5 view .LVU256
+ 358:app/heater.c  ****         return;
+ 816              		.loc 1 358 5 view .LVU257
+ 817              	.LBB103:
+ 818              	.LBI100:
+ 353:app/heater.c  **** {
+ 819              		.loc 1 353 1 view .LVU258
+ 820              	.LBB102:
+ 362:app/heater.c  ****     max_power = s_heater_config[id].max_power;
+ 821              		.loc 1 362 5 view .LVU259
+ 363:app/heater.c  ****     
+ 822              		.loc 1 363 15 is_stmt 0 view .LVU260
+ 823 009e 04EB8403 		add	r3, r4, r4, lsl #2
+ 824 00a2 02EB8303 		add	r3, r2, r3, lsl #2
+ 825 00a6 93ED010A 		vldr.32	s0, [r3, #4]
+ 826              	.LVL53:
+ 362:app/heater.c  ****     max_power = s_heater_config[id].max_power;
+ 827              		.loc 1 362 12 view .LVU261
+ 828 00aa 1449     		ldr	r1, .L72+16
+ 366:app/heater.c  ****         duty = max_power;
+ 829              		.loc 1 366 8 view .LVU262
+ 830 00ac B4EEE70A 		vcmpe.f32	s0, s15
+ 831 00b0 F1EE10FA 		vmrs	APSR_nzcv, FPSCR
+ 362:app/heater.c  ****     max_power = s_heater_config[id].max_power;
+ 832              		.loc 1 362 12 view .LVU263
+ 833 00b4 085D     		ldrb	r0, [r1, r4]	@ zero_extendqisi2
+ 834              	.LVL54:
+ 363:app/heater.c  ****     
+ 835              		.loc 1 363 5 is_stmt 1 view .LVU264
+ 366:app/heater.c  ****         duty = max_power;
+ 836              		.loc 1 366 5 view .LVU265
+ 371:app/heater.c  **** }
+ 837              		.loc 1 371 5 is_stmt 0 view .LVU266
+ 838 00b6 0190     		str	r0, [sp, #4]
+ 839 00b8 58BF     		it	pl
+ 840 00ba B0EE670A 		vmovpl.f32	s0, s15
+ 841              	.LVL55:
+ 371:app/heater.c  **** }
+ 842              		.loc 1 371 5 is_stmt 1 view .LVU267
+ 843 00be FFF7FEFF 		bl	pwm_set_duty
+ 844              	.LVL56:
+ARM GAS  /tmp/cc8XC8Jn.s 			page 29
+
+
+ 371:app/heater.c  **** }
+ 845              		.loc 1 371 5 is_stmt 0 view .LVU268
+ 846              	.LBE102:
+ 847              	.LBE103:
+ 848              	.LBE104:
+ 849              	.LBE105:
+ 472:app/heater.c  ****         s_heater_state[id].pwm_enabled = 0;
+ 850              		.loc 1 472 9 is_stmt 1 view .LVU269
+ 851 00c2 0198     		ldr	r0, [sp, #4]
+ 852 00c4 0021     		movs	r1, #0
+ 853 00c6 FFF7FEFF 		bl	pwm_enable
+ 854              	.LVL57:
+ 473:app/heater.c  ****     } else {
+ 855              		.loc 1 473 9 view .LVU270
+ 473:app/heater.c  ****     } else {
+ 856              		.loc 1 473 40 is_stmt 0 view .LVU271
+ 857 00ca 3444     		add	r4, r4, r6
+ 858 00cc 05EBC405 		add	r5, r5, r4, lsl #3
+ 859 00d0 0023     		movs	r3, #0
+ 860 00d2 6B75     		strb	r3, [r5, #21]
+ 481:app/heater.c  **** 
+ 861              		.loc 1 481 1 view .LVU272
+ 862 00d4 02B0     		add	sp, sp, #8
+ 863              		.cfi_remember_state
+ 864              		.cfi_def_cfa_offset 16
+ 865              		@ sp needed
+ 866 00d6 70BD     		pop	{r4, r5, r6, pc}
+ 867              	.LVL58:
+ 868              	.L71:
+ 869              		.cfi_restore_state
+ 477:app/heater.c  ****             s_heater_state[id].pwm_enabled = 1;
+ 870              		.loc 1 477 13 is_stmt 1 view .LVU273
+ 871 00d8 084B     		ldr	r3, .L72+16
+ 872 00da 0121     		movs	r1, #1
+ 873 00dc 185D     		ldrb	r0, [r3, r4]	@ zero_extendqisi2
+ 874              	.LVL59:
+ 477:app/heater.c  ****             s_heater_state[id].pwm_enabled = 1;
+ 875              		.loc 1 477 13 is_stmt 0 view .LVU274
+ 876 00de FFF7FEFF 		bl	pwm_enable
+ 877              	.LVL60:
+ 478:app/heater.c  ****         }
+ 878              		.loc 1 478 13 is_stmt 1 view .LVU275
+ 478:app/heater.c  ****         }
+ 879              		.loc 1 478 44 is_stmt 0 view .LVU276
+ 880 00e2 0123     		movs	r3, #1
+ 881 00e4 6B75     		strb	r3, [r5, #21]
+ 481:app/heater.c  **** 
+ 882              		.loc 1 481 1 view .LVU277
+ 883 00e6 02B0     		add	sp, sp, #8
+ 884              		.cfi_def_cfa_offset 16
+ 885              		@ sp needed
+ 886 00e8 70BD     		pop	{r4, r5, r6, pc}
+ 887              	.L73:
+ 888 00ea 00BF     		.align	2
+ 889              	.L72:
+ 890 00ec 00009643 		.word	1133903872
+ 891 00f0 00000000 		.word	.LANCHOR2
+ARM GAS  /tmp/cc8XC8Jn.s 			page 30
+
+
+ 892 00f4 00000000 		.word	0
+ 893 00f8 00000000 		.word	.LANCHOR0
+ 894 00fc 00000000 		.word	.LANCHOR1
+ 895              		.cfi_endproc
+ 896              	.LFE17:
+ 898              		.section	.text.heater_get_temp,"ax",%progbits
+ 899              		.align	1
+ 900              		.p2align 2,,3
+ 901              		.global	heater_get_temp
+ 902              		.syntax unified
+ 903              		.thumb
+ 904              		.thumb_func
+ 905              		.fpu fpv4-sp-d16
+ 907              	heater_get_temp:
+ 908              	.LVL61:
+ 909              	.LFB18:
+ 488:app/heater.c  ****     if (id >= HEATER_COUNT) {
+ 910              		.loc 1 488 1 is_stmt 1 view -0
+ 911              		.cfi_startproc
+ 912              		@ args = 0, pretend = 0, frame = 0
+ 913              		@ frame_needed = 0, uses_anonymous_args = 0
+ 914              		@ link register save eliminated.
+ 489:app/heater.c  ****         return HEATER_TEMP_INVALID;
+ 915              		.loc 1 489 5 view .LVU279
+ 489:app/heater.c  ****         return HEATER_TEMP_INVALID;
+ 916              		.loc 1 489 8 is_stmt 0 view .LVU280
+ 917 0000 0128     		cmp	r0, #1
+ 918 0002 01D8     		bhi	.L75
+ 919 0004 FFF7FEBF 		b	heater_get_temp.part.0
+ 920              	.LVL62:
+ 921              	.L75:
+ 922              		.loc 1 522 1 view .LVU281
+ 923 0008 9FED010A 		vldr.32	s0, .L76
+ 924 000c 7047     		bx	lr
+ 925              	.L77:
+ 926 000e 00BF     		.align	2
+ 927              	.L76:
+ 928 0010 00C079C4 		.word	-998653952
+ 929              		.cfi_endproc
+ 930              	.LFE18:
+ 932              		.section	.text.heater_get_target,"ax",%progbits
+ 933              		.align	1
+ 934              		.p2align 2,,3
+ 935              		.global	heater_get_target
+ 936              		.syntax unified
+ 937              		.thumb
+ 938              		.thumb_func
+ 939              		.fpu fpv4-sp-d16
+ 941              	heater_get_target:
+ 942              	.LVL63:
+ 943              	.LFB19:
+ 523:app/heater.c  **** 
+ 524:app/heater.c  **** /**
+ 525:app/heater.c  ****  * @brief   获取目标温度
+ 526:app/heater.c  ****  */
+ 527:app/heater.c  **** float
+ 528:app/heater.c  **** heater_get_target(heater_id_t id)
+ARM GAS  /tmp/cc8XC8Jn.s 			page 31
+
+
+ 529:app/heater.c  **** {
+ 944              		.loc 1 529 1 is_stmt 1 view -0
+ 945              		.cfi_startproc
+ 946              		@ args = 0, pretend = 0, frame = 0
+ 947              		@ frame_needed = 0, uses_anonymous_args = 0
+ 948              		@ link register save eliminated.
+ 530:app/heater.c  ****     if (id >= HEATER_COUNT) {
+ 949              		.loc 1 530 5 view .LVU283
+ 950              		.loc 1 530 8 is_stmt 0 view .LVU284
+ 951 0000 0128     		cmp	r0, #1
+ 952 0002 07D8     		bhi	.L80
+ 531:app/heater.c  ****         return 0.0f;
+ 532:app/heater.c  ****     }
+ 533:app/heater.c  ****     
+ 534:app/heater.c  ****     return s_heater_state[id].target_temp;
+ 953              		.loc 1 534 5 is_stmt 1 view .LVU285
+ 954              		.loc 1 534 30 is_stmt 0 view .LVU286
+ 955 0004 054B     		ldr	r3, .L81
+ 956 0006 00EB4000 		add	r0, r0, r0, lsl #1
+ 957              	.LVL64:
+ 958              		.loc 1 534 30 view .LVU287
+ 959 000a 03EBC000 		add	r0, r3, r0, lsl #3
+ 960 000e 90ED010A 		vldr.32	s0, [r0, #4]
+ 961 0012 7047     		bx	lr
+ 962              	.LVL65:
+ 963              	.L80:
+ 531:app/heater.c  ****         return 0.0f;
+ 964              		.loc 1 531 16 view .LVU288
+ 965 0014 9FED020A 		vldr.32	s0, .L81+4
+ 535:app/heater.c  **** }
+ 966              		.loc 1 535 1 view .LVU289
+ 967 0018 7047     		bx	lr
+ 968              	.L82:
+ 969 001a 00BF     		.align	2
+ 970              	.L81:
+ 971 001c 00000000 		.word	.LANCHOR2
+ 972 0020 00000000 		.word	0
+ 973              		.cfi_endproc
+ 974              	.LFE19:
+ 976              		.section	.text.heater_is_at_target,"ax",%progbits
+ 977              		.align	1
+ 978              		.p2align 2,,3
+ 979              		.global	heater_is_at_target
+ 980              		.syntax unified
+ 981              		.thumb
+ 982              		.thumb_func
+ 983              		.fpu fpv4-sp-d16
+ 985              	heater_is_at_target:
+ 986              	.LVL66:
+ 987              	.LFB20:
+ 536:app/heater.c  **** 
+ 537:app/heater.c  **** /**
+ 538:app/heater.c  ****  * @brief   检查是否达到目标温度
+ 539:app/heater.c  ****  */
+ 540:app/heater.c  **** int
+ 541:app/heater.c  **** heater_is_at_target(heater_id_t id)
+ 542:app/heater.c  **** {
+ARM GAS  /tmp/cc8XC8Jn.s 			page 32
+
+
+ 988              		.loc 1 542 1 is_stmt 1 view -0
+ 989              		.cfi_startproc
+ 990              		@ args = 0, pretend = 0, frame = 0
+ 991              		@ frame_needed = 0, uses_anonymous_args = 0
+ 543:app/heater.c  ****     if (id >= HEATER_COUNT) {
+ 992              		.loc 1 543 5 view .LVU291
+ 993              		.loc 1 543 8 is_stmt 0 view .LVU292
+ 994 0000 0128     		cmp	r0, #1
+ 995 0002 01D9     		bls	.L94
+ 544:app/heater.c  ****         return 0;
+ 996              		.loc 1 544 16 view .LVU293
+ 997 0004 0020     		movs	r0, #0
+ 998              	.LVL67:
+ 545:app/heater.c  ****     }
+ 546:app/heater.c  ****     
+ 547:app/heater.c  ****     float current = heater_get_temp(id);
+ 548:app/heater.c  ****     float target = s_heater_state[id].target_temp;
+ 549:app/heater.c  ****     
+ 550:app/heater.c  ****     /* 如果目标温度为 0，认为已达到 */
+ 551:app/heater.c  ****     if (target <= 0.0f) {
+ 552:app/heater.c  ****         return 1;
+ 553:app/heater.c  ****     }
+ 554:app/heater.c  ****     
+ 555:app/heater.c  ****     /* 检查当前温度是否在目标温度 ±3°C 范围内 */
+ 556:app/heater.c  ****     float diff = current - target;
+ 557:app/heater.c  ****     if (diff < 0.0f) {
+ 558:app/heater.c  ****         diff = -diff;
+ 559:app/heater.c  ****     }
+ 560:app/heater.c  ****     
+ 561:app/heater.c  ****     return (diff <= HEATER_TEMP_TOLERANCE) ? 1 : 0;
+ 562:app/heater.c  **** }
+ 999              		.loc 1 562 1 view .LVU294
+ 1000 0006 7047     		bx	lr
+ 1001              	.LVL68:
+ 1002              	.L94:
+ 547:app/heater.c  ****     float target = s_heater_state[id].target_temp;
+ 1003              		.loc 1 547 5 is_stmt 1 view .LVU295
+ 542:app/heater.c  ****     if (id >= HEATER_COUNT) {
+ 1004              		.loc 1 542 1 is_stmt 0 view .LVU296
+ 1005 0008 10B5     		push	{r4, lr}
+ 1006              		.cfi_def_cfa_offset 8
+ 1007              		.cfi_offset 4, -8
+ 1008              		.cfi_offset 14, -4
+ 1009 000a 0446     		mov	r4, r0
+ 1010              	.LVL69:
+ 1011              	.LBB106:
+ 1012              	.LBI106:
+ 487:app/heater.c  **** {
+ 1013              		.loc 1 487 1 is_stmt 1 view .LVU297
+ 1014              	.LBB107:
+ 489:app/heater.c  ****         return HEATER_TEMP_INVALID;
+ 1015              		.loc 1 489 5 view .LVU298
+ 1016 000c FFF7FEFF 		bl	heater_get_temp.part.0
+ 1017              	.LVL70:
+ 489:app/heater.c  ****         return HEATER_TEMP_INVALID;
+ 1018              		.loc 1 489 5 is_stmt 0 view .LVU299
+ 1019              	.LBE107:
+ARM GAS  /tmp/cc8XC8Jn.s 			page 33
+
+
+ 1020              	.LBE106:
+ 548:app/heater.c  ****     
+ 1021              		.loc 1 548 11 view .LVU300
+ 1022 0010 1048     		ldr	r0, .L95
+ 1023 0012 04EB4404 		add	r4, r4, r4, lsl #1
+ 1024              	.LVL71:
+ 548:app/heater.c  ****     
+ 1025              		.loc 1 548 11 view .LVU301
+ 1026 0016 00EBC404 		add	r4, r0, r4, lsl #3
+ 1027 001a D4ED017A 		vldr.32	s15, [r4, #4]
+ 1028              	.LVL72:
+ 548:app/heater.c  ****     
+ 1029              		.loc 1 548 5 is_stmt 1 view .LVU302
+ 551:app/heater.c  ****         return 1;
+ 1030              		.loc 1 551 5 view .LVU303
+ 551:app/heater.c  ****         return 1;
+ 1031              		.loc 1 551 8 is_stmt 0 view .LVU304
+ 1032 001e F5EEC07A 		vcmpe.f32	s15, #0
+ 1033 0022 F1EE10FA 		vmrs	APSR_nzcv, FPSCR
+ 1034 0026 12D9     		bls	.L88
+ 556:app/heater.c  ****     if (diff < 0.0f) {
+ 1035              		.loc 1 556 5 is_stmt 1 view .LVU305
+ 556:app/heater.c  ****     if (diff < 0.0f) {
+ 1036              		.loc 1 556 11 is_stmt 0 view .LVU306
+ 1037 0028 30EE670A 		vsub.f32	s0, s0, s15
+ 1038              	.LVL73:
+ 557:app/heater.c  ****         diff = -diff;
+ 1039              		.loc 1 557 5 is_stmt 1 view .LVU307
+ 561:app/heater.c  **** }
+ 1040              		.loc 1 561 48 is_stmt 0 view .LVU308
+ 1041 002c F0EE087A 		vmov.f32	s15, #3.0e+0
+ 1042              	.LVL74:
+ 557:app/heater.c  ****         diff = -diff;
+ 1043              		.loc 1 557 8 view .LVU309
+ 1044 0030 B5EEC00A 		vcmpe.f32	s0, #0
+ 1045 0034 F1EE10FA 		vmrs	APSR_nzcv, FPSCR
+ 558:app/heater.c  ****     }
+ 1046              		.loc 1 558 9 is_stmt 1 view .LVU310
+ 558:app/heater.c  ****     }
+ 1047              		.loc 1 558 14 is_stmt 0 view .LVU311
+ 1048 0038 48BF     		it	mi
+ 1049 003a B1EE400A 		vnegmi.f32	s0, s0
+ 1050              	.LVL75:
+ 561:app/heater.c  **** }
+ 1051              		.loc 1 561 5 is_stmt 1 view .LVU312
+ 561:app/heater.c  **** }
+ 1052              		.loc 1 561 48 is_stmt 0 view .LVU313
+ 1053 003e B4EEE70A 		vcmpe.f32	s0, s15
+ 1054 0042 F1EE10FA 		vmrs	APSR_nzcv, FPSCR
+ 1055 0046 94BF     		ite	ls
+ 1056 0048 0120     		movls	r0, #1
+ 1057 004a 0020     		movhi	r0, #0
+ 1058              		.loc 1 562 1 view .LVU314
+ 1059 004c 10BD     		pop	{r4, pc}
+ 1060              	.LVL76:
+ 1061              	.L88:
+ 552:app/heater.c  ****     }
+ARM GAS  /tmp/cc8XC8Jn.s 			page 34
+
+
+ 1062              		.loc 1 552 16 view .LVU315
+ 1063 004e 0120     		movs	r0, #1
+ 1064              		.loc 1 562 1 view .LVU316
+ 1065 0050 10BD     		pop	{r4, pc}
+ 1066              	.L96:
+ 1067 0052 00BF     		.align	2
+ 1068              	.L95:
+ 1069 0054 00000000 		.word	.LANCHOR2
+ 1070              		.cfi_endproc
+ 1071              	.LFE20:
+ 1073              		.section	.text.heater_task,"ax",%progbits
+ 1074              		.align	1
+ 1075              		.p2align 2,,3
+ 1076              		.global	heater_task
+ 1077              		.syntax unified
+ 1078              		.thumb
+ 1079              		.thumb_func
+ 1080              		.fpu fpv4-sp-d16
+ 1082              	heater_task:
+ 1083              	.LFB21:
+ 563:app/heater.c  **** 
+ 564:app/heater.c  **** /**
+ 565:app/heater.c  ****  * @brief   温度控制周期任务
+ 566:app/heater.c  ****  * 
+ 567:app/heater.c  ****  * 执行 PID 计算和 PWM 输出更新。
+ 568:app/heater.c  ****  * 应在主循环中以 100ms 间隔调用。
+ 569:app/heater.c  ****  * 
+ 570:app/heater.c  ****  * 验收标准: 3.2.1 - 移植 klippy/extras/heaters.py 的 ControlPID 类
+ 571:app/heater.c  ****  *          3.2.3 - 温度稳定后波动 < ±3°C
+ 572:app/heater.c  ****  */
+ 573:app/heater.c  **** void
+ 574:app/heater.c  **** heater_task(void)
+ 575:app/heater.c  **** {
+ 1084              		.loc 1 575 1 is_stmt 1 view -0
+ 1085              		.cfi_startproc
+ 1086              		@ args = 0, pretend = 0, frame = 0
+ 1087              		@ frame_needed = 0, uses_anonymous_args = 0
+ 576:app/heater.c  ****     float current_temp;
+ 1088              		.loc 1 576 5 view .LVU318
+ 577:app/heater.c  ****     float output;
+ 1089              		.loc 1 577 5 view .LVU319
+ 578:app/heater.c  ****     
+ 579:app/heater.c  ****     if (!s_module_initialized) {
+ 1090              		.loc 1 579 5 view .LVU320
+ 1091              		.loc 1 579 9 is_stmt 0 view .LVU321
+ 1092 0000 5E4B     		ldr	r3, .L161
+ 1093              		.loc 1 579 8 view .LVU322
+ 1094 0002 1B78     		ldrb	r3, [r3]	@ zero_extendqisi2
+ 1095 0004 002B     		cmp	r3, #0
+ 1096 0006 00F0A180 		beq	.L151
+ 575:app/heater.c  ****     float current_temp;
+ 1097              		.loc 1 575 1 view .LVU323
+ 1098 000a 2DE9F041 		push	{r4, r5, r6, r7, r8, lr}
+ 1099              		.cfi_def_cfa_offset 24
+ 1100              		.cfi_offset 4, -24
+ 1101              		.cfi_offset 5, -20
+ 1102              		.cfi_offset 6, -16
+ARM GAS  /tmp/cc8XC8Jn.s 			page 35
+
+
+ 1103              		.cfi_offset 7, -12
+ 1104              		.cfi_offset 8, -8
+ 1105              		.cfi_offset 14, -4
+ 1106              		.loc 1 579 8 view .LVU324
+ 1107 000e 0026     		movs	r6, #0
+ 575:app/heater.c  ****     float current_temp;
+ 1108              		.loc 1 575 1 view .LVU325
+ 1109 0010 2DED088B 		vpush.64	{d8, d9, d10, d11}
+ 1110              		.cfi_def_cfa_offset 56
+ 1111              		.cfi_offset 80, -56
+ 1112              		.cfi_offset 81, -52
+ 1113              		.cfi_offset 82, -48
+ 1114              		.cfi_offset 83, -44
+ 1115              		.cfi_offset 84, -40
+ 1116              		.cfi_offset 85, -36
+ 1117              		.cfi_offset 86, -32
+ 1118              		.cfi_offset 87, -28
+ 1119 0014 DFF88481 		ldr	r8, .L161+32
+ 1120 0018 594D     		ldr	r5, .L161+4
+ 1121 001a 5A4C     		ldr	r4, .L161+8
+ 1122              	.LBB125:
+ 580:app/heater.c  ****         return;
+ 581:app/heater.c  ****     }
+ 582:app/heater.c  ****     
+ 583:app/heater.c  ****     /* 遍历所有加热器 */
+ 584:app/heater.c  ****     for (uint8_t i = 0; i < HEATER_COUNT; i++) {
+ 585:app/heater.c  ****         /* 读取当前温度 */
+ 586:app/heater.c  ****         current_temp = heater_get_temp((heater_id_t)i);
+ 587:app/heater.c  ****         
+ 588:app/heater.c  ****         /* 检查温度读取是否有效 */
+ 589:app/heater.c  ****         if (current_temp == HEATER_TEMP_INVALID) {
+ 1123              		.loc 1 589 12 view .LVU326
+ 1124 001c 9FED5A9A 		vldr.32	s18, .L161+12
+ 590:app/heater.c  ****             /* 温度读取错误，关闭加热器以确保安全 */
+ 591:app/heater.c  ****             heater_set_pwm((heater_id_t)i, 0.0f);
+ 592:app/heater.c  ****             continue;
+ 593:app/heater.c  ****         }
+ 594:app/heater.c  ****         
+ 595:app/heater.c  ****         /* 如果目标温度为 0，跳过 PID 计算 */
+ 596:app/heater.c  ****         if (s_heater_state[i].target_temp <= 0.0f) {
+ 1125              		.loc 1 596 12 view .LVU327
+ 1126 0020 DFED5AAA 		vldr.32	s21, .L161+16
+ 1127              	.LBB126:
+ 1128              	.LBB127:
+ 308:app/heater.c  ****     
+ 1129              		.loc 1 308 30 view .LVU328
+ 1130 0024 DFED5A8A 		vldr.32	s17, .L161+20
+ 311:app/heater.c  ****         state->integral = PID_INTEGRAL_MAX;
+ 1131              		.loc 1 311 8 view .LVU329
+ 1132 0028 DFED5A9A 		vldr.32	s19, .L161+24
+ 313:app/heater.c  ****         state->integral = -PID_INTEGRAL_MAX;
+ 1133              		.loc 1 313 15 view .LVU330
+ 1134 002c 9FED5AAA 		vldr.32	s20, .L161+28
+ 1135              	.LBE127:
+ 1136              	.LBE126:
+ 1137              	.LBE125:
+ 579:app/heater.c  ****         return;
+ARM GAS  /tmp/cc8XC8Jn.s 			page 36
+
+
+ 1138              		.loc 1 579 8 view .LVU331
+ 1139 0030 B7EE008A 		vmov.f32	s16, #1.0e+0
+ 1140              	.LBB158:
+ 1141              	.LBB132:
+ 1142              	.LBB128:
+ 333:app/heater.c  ****         output = 1.0f;
+ 1143              		.loc 1 333 15 view .LVU332
+ 1144 0034 B0EE48BA 		vmov.f32	s22, s16
+ 1145              	.LBE128:
+ 1146              	.LBE132:
+ 1147              	.LBE158:
+ 579:app/heater.c  ****         return;
+ 1148              		.loc 1 579 8 view .LVU333
+ 1149 0038 3746     		mov	r7, r6
+ 1150              	.L121:
+ 1151              	.LVL77:
+ 1152              	.LBB159:
+ 586:app/heater.c  ****         
+ 1153              		.loc 1 586 9 is_stmt 1 view .LVU334
+ 1154              	.LBB133:
+ 1155              	.LBI133:
+ 487:app/heater.c  **** {
+ 1156              		.loc 1 487 1 view .LVU335
+ 1157              	.LBB134:
+ 489:app/heater.c  ****         return HEATER_TEMP_INVALID;
+ 1158              		.loc 1 489 5 view .LVU336
+ 1159 003a 3046     		mov	r0, r6
+ 1160 003c FFF7FEFF 		bl	heater_get_temp.part.0
+ 1161              	.LVL78:
+ 489:app/heater.c  ****         return HEATER_TEMP_INVALID;
+ 1162              		.loc 1 489 5 is_stmt 0 view .LVU337
+ 1163              	.LBE134:
+ 1164              	.LBE133:
+ 589:app/heater.c  ****             /* 温度读取错误，关闭加热器以确保安全 */
+ 1165              		.loc 1 589 9 is_stmt 1 view .LVU338
+ 589:app/heater.c  ****             /* 温度读取错误，关闭加热器以确保安全 */
+ 1166              		.loc 1 589 12 is_stmt 0 view .LVU339
+ 1167 0040 B4EE490A 		vcmp.f32	s0, s18
+ 1168 0044 F1EE10FA 		vmrs	APSR_nzcv, FPSCR
+ 1169 0048 67D0     		beq	.L155
+ 1170              		.loc 1 596 9 is_stmt 1 view .LVU340
+ 1171              		.loc 1 596 30 is_stmt 0 view .LVU341
+ 1172 004a D4ED017A 		vldr.32	s15, [r4, #4]
+ 1173              		.loc 1 596 12 view .LVU342
+ 1174 004e F5EEC07A 		vcmpe.f32	s15, #0
+ 1175 0052 F1EE10FA 		vmrs	APSR_nzcv, FPSCR
+ 1176 0056 5ED9     		bls	.L156
+ 597:app/heater.c  ****             s_heater_state[i].output = 0.0f;
+ 598:app/heater.c  ****             heater_set_pwm((heater_id_t)i, 0.0f);
+ 599:app/heater.c  ****             continue;
+ 600:app/heater.c  ****         }
+ 601:app/heater.c  ****         
+ 602:app/heater.c  ****         /* 执行 PID 计算 */
+ 603:app/heater.c  ****         output = pid_update(&s_heater_state[i], 
+ 1177              		.loc 1 603 9 is_stmt 1 view .LVU343
+ 1178              	.LVL79:
+ 1179              	.LBB135:
+ARM GAS  /tmp/cc8XC8Jn.s 			page 37
+
+
+ 1180              	.LBI126:
+ 297:app/heater.c  ****            float current_temp, float dt)
+ 1181              		.loc 1 297 1 view .LVU344
+ 1182              	.LBB129:
+ 300:app/heater.c  ****     float derivative;
+ 1183              		.loc 1 300 5 view .LVU345
+ 301:app/heater.c  ****     float output;
+ 1184              		.loc 1 301 5 view .LVU346
+ 302:app/heater.c  ****     
+ 1185              		.loc 1 302 5 view .LVU347
+ 305:app/heater.c  ****     
+ 1186              		.loc 1 305 5 view .LVU348
+ 305:app/heater.c  ****     
+ 1187              		.loc 1 305 11 is_stmt 0 view .LVU349
+ 1188 0058 37EEC00A 		vsub.f32	s0, s15, s0
+ 1189              	.LVL80:
+ 308:app/heater.c  ****     
+ 1190              		.loc 1 308 5 is_stmt 1 view .LVU350
+ 308:app/heater.c  ****     
+ 1191              		.loc 1 308 21 is_stmt 0 view .LVU351
+ 1192 005c D4ED037A 		vldr.32	s15, [r4, #12]
+ 308:app/heater.c  ****     
+ 1193              		.loc 1 308 30 view .LVU352
+ 1194 0060 60EE285A 		vmul.f32	s11, s0, s17
+ 308:app/heater.c  ****     
+ 1195              		.loc 1 308 21 view .LVU353
+ 1196 0064 75EEA77A 		vadd.f32	s15, s11, s15
+ 311:app/heater.c  ****         state->integral = PID_INTEGRAL_MAX;
+ 1197              		.loc 1 311 5 is_stmt 1 view .LVU354
+ 311:app/heater.c  ****         state->integral = PID_INTEGRAL_MAX;
+ 1198              		.loc 1 311 8 is_stmt 0 view .LVU355
+ 1199 0068 F4EEE97A 		vcmpe.f32	s15, s19
+ 1200 006c F1EE10FA 		vmrs	APSR_nzcv, FPSCR
+ 1201 0070 69DC     		bgt	.L157
+ 313:app/heater.c  ****         state->integral = -PID_INTEGRAL_MAX;
+ 1202              		.loc 1 313 12 is_stmt 1 view .LVU356
+ 308:app/heater.c  ****     
+ 1203              		.loc 1 308 21 is_stmt 0 view .LVU357
+ 1204 0072 F4EECA7A 		vcmpe.f32	s15, s20
+ 1205 0076 F1EE10FA 		vmrs	APSR_nzcv, FPSCR
+ 1206 007a 48BF     		it	mi
+ 1207 007c F0EE4A7A 		vmovmi.f32	s15, s20
+ 1208 0080 C4ED037A 		vstr.32	s15, [r4, #12]
+ 1209              	.L109:
+ 318:app/heater.c  ****     state->prev_error = error;
+ 1210              		.loc 1 318 5 is_stmt 1 view .LVU358
+ 318:app/heater.c  ****     state->prev_error = error;
+ 1211              		.loc 1 318 25 is_stmt 0 view .LVU359
+ 1212 0084 D4ED026A 		vldr.32	s13, [r4, #8]
+ 323:app/heater.c  ****            + params->kd * derivative;
+ 1213              		.loc 1 323 32 view .LVU360
+ 1214 0088 94ED036A 		vldr.32	s12, [r4, #12]
+ 322:app/heater.c  ****            + params->ki * state->integral 
+ 1215              		.loc 1 322 25 view .LVU361
+ 1216 008c D5ED027A 		vldr.32	s15, [r5, #8]
+ 324:app/heater.c  ****     
+ 1217              		.loc 1 324 25 view .LVU362
+ARM GAS  /tmp/cc8XC8Jn.s 			page 38
+
+
+ 1218 0090 95ED045A 		vldr.32	s10, [r5, #16]
+ 319:app/heater.c  ****     
+ 1219              		.loc 1 319 23 view .LVU363
+ 1220 0094 84ED020A 		vstr.32	s0, [r4, #8]
+ 318:app/heater.c  ****     state->prev_error = error;
+ 1221              		.loc 1 318 25 view .LVU364
+ 1222 0098 70EE666A 		vsub.f32	s13, s0, s13
+ 322:app/heater.c  ****            + params->ki * state->integral 
+ 1223              		.loc 1 322 25 view .LVU365
+ 1224 009c 60EE277A 		vmul.f32	s15, s0, s15
+ 318:app/heater.c  ****     state->prev_error = error;
+ 1225              		.loc 1 318 16 view .LVU366
+ 1226 00a0 86EEA87A 		vdiv.f32	s14, s13, s17
+ 1227              	.LVL81:
+ 319:app/heater.c  ****     
+ 1228              		.loc 1 319 5 is_stmt 1 view .LVU367
+ 322:app/heater.c  ****            + params->ki * state->integral 
+ 1229              		.loc 1 322 5 view .LVU368
+ 323:app/heater.c  ****            + params->kd * derivative;
+ 1230              		.loc 1 323 25 is_stmt 0 view .LVU369
+ 1231 00a4 D5ED036A 		vldr.32	s13, [r5, #12]
+ 1232 00a8 66EE266A 		vmul.f32	s13, s12, s13
+ 324:app/heater.c  ****     
+ 1233              		.loc 1 324 25 view .LVU370
+ 1234 00ac 27EE057A 		vmul.f32	s14, s14, s10
+ 1235              	.LVL82:
+ 323:app/heater.c  ****            + params->kd * derivative;
+ 1236              		.loc 1 323 12 view .LVU371
+ 1237 00b0 77EEA67A 		vadd.f32	s15, s15, s13
+ 322:app/heater.c  ****            + params->ki * state->integral 
+ 1238              		.loc 1 322 12 view .LVU372
+ 1239 00b4 77EE877A 		vadd.f32	s15, s15, s14
+ 1240              	.LVL83:
+ 327:app/heater.c  ****         output = 0.0f;
+ 1241              		.loc 1 327 5 is_stmt 1 view .LVU373
+ 327:app/heater.c  ****         output = 0.0f;
+ 1242              		.loc 1 327 8 is_stmt 0 view .LVU374
+ 1243 00b8 F5EEC07A 		vcmpe.f32	s15, #0
+ 1244 00bc F1EE10FA 		vmrs	APSR_nzcv, FPSCR
+ 1245 00c0 45D4     		bmi	.L158
+ 333:app/heater.c  ****         output = 1.0f;
+ 1246              		.loc 1 333 12 is_stmt 1 view .LVU375
+ 333:app/heater.c  ****         output = 1.0f;
+ 1247              		.loc 1 333 15 is_stmt 0 view .LVU376
+ 1248 00c2 F4EECB7A 		vcmpe.f32	s15, s22
+ 1249 00c6 F1EE10FA 		vmrs	APSR_nzcv, FPSCR
+ 1250 00ca 0FDD     		ble	.L113
+ 334:app/heater.c  ****         /* 当输出饱和且误差为正时，停止积分累积 (anti-windup) */
+ 1251              		.loc 1 334 9 is_stmt 1 view .LVU377
+ 1252              	.LVL84:
+ 336:app/heater.c  ****             state->integral -= error * dt;
+ 1253              		.loc 1 336 9 view .LVU378
+ 336:app/heater.c  ****             state->integral -= error * dt;
+ 1254              		.loc 1 336 12 is_stmt 0 view .LVU379
+ 1255 00cc B5EEC00A 		vcmpe.f32	s0, #0
+ 1256 00d0 F1EE10FA 		vmrs	APSR_nzcv, FPSCR
+ 1257 00d4 4FDD     		ble	.L149
+ARM GAS  /tmp/cc8XC8Jn.s 			page 39
+
+
+ 336:app/heater.c  ****             state->integral -= error * dt;
+ 1258              		.loc 1 336 26 view .LVU380
+ 1259 00d6 B5EEC06A 		vcmpe.f32	s12, #0
+ 1260 00da F1EE10FA 		vmrs	APSR_nzcv, FPSCR
+ 1261 00de 4ADD     		ble	.L149
+ 337:app/heater.c  ****         }
+ 1262              		.loc 1 337 13 is_stmt 1 view .LVU381
+ 337:app/heater.c  ****         }
+ 1263              		.loc 1 337 29 is_stmt 0 view .LVU382
+ 1264 00e0 36EE656A 		vsub.f32	s12, s12, s11
+ 334:app/heater.c  ****         /* 当输出饱和且误差为正时，停止积分累积 (anti-windup) */
+ 1265              		.loc 1 334 16 view .LVU383
+ 1266 00e4 F7EE007A 		vmov.f32	s15, #1.0e+0
+ 337:app/heater.c  ****         }
+ 1267              		.loc 1 337 29 view .LVU384
+ 1268 00e8 84ED036A 		vstr.32	s12, [r4, #12]
+ 1269              	.LVL85:
+ 1270              	.L113:
+ 341:app/heater.c  ****     return output;
+ 1271              		.loc 1 341 5 is_stmt 1 view .LVU385
+ 1272              	.LBE129:
+ 1273              	.LBE135:
+ 1274              	.LBB136:
+ 1275              	.LBB137:
+ 1276              	.LBB138:
+ 1277              	.LBB139:
+ 367:app/heater.c  ****     }
+ 1278              		.loc 1 367 14 is_stmt 0 view .LVU386
+ 1279 00ec B4EE678A 		vcmp.f32	s16, s15
+ 1280 00f0 F1EE10FA 		vmrs	APSR_nzcv, FPSCR
+ 371:app/heater.c  **** }
+ 1281              		.loc 1 371 5 view .LVU387
+ 1282 00f4 4CBF     		ite	mi
+ 1283 00f6 B0EE480A 		vmovmi.f32	s0, s16
+ 1284 00fa B0EE670A 		vmovpl.f32	s0, s15
+ 1285              	.LVL86:
+ 371:app/heater.c  **** }
+ 1286              		.loc 1 371 5 view .LVU388
+ 1287 00fe 3846     		mov	r0, r7
+ 1288              	.LBE139:
+ 1289              	.LBE138:
+ 1290              	.LBE137:
+ 1291              	.LBE136:
+ 1292              	.LBB146:
+ 1293              	.LBB130:
+ 341:app/heater.c  ****     return output;
+ 1294              		.loc 1 341 19 view .LVU389
+ 1295 0100 C4ED047A 		vstr.32	s15, [r4, #16]
+ 342:app/heater.c  **** }
+ 1296              		.loc 1 342 5 is_stmt 1 view .LVU390
+ 1297              	.LVL87:
+ 342:app/heater.c  **** }
+ 1298              		.loc 1 342 5 is_stmt 0 view .LVU391
+ 1299              	.LBE130:
+ 1300              	.LBE146:
+ 604:app/heater.c  ****                            &s_heater_config[i].pid,
+ 605:app/heater.c  ****                            current_temp, 
+ARM GAS  /tmp/cc8XC8Jn.s 			page 40
+
+
+ 606:app/heater.c  ****                            PID_DT);
+ 607:app/heater.c  ****         
+ 608:app/heater.c  ****         /* 设置 PWM 输出 */
+ 609:app/heater.c  ****         heater_set_pwm((heater_id_t)i, output);
+ 1301              		.loc 1 609 9 is_stmt 1 view .LVU392
+ 1302              	.LBB147:
+ 1303              	.LBI136:
+ 353:app/heater.c  **** {
+ 1304              		.loc 1 353 1 view .LVU393
+ 1305              	.LBB144:
+ 355:app/heater.c  ****     float max_power;
+ 1306              		.loc 1 355 5 view .LVU394
+ 356:app/heater.c  ****     
+ 1307              		.loc 1 356 5 view .LVU395
+ 358:app/heater.c  ****         return;
+ 1308              		.loc 1 358 5 view .LVU396
+ 1309              	.LBB142:
+ 1310              	.LBI138:
+ 353:app/heater.c  **** {
+ 1311              		.loc 1 353 1 view .LVU397
+ 1312              	.LBB140:
+ 362:app/heater.c  ****     max_power = s_heater_config[id].max_power;
+ 1313              		.loc 1 362 5 view .LVU398
+ 363:app/heater.c  ****     
+ 1314              		.loc 1 363 5 view .LVU399
+ 366:app/heater.c  ****         duty = max_power;
+ 1315              		.loc 1 366 5 view .LVU400
+ 371:app/heater.c  **** }
+ 1316              		.loc 1 371 5 view .LVU401
+ 1317              	.LBE140:
+ 1318              	.LBE142:
+ 1319              	.LBE144:
+ 1320              	.LBE147:
+ 584:app/heater.c  ****         /* 读取当前温度 */
+ 1321              		.loc 1 584 5 is_stmt 0 view .LVU402
+ 1322 0104 1435     		adds	r5, r5, #20
+ 1323              	.LBB148:
+ 1324              	.LBB145:
+ 1325              	.LBB143:
+ 1326              	.LBB141:
+ 371:app/heater.c  **** }
+ 1327              		.loc 1 371 5 view .LVU403
+ 1328 0106 FFF7FEFF 		bl	pwm_set_duty
+ 1329              	.LVL88:
+ 371:app/heater.c  **** }
+ 1330              		.loc 1 371 5 view .LVU404
+ 1331              	.LBE141:
+ 1332              	.LBE143:
+ 1333              	.LBE145:
+ 1334              	.LBE148:
+ 584:app/heater.c  ****         /* 读取当前温度 */
+ 1335              		.loc 1 584 43 is_stmt 1 view .LVU405
+ 584:app/heater.c  ****         /* 读取当前温度 */
+ 1336              		.loc 1 584 25 view .LVU406
+ 584:app/heater.c  ****         /* 读取当前温度 */
+ 1337              		.loc 1 584 5 is_stmt 0 view .LVU407
+ 1338 010a 1834     		adds	r4, r4, #24
+ARM GAS  /tmp/cc8XC8Jn.s 			page 41
+
+
+ 1339 010c AEB1     		cbz	r6, .L159
+ 1340              	.LVL89:
+ 1341              	.L97:
+ 584:app/heater.c  ****         /* 读取当前温度 */
+ 1342              		.loc 1 584 5 view .LVU408
+ 1343              	.LBE159:
+ 610:app/heater.c  ****     }
+ 611:app/heater.c  **** }
+ 1344              		.loc 1 611 1 view .LVU409
+ 1345 010e BDEC088B 		vldm	sp!, {d8-d11}
+ 1346              		.cfi_remember_state
+ 1347              		.cfi_restore 86
+ 1348              		.cfi_restore 87
+ 1349              		.cfi_restore 84
+ 1350              		.cfi_restore 85
+ 1351              		.cfi_restore 82
+ 1352              		.cfi_restore 83
+ 1353              		.cfi_restore 80
+ 1354              		.cfi_restore 81
+ 1355              		.cfi_def_cfa_offset 24
+ 1356 0112 BDE8F081 		pop	{r4, r5, r6, r7, r8, pc}
+ 1357              	.LVL90:
+ 1358              	.L156:
+ 1359              		.cfi_restore_state
+ 1360              	.LBB160:
+ 597:app/heater.c  ****             heater_set_pwm((heater_id_t)i, 0.0f);
+ 1361              		.loc 1 597 13 is_stmt 1 view .LVU410
+ 597:app/heater.c  ****             heater_set_pwm((heater_id_t)i, 0.0f);
+ 1362              		.loc 1 597 38 is_stmt 0 view .LVU411
+ 1363 0116 C4ED04AA 		vstr.32	s21, [r4, #16]
+ 1364              	.L155:
+ 598:app/heater.c  ****             continue;
+ 1365              		.loc 1 598 13 is_stmt 1 view .LVU412
+ 1366              	.LVL91:
+ 1367              	.LBB149:
+ 1368              	.LBI149:
+ 353:app/heater.c  **** {
+ 1369              		.loc 1 353 1 view .LVU413
+ 1370              	.LBB150:
+ 355:app/heater.c  ****     float max_power;
+ 1371              		.loc 1 355 5 view .LVU414
+ 356:app/heater.c  ****     
+ 1372              		.loc 1 356 5 view .LVU415
+ 358:app/heater.c  ****         return;
+ 1373              		.loc 1 358 5 view .LVU416
+ 1374              	.LBB151:
+ 1375              	.LBI151:
+ 353:app/heater.c  **** {
+ 1376              		.loc 1 353 1 view .LVU417
+ 1377              	.LBB152:
+ 362:app/heater.c  ****     max_power = s_heater_config[id].max_power;
+ 1378              		.loc 1 362 5 view .LVU418
+ 363:app/heater.c  ****     
+ 1379              		.loc 1 363 5 view .LVU419
+ 366:app/heater.c  ****         duty = max_power;
+ 1380              		.loc 1 366 5 view .LVU420
+ 366:app/heater.c  ****         duty = max_power;
+ARM GAS  /tmp/cc8XC8Jn.s 			page 42
+
+
+ 1381              		.loc 1 366 8 is_stmt 0 view .LVU421
+ 1382 011a B5EEC08A 		vcmpe.f32	s16, #0
+ 1383 011e F1EE10FA 		vmrs	APSR_nzcv, FPSCR
+ 1384 0122 58BF     		it	pl
+ 1385 0124 B0EE6A8A 		vmovpl.f32	s16, s21
+ 1386              	.LVL92:
+ 371:app/heater.c  **** }
+ 1387              		.loc 1 371 5 is_stmt 1 view .LVU422
+ 1388 0128 B0EE480A 		vmov.f32	s0, s16
+ 1389              	.LVL93:
+ 371:app/heater.c  **** }
+ 1390              		.loc 1 371 5 is_stmt 0 view .LVU423
+ 1391 012c 3846     		mov	r0, r7
+ 1392 012e FFF7FEFF 		bl	pwm_set_duty
+ 1393              	.LVL94:
+ 371:app/heater.c  **** }
+ 1394              		.loc 1 371 5 view .LVU424
+ 1395              	.LBE152:
+ 1396              	.LBE151:
+ 1397              	.LBE150:
+ 1398              	.LBE149:
+ 599:app/heater.c  ****         }
+ 1399              		.loc 1 599 13 is_stmt 1 view .LVU425
+ 584:app/heater.c  ****         /* 读取当前温度 */
+ 1400              		.loc 1 584 43 view .LVU426
+ 584:app/heater.c  ****         /* 读取当前温度 */
+ 1401              		.loc 1 584 25 view .LVU427
+ 584:app/heater.c  ****         /* 读取当前温度 */
+ 1402              		.loc 1 584 5 is_stmt 0 view .LVU428
+ 1403 0132 1435     		adds	r5, r5, #20
+ 1404 0134 1834     		adds	r4, r4, #24
+ 1405 0136 002E     		cmp	r6, #0
+ 1406 0138 E9D1     		bne	.L97
+ 1407              	.LVL95:
+ 1408              	.L159:
+ 1409              	.LBB153:
+ 1410              	.LBB154:
+ 1411              	.LBB155:
+ 1412              	.LBB156:
+ 362:app/heater.c  ****     max_power = s_heater_config[id].max_power;
+ 1413              		.loc 1 362 12 view .LVU429
+ 1414 013a 18F8017B 		ldrb	r7, [r8], #1	@ zero_extendqisi2
+ 363:app/heater.c  ****     
+ 1415              		.loc 1 363 15 view .LVU430
+ 1416 013e 95ED018A 		vldr.32	s16, [r5, #4]
+ 1417 0142 0126     		movs	r6, #1
+ 1418 0144 79E7     		b	.L121
+ 1419              	.LVL96:
+ 1420              	.L157:
+ 363:app/heater.c  ****     
+ 1421              		.loc 1 363 15 view .LVU431
+ 1422              	.LBE156:
+ 1423              	.LBE155:
+ 1424              	.LBE154:
+ 1425              	.LBE153:
+ 1426              	.LBB157:
+ 1427              	.LBB131:
+ARM GAS  /tmp/cc8XC8Jn.s 			page 43
+
+
+ 312:app/heater.c  ****     } else if (state->integral < -PID_INTEGRAL_MAX) {
+ 1428              		.loc 1 312 9 is_stmt 1 view .LVU432
+ 312:app/heater.c  ****     } else if (state->integral < -PID_INTEGRAL_MAX) {
+ 1429              		.loc 1 312 25 is_stmt 0 view .LVU433
+ 1430 0146 C4ED039A 		vstr.32	s19, [r4, #12]
+ 1431 014a 9BE7     		b	.L109
+ 1432              	.LVL97:
+ 1433              	.L151:
+ 1434              		.cfi_def_cfa_offset 0
+ 1435              		.cfi_restore 4
+ 1436              		.cfi_restore 5
+ 1437              		.cfi_restore 6
+ 1438              		.cfi_restore 7
+ 1439              		.cfi_restore 8
+ 1440              		.cfi_restore 14
+ 1441              		.cfi_restore 80
+ 1442              		.cfi_restore 81
+ 1443              		.cfi_restore 82
+ 1444              		.cfi_restore 83
+ 1445              		.cfi_restore 84
+ 1446              		.cfi_restore 85
+ 1447              		.cfi_restore 86
+ 1448              		.cfi_restore 87
+ 312:app/heater.c  ****     } else if (state->integral < -PID_INTEGRAL_MAX) {
+ 1449              		.loc 1 312 25 view .LVU434
+ 1450 014c 7047     		bx	lr
+ 1451              	.LVL98:
+ 1452              	.L158:
+ 1453              		.cfi_def_cfa_offset 56
+ 1454              		.cfi_offset 4, -24
+ 1455              		.cfi_offset 5, -20
+ 1456              		.cfi_offset 6, -16
+ 1457              		.cfi_offset 7, -12
+ 1458              		.cfi_offset 8, -8
+ 1459              		.cfi_offset 14, -4
+ 1460              		.cfi_offset 80, -56
+ 1461              		.cfi_offset 81, -52
+ 1462              		.cfi_offset 82, -48
+ 1463              		.cfi_offset 83, -44
+ 1464              		.cfi_offset 84, -40
+ 1465              		.cfi_offset 85, -36
+ 1466              		.cfi_offset 86, -32
+ 1467              		.cfi_offset 87, -28
+ 328:app/heater.c  ****         /* 当输出饱和且误差为负时，停止积分累积 (anti-windup) */
+ 1468              		.loc 1 328 9 is_stmt 1 view .LVU435
+ 330:app/heater.c  ****             state->integral -= error * dt;
+ 1469              		.loc 1 330 9 view .LVU436
+ 330:app/heater.c  ****             state->integral -= error * dt;
+ 1470              		.loc 1 330 12 is_stmt 0 view .LVU437
+ 1471 014e B5EEC00A 		vcmpe.f32	s0, #0
+ 1472 0152 F1EE10FA 		vmrs	APSR_nzcv, FPSCR
+ 1473 0156 02D4     		bmi	.L160
+ 1474              	.L147:
+ 328:app/heater.c  ****         /* 当输出饱和且误差为负时，停止积分累积 (anti-windup) */
+ 1475              		.loc 1 328 16 view .LVU438
+ 1476 0158 DFED0C7A 		vldr.32	s15, .L161+16
+ 1477 015c C6E7     		b	.L113
+ARM GAS  /tmp/cc8XC8Jn.s 			page 44
+
+
+ 1478              	.L160:
+ 330:app/heater.c  ****             state->integral -= error * dt;
+ 1479              		.loc 1 330 26 view .LVU439
+ 1480 015e B5EEC06A 		vcmpe.f32	s12, #0
+ 1481 0162 F1EE10FA 		vmrs	APSR_nzcv, FPSCR
+ 1482 0166 F7D5     		bpl	.L147
+ 331:app/heater.c  ****         }
+ 1483              		.loc 1 331 13 is_stmt 1 view .LVU440
+ 331:app/heater.c  ****         }
+ 1484              		.loc 1 331 29 is_stmt 0 view .LVU441
+ 1485 0168 36EE656A 		vsub.f32	s12, s12, s11
+ 328:app/heater.c  ****         /* 当输出饱和且误差为负时，停止积分累积 (anti-windup) */
+ 1486              		.loc 1 328 16 view .LVU442
+ 1487 016c DFED077A 		vldr.32	s15, .L161+16
+ 331:app/heater.c  ****         }
+ 1488              		.loc 1 331 29 view .LVU443
+ 1489 0170 84ED036A 		vstr.32	s12, [r4, #12]
+ 1490 0174 BAE7     		b	.L113
+ 1491              	.LVL99:
+ 1492              	.L149:
+ 334:app/heater.c  ****         /* 当输出饱和且误差为正时，停止积分累积 (anti-windup) */
+ 1493              		.loc 1 334 16 view .LVU444
+ 1494 0176 F7EE007A 		vmov.f32	s15, #1.0e+0
+ 1495 017a B7E7     		b	.L113
+ 1496              	.L162:
+ 1497              		.align	2
+ 1498              	.L161:
+ 1499 017c 00000000 		.word	.LANCHOR3
+ 1500 0180 00000000 		.word	.LANCHOR0
+ 1501 0184 00000000 		.word	.LANCHOR2
+ 1502 0188 00C079C4 		.word	-998653952
+ 1503 018c 00000000 		.word	0
+ 1504 0190 CDCCCC3D 		.word	1036831949
+ 1505 0194 0000C842 		.word	1120403456
+ 1506 0198 0000C8C2 		.word	-1027080192
+ 1507 019c 01000000 		.word	.LANCHOR1+1
+ 1508              	.LBE131:
+ 1509              	.LBE157:
+ 1510              	.LBE160:
+ 1511              		.cfi_endproc
+ 1512              	.LFE21:
+ 1514              		.section	.text.heater_get_output,"ax",%progbits
+ 1515              		.align	1
+ 1516              		.p2align 2,,3
+ 1517              		.global	heater_get_output
+ 1518              		.syntax unified
+ 1519              		.thumb
+ 1520              		.thumb_func
+ 1521              		.fpu fpv4-sp-d16
+ 1523              	heater_get_output:
+ 1524              	.LVL100:
+ 1525              	.LFB22:
+ 612:app/heater.c  **** 
+ 613:app/heater.c  **** /**
+ 614:app/heater.c  ****  * @brief   获取当前 PID 输出
+ 615:app/heater.c  ****  * @param   id      加热器 ID
+ 616:app/heater.c  ****  * @return  PID 输出 (0.0 - 1.0)，错误时返回 -1.0
+ARM GAS  /tmp/cc8XC8Jn.s 			page 45
+
+
+ 617:app/heater.c  ****  */
+ 618:app/heater.c  **** float
+ 619:app/heater.c  **** heater_get_output(heater_id_t id)
+ 620:app/heater.c  **** {
+ 1526              		.loc 1 620 1 is_stmt 1 view -0
+ 1527              		.cfi_startproc
+ 1528              		@ args = 0, pretend = 0, frame = 0
+ 1529              		@ frame_needed = 0, uses_anonymous_args = 0
+ 1530              		@ link register save eliminated.
+ 621:app/heater.c  ****     if (id >= HEATER_COUNT) {
+ 1531              		.loc 1 621 5 view .LVU446
+ 1532              		.loc 1 621 8 is_stmt 0 view .LVU447
+ 1533 0000 0128     		cmp	r0, #1
+ 1534 0002 07D8     		bhi	.L165
+ 622:app/heater.c  ****         return -1.0f;
+ 623:app/heater.c  ****     }
+ 624:app/heater.c  ****     
+ 625:app/heater.c  ****     return s_heater_state[id].output;
+ 1535              		.loc 1 625 5 is_stmt 1 view .LVU448
+ 1536              		.loc 1 625 30 is_stmt 0 view .LVU449
+ 1537 0004 054B     		ldr	r3, .L166
+ 1538 0006 00EB4000 		add	r0, r0, r0, lsl #1
+ 1539              	.LVL101:
+ 1540              		.loc 1 625 30 view .LVU450
+ 1541 000a 03EBC000 		add	r0, r3, r0, lsl #3
+ 1542 000e 90ED040A 		vldr.32	s0, [r0, #16]
+ 1543 0012 7047     		bx	lr
+ 1544              	.LVL102:
+ 1545              	.L165:
+ 622:app/heater.c  ****         return -1.0f;
+ 1546              		.loc 1 622 16 view .LVU451
+ 1547 0014 BFEE000A 		vmov.f32	s0, #-1.0e+0
+ 626:app/heater.c  **** }
+ 1548              		.loc 1 626 1 view .LVU452
+ 1549 0018 7047     		bx	lr
+ 1550              	.L167:
+ 1551 001a 00BF     		.align	2
+ 1552              	.L166:
+ 1553 001c 00000000 		.word	.LANCHOR2
+ 1554              		.cfi_endproc
+ 1555              	.LFE22:
+ 1557              		.section	.bss.s_heater_state,"aw",%nobits
+ 1558              		.align	2
+ 1559              		.set	.LANCHOR2,. + 0
+ 1562              	s_heater_state:
+ 1563 0000 00000000 		.space	48
+ 1563      00000000 
+ 1563      00000000 
+ 1563      00000000 
+ 1563      00000000 
+ 1564              		.section	.bss.s_module_initialized,"aw",%nobits
+ 1565              		.set	.LANCHOR3,. + 0
+ 1568              	s_module_initialized:
+ 1569 0000 00       		.space	1
+ 1570              		.section	.rodata.s_heater_config,"a"
+ 1571              		.align	2
+ 1572              		.set	.LANCHOR0,. + 0
+ARM GAS  /tmp/cc8XC8Jn.s 			page 46
+
+
+ 1575              	s_heater_config:
+ 1576 0000 00       		.byte	0
+ 1577 0001 14       		.byte	20
+ 1578 0002 0000     		.space	2
+ 1579 0004 0000803F 		.word	1065353216
+ 1580 0008 9A99B141 		.word	1102158234
+ 1581 000c 713D8A3F 		.word	1066024305
+ 1582 0010 0000E442 		.word	1122238464
+ 1583 0014 01       		.byte	1
+ 1584 0015 15       		.byte	21
+ 1585 0016 0000     		.space	2
+ 1586 0018 0000803F 		.word	1065353216
+ 1587 001c 00005842 		.word	1113063424
+ 1588 0020 0000003F 		.word	1056964608
+ 1589 0024 00004843 		.word	1128792064
+ 1590              		.section	.rodata.s_heater_pwm_channel,"a"
+ 1591              		.align	2
+ 1592              		.set	.LANCHOR1,. + 0
+ 1595              	s_heater_pwm_channel:
+ 1596 0000 00       		.byte	0
+ 1597 0001 01       		.byte	1
+ 1598              		.section	.rodata.s_ntc_table,"a"
+ 1599              		.align	2
+ 1600              		.set	.LANCHOR4,. + 0
+ 1603              	s_ntc_table:
+ 1604 0000 1700     		.short	23
+ 1605 0002 B80B     		.short	3000
+ 1606 0004 1F00     		.short	31
+ 1607 0006 540B     		.short	2900
+ 1608 0008 2900     		.short	41
+ 1609 000a F00A     		.short	2800
+ 1610 000c 3600     		.short	54
+ 1611 000e 8C0A     		.short	2700
+ 1612 0010 4700     		.short	71
+ 1613 0012 280A     		.short	2600
+ 1614 0014 5D00     		.short	93
+ 1615 0016 C409     		.short	2500
+ 1616 0018 7800     		.short	120
+ 1617 001a 6009     		.short	2400
+ 1618 001c 9A00     		.short	154
+ 1619 001e FC08     		.short	2300
+ 1620 0020 C400     		.short	196
+ 1621 0022 9808     		.short	2200
+ 1622 0024 F800     		.short	248
+ 1623 0026 3408     		.short	2100
+ 1624 0028 3701     		.short	311
+ 1625 002a D007     		.short	2000
+ 1626 002c 8201     		.short	386
+ 1627 002e 6C07     		.short	1900
+ 1628 0030 DB01     		.short	475
+ 1629 0032 0807     		.short	1800
+ 1630 0034 4202     		.short	578
+ 1631 0036 A406     		.short	1700
+ 1632 0038 B802     		.short	696
+ 1633 003a 4006     		.short	1600
+ 1634 003c 3D03     		.short	829
+ 1635 003e DC05     		.short	1500
+ARM GAS  /tmp/cc8XC8Jn.s 			page 47
+
+
+ 1636 0040 D003     		.short	976
+ 1637 0042 7805     		.short	1400
+ 1638 0044 7004     		.short	1136
+ 1639 0046 1405     		.short	1300
+ 1640 0048 1B05     		.short	1307
+ 1641 004a B004     		.short	1200
+ 1642 004c CE05     		.short	1486
+ 1643 004e 4C04     		.short	1100
+ 1644 0050 8606     		.short	1670
+ 1645 0052 E803     		.short	1000
+ 1646 0054 3F07     		.short	1855
+ 1647 0056 8403     		.short	900
+ 1648 0058 F507     		.short	2037
+ 1649 005a 2003     		.short	800
+ 1650 005c A508     		.short	2213
+ 1651 005e BC02     		.short	700
+ 1652 0060 4B09     		.short	2379
+ 1653 0062 5802     		.short	600
+ 1654 0064 E609     		.short	2534
+ 1655 0066 F401     		.short	500
+ 1656 0068 740A     		.short	2676
+ 1657 006a 9001     		.short	400
+ 1658 006c F40A     		.short	2804
+ 1659 006e 2C01     		.short	300
+ 1660 0070 660B     		.short	2918
+ 1661 0072 C800     		.short	200
+ 1662 0074 CA0B     		.short	3018
+ 1663 0076 6400     		.short	100
+ 1664 0078 210C     		.short	3105
+ 1665 007a 0000     		.short	0
+ 1666 007c 6C0C     		.short	3180
+ 1667 007e 9CFF     		.short	-100
+ 1668 0080 AC0C     		.short	3244
+ 1669 0082 38FF     		.short	-200
+ 1670              		.text
+ 1671              	.Letext0:
+ 1672              		.file 2 "/usr/lib/gcc/arm-none-eabi/10.3.1/include/stdint.h"
+ 1673              		.file 3 "app/heater.h"
+ 1674              		.file 4 "./src/stm32/adc.h"
+ 1675              		.file 5 "./src/pwmcmds.h"
+ARM GAS  /tmp/cc8XC8Jn.s 			page 48
+
+
+DEFINED SYMBOLS
+                            *ABS*:0000000000000000 heater.c
+     /tmp/cc8XC8Jn.s:18     .text.heater_init.part.0:0000000000000000 $t
+     /tmp/cc8XC8Jn.s:26     .text.heater_init.part.0:0000000000000000 heater_init.part.0
+     /tmp/cc8XC8Jn.s:281    .text.heater_init.part.0:00000000000000b4 $d
+     /tmp/cc8XC8Jn.s:291    .text.heater_get_temp.part.0:0000000000000000 $t
+     /tmp/cc8XC8Jn.s:298    .text.heater_get_temp.part.0:0000000000000000 heater_get_temp.part.0
+     /tmp/cc8XC8Jn.s:603    .text.heater_get_temp.part.0:0000000000000104 $d
+     /tmp/cc8XC8Jn.s:614    .text.heater_init:0000000000000000 $t
+     /tmp/cc8XC8Jn.s:622    .text.heater_init:0000000000000000 heater_init
+     /tmp/cc8XC8Jn.s:644    .text.heater_init:000000000000000c $d
+     /tmp/cc8XC8Jn.s:649    .text.heater_set_temp:0000000000000000 $t
+     /tmp/cc8XC8Jn.s:657    .text.heater_set_temp:0000000000000000 heater_set_temp
+     /tmp/cc8XC8Jn.s:890    .text.heater_set_temp:00000000000000ec $d
+     /tmp/cc8XC8Jn.s:899    .text.heater_get_temp:0000000000000000 $t
+     /tmp/cc8XC8Jn.s:907    .text.heater_get_temp:0000000000000000 heater_get_temp
+     /tmp/cc8XC8Jn.s:928    .text.heater_get_temp:0000000000000010 $d
+     /tmp/cc8XC8Jn.s:933    .text.heater_get_target:0000000000000000 $t
+     /tmp/cc8XC8Jn.s:941    .text.heater_get_target:0000000000000000 heater_get_target
+     /tmp/cc8XC8Jn.s:971    .text.heater_get_target:000000000000001c $d
+     /tmp/cc8XC8Jn.s:977    .text.heater_is_at_target:0000000000000000 $t
+     /tmp/cc8XC8Jn.s:985    .text.heater_is_at_target:0000000000000000 heater_is_at_target
+     /tmp/cc8XC8Jn.s:1069   .text.heater_is_at_target:0000000000000054 $d
+     /tmp/cc8XC8Jn.s:1074   .text.heater_task:0000000000000000 $t
+     /tmp/cc8XC8Jn.s:1082   .text.heater_task:0000000000000000 heater_task
+     /tmp/cc8XC8Jn.s:1499   .text.heater_task:000000000000017c $d
+     /tmp/cc8XC8Jn.s:1515   .text.heater_get_output:0000000000000000 $t
+     /tmp/cc8XC8Jn.s:1523   .text.heater_get_output:0000000000000000 heater_get_output
+     /tmp/cc8XC8Jn.s:1553   .text.heater_get_output:000000000000001c $d
+     /tmp/cc8XC8Jn.s:1558   .bss.s_heater_state:0000000000000000 $d
+     /tmp/cc8XC8Jn.s:1562   .bss.s_heater_state:0000000000000000 s_heater_state
+     /tmp/cc8XC8Jn.s:1568   .bss.s_module_initialized:0000000000000000 s_module_initialized
+     /tmp/cc8XC8Jn.s:1569   .bss.s_module_initialized:0000000000000000 $d
+     /tmp/cc8XC8Jn.s:1571   .rodata.s_heater_config:0000000000000000 $d
+     /tmp/cc8XC8Jn.s:1575   .rodata.s_heater_config:0000000000000000 s_heater_config
+     /tmp/cc8XC8Jn.s:1591   .rodata.s_heater_pwm_channel:0000000000000000 $d
+     /tmp/cc8XC8Jn.s:1595   .rodata.s_heater_pwm_channel:0000000000000000 s_heater_pwm_channel
+     /tmp/cc8XC8Jn.s:1599   .rodata.s_ntc_table:0000000000000000 $d
+     /tmp/cc8XC8Jn.s:1603   .rodata.s_ntc_table:0000000000000000 s_ntc_table
+
+UNDEFINED SYMBOLS
+adc_init
+pwm_init
+pwm_config
+adc_setup
+adc_read
+pwm_set_duty
+pwm_enable

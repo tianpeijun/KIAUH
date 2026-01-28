@@ -1,0 +1,3 @@
+# Placeholder for board configuration files
+# This directory will contain board-specific configurations
+# e.g., stm32f407/board.h (引脚定义)

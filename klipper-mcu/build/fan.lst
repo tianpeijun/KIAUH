@@ -1,0 +1,1054 @@
+ARM GAS  /tmp/ccqU6N4Z.s 			page 1
+
+
+   1              		.cpu cortex-m4
+   2              		.eabi_attribute 27, 1
+   3              		.eabi_attribute 28, 1
+   4              		.eabi_attribute 20, 1
+   5              		.eabi_attribute 21, 1
+   6              		.eabi_attribute 23, 3
+   7              		.eabi_attribute 24, 1
+   8              		.eabi_attribute 25, 1
+   9              		.eabi_attribute 26, 1
+  10              		.eabi_attribute 30, 2
+  11              		.eabi_attribute 34, 1
+  12              		.eabi_attribute 18, 4
+  13              		.file	"fan.c"
+  14              		.text
+  15              	.Ltext0:
+  16              		.cfi_sections	.debug_frame
+  17              		.section	.text.fan_init.part.0,"ax",%progbits
+  18              		.align	1
+  19              		.p2align 2,,3
+  20              		.arch armv7e-m
+  21              		.syntax unified
+  22              		.thumb
+  23              		.thumb_func
+  24              		.fpu fpv4-sp-d16
+  26              	fan_init.part.0:
+  27              	.LFB17:
+  28              		.file 1 "app/fan.c"
+   1:app/fan.c     **** /**
+   2:app/fan.c     ****  * @file    fan.c
+   3:app/fan.c     ****  * @brief   风扇控制实现
+   4:app/fan.c     ****  * 
+   5:app/fan.c     ****  * 移植自 klippy/extras/fan.py
+   6:app/fan.c     ****  * 实现风扇 PWM 控制功能
+   7:app/fan.c     ****  * 
+   8:app/fan.c     ****  * 验收标准: 3.4.1 - 移植 klippy/extras/fan.py 逻辑
+   9:app/fan.c     ****  *          3.4.2 - 支持 M106/M107 指令
+  10:app/fan.c     ****  */
+  11:app/fan.c     **** 
+  12:app/fan.c     **** #include "fan.h"
+  13:app/fan.c     **** #include "config.h"
+  14:app/fan.c     **** #include "src/pwmcmds.h"
+  15:app/fan.c     **** #include "board/gpio.h"
+  16:app/fan.c     **** 
+  17:app/fan.c     **** /* ========== PWM 配置参数 ========== */
+  18:app/fan.c     **** 
+  19:app/fan.c     **** /* PWM 周期 (约 25kHz，适合大多数风扇) */
+  20:app/fan.c     **** #define FAN_PWM_CYCLE_TIME      40
+  21:app/fan.c     **** 
+  22:app/fan.c     **** /* PWM 分辨率 (8 位) */
+  23:app/fan.c     **** #define FAN_PWM_MAX_VALUE       255
+  24:app/fan.c     **** 
+  25:app/fan.c     **** /* ========== 私有变量 ========== */
+  26:app/fan.c     **** 
+  27:app/fan.c     **** /* 风扇状态 */
+  28:app/fan.c     **** typedef struct {
+  29:app/fan.c     ****     float speed;                /* 当前速度 (0.0 - 1.0) */
+  30:app/fan.c     ****     uint8_t initialized;        /* 初始化标志 */
+ARM GAS  /tmp/ccqU6N4Z.s 			page 2
+
+
+  31:app/fan.c     ****     uint8_t pwm_enabled;        /* PWM 输出已启用 */
+  32:app/fan.c     **** } fan_state_t;
+  33:app/fan.c     **** 
+  34:app/fan.c     **** /* 风扇到 PWM 通道的映射 */
+  35:app/fan.c     **** static const pwm_channel_t s_fan_pwm_channel[FAN_COUNT] = {
+  36:app/fan.c     ****     PWM_CHANNEL_FAN_PART,       /* FAN_PART */
+  37:app/fan.c     ****     PWM_CHANNEL_FAN_HOTEND      /* FAN_HOTEND */
+  38:app/fan.c     **** };
+  39:app/fan.c     **** 
+  40:app/fan.c     **** /* 风扇 GPIO 引脚配置 */
+  41:app/fan.c     **** static const uint8_t s_fan_pins[FAN_COUNT] = {
+  42:app/fan.c     ****     FAN_PART_PIN,               /* FAN_PART */
+  43:app/fan.c     ****     FAN_HOTEND_PIN              /* FAN_HOTEND */
+  44:app/fan.c     **** };
+  45:app/fan.c     **** 
+  46:app/fan.c     **** /* 风扇状态数组 */
+  47:app/fan.c     **** static fan_state_t s_fan_state[FAN_COUNT];
+  48:app/fan.c     **** 
+  49:app/fan.c     **** /* 模块初始化标志 */
+  50:app/fan.c     **** static uint8_t s_module_initialized = 0;
+  51:app/fan.c     **** 
+  52:app/fan.c     **** /* ========== 私有函数 ========== */
+  53:app/fan.c     **** 
+  54:app/fan.c     **** /**
+  55:app/fan.c     ****  * @brief   设置风扇 PWM 输出
+  56:app/fan.c     ****  * @param   id      风扇 ID
+  57:app/fan.c     ****  * @param   duty    占空比 (0.0 - 1.0)
+  58:app/fan.c     ****  */
+  59:app/fan.c     **** static void
+  60:app/fan.c     **** fan_set_pwm(fan_id_t id, float duty)
+  61:app/fan.c     **** {
+  62:app/fan.c     ****     pwm_channel_t pwm_ch;
+  63:app/fan.c     ****     
+  64:app/fan.c     ****     if (id >= FAN_COUNT) {
+  65:app/fan.c     ****         return;
+  66:app/fan.c     ****     }
+  67:app/fan.c     ****     
+  68:app/fan.c     ****     pwm_ch = s_fan_pwm_channel[id];
+  69:app/fan.c     ****     
+  70:app/fan.c     ****     /* 限制占空比范围 */
+  71:app/fan.c     ****     if (duty < FAN_SPEED_MIN) {
+  72:app/fan.c     ****         duty = FAN_SPEED_MIN;
+  73:app/fan.c     ****     } else if (duty > FAN_SPEED_MAX) {
+  74:app/fan.c     ****         duty = FAN_SPEED_MAX;
+  75:app/fan.c     ****     }
+  76:app/fan.c     ****     
+  77:app/fan.c     ****     /* 设置 PWM 占空比 */
+  78:app/fan.c     ****     pwm_set_duty(pwm_ch, duty);
+  79:app/fan.c     **** }
+  80:app/fan.c     **** 
+  81:app/fan.c     **** /* ========== 公共函数 ========== */
+  82:app/fan.c     **** 
+  83:app/fan.c     **** /**
+  84:app/fan.c     ****  * @brief   初始化风扇模块
+  85:app/fan.c     ****  */
+  86:app/fan.c     **** void
+  87:app/fan.c     **** fan_init(void)
+ARM GAS  /tmp/ccqU6N4Z.s 			page 3
+
+
+  29              		.loc 1 87 1 view -0
+  30              		.cfi_startproc
+  31              		@ args = 0, pretend = 0, frame = 16
+  32              		@ frame_needed = 0, uses_anonymous_args = 0
+  88:app/fan.c     **** {
+  89:app/fan.c     ****     pwm_config_t pwm_cfg;
+  90:app/fan.c     ****     uint8_t i;
+  91:app/fan.c     ****     
+  92:app/fan.c     ****     if (s_module_initialized) {
+  93:app/fan.c     ****         return;
+  94:app/fan.c     ****     }
+  95:app/fan.c     ****     
+  96:app/fan.c     ****     /* 初始化 PWM 子系统 (如果尚未初始化) */
+  97:app/fan.c     ****     pwm_init();
+  33              		.loc 1 97 5 view .LVU1
+  87:app/fan.c     **** {
+  34              		.loc 1 87 1 is_stmt 0 view .LVU2
+  35 0000 F0B5     		push	{r4, r5, r6, r7, lr}
+  36              		.cfi_def_cfa_offset 20
+  37              		.cfi_offset 4, -20
+  38              		.cfi_offset 5, -16
+  39              		.cfi_offset 6, -12
+  40              		.cfi_offset 7, -8
+  41              		.cfi_offset 14, -4
+  42 0002 85B0     		sub	sp, sp, #20
+  43              		.cfi_def_cfa_offset 40
+  44              		.loc 1 97 5 view .LVU3
+  45 0004 FFF7FEFF 		bl	pwm_init
+  46              	.LVL0:
+  98:app/fan.c     ****     
+  99:app/fan.c     ****     /* 配置每个风扇的 PWM 输出 */
+ 100:app/fan.c     ****     for (i = 0; i < FAN_COUNT; i++) {
+  47              		.loc 1 100 5 is_stmt 1 view .LVU4
+  48              		.loc 1 100 17 view .LVU5
+ 101:app/fan.c     ****         /* 配置 PWM 通道 */
+ 102:app/fan.c     ****         pwm_cfg.pin = s_fan_pins[i];
+  49              		.loc 1 102 9 view .LVU6
+ 103:app/fan.c     ****         pwm_cfg.cycle_time = FAN_PWM_CYCLE_TIME;
+ 104:app/fan.c     ****         pwm_cfg.max_value = FAN_PWM_MAX_VALUE;
+ 105:app/fan.c     ****         pwm_cfg.invert = 0;             /* 不反相 */
+ 106:app/fan.c     ****         pwm_cfg.use_hardware = 0;       /* 使用软件 PWM */
+ 107:app/fan.c     ****         pwm_config(s_fan_pwm_channel[i], &pwm_cfg);
+ 108:app/fan.c     ****         
+ 109:app/fan.c     ****         /* 初始化风扇状态 */
+ 110:app/fan.c     ****         s_fan_state[i].speed = 0.0f;
+  50              		.loc 1 110 30 is_stmt 0 view .LVU7
+  51 0008 0F4C     		ldr	r4, .L4
+ 103:app/fan.c     ****         pwm_cfg.cycle_time = FAN_PWM_CYCLE_TIME;
+  52              		.loc 1 103 28 view .LVU8
+  53 000a 2827     		movs	r7, #40
+ 104:app/fan.c     ****         pwm_cfg.invert = 0;             /* 不反相 */
+  54              		.loc 1 104 27 view .LVU9
+  55 000c FF25     		movs	r5, #255
+ 102:app/fan.c     ****         pwm_cfg.cycle_time = FAN_PWM_CYCLE_TIME;
+  56              		.loc 1 102 21 view .LVU10
+  57 000e 1623     		movs	r3, #22
+ 107:app/fan.c     ****         
+ARM GAS  /tmp/ccqU6N4Z.s 			page 4
+
+
+  58              		.loc 1 107 9 view .LVU11
+  59 0010 01A9     		add	r1, sp, #4
+  60 0012 0220     		movs	r0, #2
+ 104:app/fan.c     ****         pwm_cfg.invert = 0;             /* 不反相 */
+  61              		.loc 1 104 27 view .LVU12
+  62 0014 CDE90275 		strd	r7, r5, [sp, #8]
+  63              		.loc 1 110 30 view .LVU13
+  64 0018 0026     		movs	r6, #0
+ 102:app/fan.c     ****         pwm_cfg.cycle_time = FAN_PWM_CYCLE_TIME;
+  65              		.loc 1 102 21 view .LVU14
+  66 001a 8DF80430 		strb	r3, [sp, #4]
+ 103:app/fan.c     ****         pwm_cfg.max_value = FAN_PWM_MAX_VALUE;
+  67              		.loc 1 103 9 is_stmt 1 view .LVU15
+ 104:app/fan.c     ****         pwm_cfg.invert = 0;             /* 不反相 */
+  68              		.loc 1 104 9 view .LVU16
+ 105:app/fan.c     ****         pwm_cfg.use_hardware = 0;       /* 使用软件 PWM */
+  69              		.loc 1 105 9 view .LVU17
+ 106:app/fan.c     ****         pwm_config(s_fan_pwm_channel[i], &pwm_cfg);
+  70              		.loc 1 106 9 view .LVU18
+ 107:app/fan.c     ****         
+  71              		.loc 1 107 9 view .LVU19
+  72 001e FFF7FEFF 		bl	pwm_config
+  73              	.LVL1:
+  74              		.loc 1 110 9 view .LVU20
+ 111:app/fan.c     ****         s_fan_state[i].initialized = 1;
+  75              		.loc 1 111 9 view .LVU21
+ 112:app/fan.c     ****         s_fan_state[i].pwm_enabled = 0;
+  76              		.loc 1 112 9 view .LVU22
+ 104:app/fan.c     ****         pwm_cfg.invert = 0;             /* 不反相 */
+  77              		.loc 1 104 27 is_stmt 0 view .LVU23
+  78 0022 0395     		str	r5, [sp, #12]
+ 102:app/fan.c     ****         pwm_cfg.cycle_time = FAN_PWM_CYCLE_TIME;
+  79              		.loc 1 102 21 view .LVU24
+  80 0024 1723     		movs	r3, #23
+ 111:app/fan.c     ****         s_fan_state[i].pwm_enabled = 0;
+  81              		.loc 1 111 36 view .LVU25
+  82 0026 0125     		movs	r5, #1
+ 107:app/fan.c     ****         
+  83              		.loc 1 107 9 view .LVU26
+  84 0028 01A9     		add	r1, sp, #4
+  85 002a 0320     		movs	r0, #3
+ 102:app/fan.c     ****         pwm_cfg.cycle_time = FAN_PWM_CYCLE_TIME;
+  86              		.loc 1 102 21 view .LVU27
+  87 002c 8DF80430 		strb	r3, [sp, #4]
+ 103:app/fan.c     ****         pwm_cfg.max_value = FAN_PWM_MAX_VALUE;
+  88              		.loc 1 103 28 view .LVU28
+  89 0030 0297     		str	r7, [sp, #8]
+ 110:app/fan.c     ****         s_fan_state[i].initialized = 1;
+  90              		.loc 1 110 30 view .LVU29
+  91 0032 2660     		str	r6, [r4]	@ float
+ 111:app/fan.c     ****         s_fan_state[i].pwm_enabled = 0;
+  92              		.loc 1 111 36 view .LVU30
+  93 0034 A580     		strh	r5, [r4, #4]	@ movhi
+ 100:app/fan.c     ****         /* 配置 PWM 通道 */
+  94              		.loc 1 100 32 is_stmt 1 view .LVU31
+  95              	.LVL2:
+ 100:app/fan.c     ****         /* 配置 PWM 通道 */
+ARM GAS  /tmp/ccqU6N4Z.s 			page 5
+
+
+  96              		.loc 1 100 17 view .LVU32
+ 102:app/fan.c     ****         pwm_cfg.cycle_time = FAN_PWM_CYCLE_TIME;
+  97              		.loc 1 102 9 view .LVU33
+ 103:app/fan.c     ****         pwm_cfg.max_value = FAN_PWM_MAX_VALUE;
+  98              		.loc 1 103 9 view .LVU34
+ 104:app/fan.c     ****         pwm_cfg.invert = 0;             /* 不反相 */
+  99              		.loc 1 104 9 view .LVU35
+ 105:app/fan.c     ****         pwm_cfg.use_hardware = 0;       /* 使用软件 PWM */
+ 100              		.loc 1 105 9 view .LVU36
+ 106:app/fan.c     ****         pwm_config(s_fan_pwm_channel[i], &pwm_cfg);
+ 101              		.loc 1 106 9 view .LVU37
+ 107:app/fan.c     ****         
+ 102              		.loc 1 107 9 view .LVU38
+ 103 0036 FFF7FEFF 		bl	pwm_config
+ 104              	.LVL3:
+ 110:app/fan.c     ****         s_fan_state[i].initialized = 1;
+ 105              		.loc 1 110 9 view .LVU39
+ 111:app/fan.c     ****         s_fan_state[i].pwm_enabled = 0;
+ 106              		.loc 1 111 9 view .LVU40
+ 107              		.loc 1 112 9 view .LVU41
+ 113:app/fan.c     ****     }
+ 114:app/fan.c     ****     
+ 115:app/fan.c     ****     s_module_initialized = 1;
+ 108              		.loc 1 115 26 is_stmt 0 view .LVU42
+ 109 003a 044B     		ldr	r3, .L4+4
+ 110:app/fan.c     ****         s_fan_state[i].initialized = 1;
+ 110              		.loc 1 110 30 view .LVU43
+ 111 003c A660     		str	r6, [r4, #8]	@ float
+ 111:app/fan.c     ****         s_fan_state[i].pwm_enabled = 0;
+ 112              		.loc 1 111 36 view .LVU44
+ 113 003e A581     		strh	r5, [r4, #12]	@ movhi
+ 100:app/fan.c     ****         /* 配置 PWM 通道 */
+ 114              		.loc 1 100 32 is_stmt 1 view .LVU45
+ 115              	.LVL4:
+ 100:app/fan.c     ****         /* 配置 PWM 通道 */
+ 116              		.loc 1 100 17 view .LVU46
+ 117              		.loc 1 115 5 view .LVU47
+ 118              		.loc 1 115 26 is_stmt 0 view .LVU48
+ 119 0040 1D70     		strb	r5, [r3]
+ 116:app/fan.c     **** }
+ 120              		.loc 1 116 1 view .LVU49
+ 121 0042 05B0     		add	sp, sp, #20
+ 122              		.cfi_def_cfa_offset 20
+ 123              		@ sp needed
+ 124 0044 F0BD     		pop	{r4, r5, r6, r7, pc}
+ 125              	.L5:
+ 126 0046 00BF     		.align	2
+ 127              	.L4:
+ 128 0048 00000000 		.word	.LANCHOR0
+ 129 004c 00000000 		.word	.LANCHOR1
+ 130              		.cfi_endproc
+ 131              	.LFE17:
+ 133              		.section	.text.fan_init,"ax",%progbits
+ 134              		.align	1
+ 135              		.p2align 2,,3
+ 136              		.global	fan_init
+ 137              		.syntax unified
+ARM GAS  /tmp/ccqU6N4Z.s 			page 6
+
+
+ 138              		.thumb
+ 139              		.thumb_func
+ 140              		.fpu fpv4-sp-d16
+ 142              	fan_init:
+ 143              	.LFB13:
+  88:app/fan.c     ****     pwm_config_t pwm_cfg;
+ 144              		.loc 1 88 1 is_stmt 1 view -0
+ 145              		.cfi_startproc
+ 146              		@ args = 0, pretend = 0, frame = 0
+ 147              		@ frame_needed = 0, uses_anonymous_args = 0
+ 148              		@ link register save eliminated.
+  89:app/fan.c     ****     uint8_t i;
+ 149              		.loc 1 89 5 view .LVU51
+  90:app/fan.c     ****     
+ 150              		.loc 1 90 5 view .LVU52
+  92:app/fan.c     ****         return;
+ 151              		.loc 1 92 5 view .LVU53
+  92:app/fan.c     ****         return;
+ 152              		.loc 1 92 9 is_stmt 0 view .LVU54
+ 153 0000 024B     		ldr	r3, .L9
+  92:app/fan.c     ****         return;
+ 154              		.loc 1 92 8 view .LVU55
+ 155 0002 1B78     		ldrb	r3, [r3]	@ zero_extendqisi2
+ 156 0004 03B1     		cbz	r3, .L8
+ 157              		.loc 1 116 1 view .LVU56
+ 158 0006 7047     		bx	lr
+ 159              	.L8:
+ 160 0008 FFF7FEBF 		b	fan_init.part.0
+ 161              	.LVL5:
+ 162              	.L10:
+ 163              		.align	2
+ 164              	.L9:
+ 165 000c 00000000 		.word	.LANCHOR1
+ 166              		.cfi_endproc
+ 167              	.LFE13:
+ 169              		.section	.text.fan_set_speed,"ax",%progbits
+ 170              		.align	1
+ 171              		.p2align 2,,3
+ 172              		.global	fan_set_speed
+ 173              		.syntax unified
+ 174              		.thumb
+ 175              		.thumb_func
+ 176              		.fpu fpv4-sp-d16
+ 178              	fan_set_speed:
+ 179              	.LVL6:
+ 180              	.LFB14:
+ 117:app/fan.c     **** 
+ 118:app/fan.c     **** /**
+ 119:app/fan.c     ****  * @brief   设置风扇速度
+ 120:app/fan.c     ****  * 
+ 121:app/fan.c     ****  * 验收标准: 3.4.2 - 支持 M106/M107 指令
+ 122:app/fan.c     ****  */
+ 123:app/fan.c     **** void
+ 124:app/fan.c     **** fan_set_speed(fan_id_t id, float speed)
+ 125:app/fan.c     **** {
+ 181              		.loc 1 125 1 is_stmt 1 view -0
+ 182              		.cfi_startproc
+ARM GAS  /tmp/ccqU6N4Z.s 			page 7
+
+
+ 183              		@ args = 0, pretend = 0, frame = 8
+ 184              		@ frame_needed = 0, uses_anonymous_args = 0
+ 126:app/fan.c     ****     if (id >= FAN_COUNT) {
+ 185              		.loc 1 126 5 view .LVU58
+ 186              		.loc 1 126 8 is_stmt 0 view .LVU59
+ 187 0000 0128     		cmp	r0, #1
+ 188 0002 42D8     		bhi	.L31
+ 127:app/fan.c     ****         return;
+ 128:app/fan.c     ****     }
+ 129:app/fan.c     ****     
+ 130:app/fan.c     ****     /* 确保模块已初始化 */
+ 131:app/fan.c     ****     if (!s_module_initialized) {
+ 189              		.loc 1 131 5 is_stmt 1 view .LVU60
+ 125:app/fan.c     ****     if (id >= FAN_COUNT) {
+ 190              		.loc 1 125 1 is_stmt 0 view .LVU61
+ 191 0004 70B5     		push	{r4, r5, r6, lr}
+ 192              		.cfi_def_cfa_offset 16
+ 193              		.cfi_offset 4, -16
+ 194              		.cfi_offset 5, -12
+ 195              		.cfi_offset 6, -8
+ 196              		.cfi_offset 14, -4
+ 197 0006 2DED028B 		vpush.64	{d8}
+ 198              		.cfi_def_cfa_offset 24
+ 199              		.cfi_offset 80, -24
+ 200              		.cfi_offset 81, -20
+ 201              		.loc 1 131 9 view .LVU62
+ 202 000a 3E4B     		ldr	r3, .L38
+ 203              		.loc 1 131 8 view .LVU63
+ 204 000c 1B78     		ldrb	r3, [r3]	@ zero_extendqisi2
+ 125:app/fan.c     ****     if (id >= FAN_COUNT) {
+ 205              		.loc 1 125 1 view .LVU64
+ 206 000e 82B0     		sub	sp, sp, #8
+ 207              		.cfi_def_cfa_offset 32
+ 208 0010 0646     		mov	r6, r0
+ 209 0012 B0EE408A 		vmov.f32	s16, s0
+ 210              		.loc 1 131 8 view .LVU65
+ 211 0016 002B     		cmp	r3, #0
+ 212 0018 4FD0     		beq	.L34
+ 132:app/fan.c     ****         fan_init();
+ 133:app/fan.c     ****     }
+ 134:app/fan.c     ****     
+ 135:app/fan.c     ****     /* 限制速度范围 */
+ 136:app/fan.c     ****     if (speed < FAN_SPEED_MIN) {
+ 213              		.loc 1 136 5 is_stmt 1 view .LVU66
+ 214              		.loc 1 136 8 is_stmt 0 view .LVU67
+ 215 001a B5EEC08A 		vcmpe.f32	s16, #0
+ 216 001e F1EE10FA 		vmrs	APSR_nzcv, FPSCR
+ 217 0022 4FF00003 		mov	r3, #0
+ 218 0026 31D4     		bmi	.L14
+ 219              	.LVL7:
+ 220              	.L37:
+ 137:app/fan.c     ****         speed = FAN_SPEED_MIN;
+ 138:app/fan.c     ****     } else if (speed > FAN_SPEED_MAX) {
+ 221              		.loc 1 138 12 is_stmt 1 view .LVU68
+ 222              		.loc 1 138 15 is_stmt 0 view .LVU69
+ 223 0028 F7EE007A 		vmov.f32	s15, #1.0e+0
+ 139:app/fan.c     ****         speed = FAN_SPEED_MAX;
+ARM GAS  /tmp/ccqU6N4Z.s 			page 8
+
+
+ 140:app/fan.c     ****     }
+ 141:app/fan.c     ****     
+ 142:app/fan.c     ****     /* 保存速度设置 */
+ 143:app/fan.c     ****     s_fan_state[id].speed = speed;
+ 224              		.loc 1 143 27 view .LVU70
+ 225 002c 364C     		ldr	r4, .L38+4
+ 138:app/fan.c     ****         speed = FAN_SPEED_MAX;
+ 226              		.loc 1 138 15 view .LVU71
+ 227 002e B4EEE78A 		vcmpe.f32	s16, s15
+ 228 0032 F1EE10FA 		vmrs	APSR_nzcv, FPSCR
+ 229              		.loc 1 143 27 view .LVU72
+ 230 0036 4FEAC605 		lsl	r5, r6, #3
+ 231 003a 04EBC603 		add	r3, r4, r6, lsl #3
+ 138:app/fan.c     ****         speed = FAN_SPEED_MAX;
+ 232              		.loc 1 138 15 view .LVU73
+ 233 003e 11DD     		ble	.L35
+ 139:app/fan.c     ****         speed = FAN_SPEED_MAX;
+ 234              		.loc 1 139 9 is_stmt 1 view .LVU74
+ 235              	.LVL8:
+ 236              		.loc 1 143 5 view .LVU75
+ 237              		.loc 1 143 27 is_stmt 0 view .LVU76
+ 238 0040 C3ED007A 		vstr.32	s15, [r3]
+ 144:app/fan.c     ****     
+ 145:app/fan.c     ****     /* 如果速度为 0，关闭 PWM */
+ 146:app/fan.c     ****     if (speed <= 0.0f) {
+ 239              		.loc 1 146 5 is_stmt 1 view .LVU77
+ 147:app/fan.c     ****         fan_set_pwm(id, 0.0f);
+ 148:app/fan.c     ****         pwm_enable(s_fan_pwm_channel[id], 0);
+ 149:app/fan.c     ****         s_fan_state[id].pwm_enabled = 0;
+ 150:app/fan.c     ****     } else {
+ 151:app/fan.c     ****         /* 启用 PWM 输出 */
+ 152:app/fan.c     ****         if (!s_fan_state[id].pwm_enabled) {
+ 240              		.loc 1 152 9 view .LVU78
+ 241              		.loc 1 152 12 is_stmt 0 view .LVU79
+ 242 0044 5B79     		ldrb	r3, [r3, #5]	@ zero_extendqisi2
+ 243 0046 002B     		cmp	r3, #0
+ 244 0048 41D0     		beq	.L24
+ 153:app/fan.c     ****             pwm_enable(s_fan_pwm_channel[id], 1);
+ 154:app/fan.c     ****             s_fan_state[id].pwm_enabled = 1;
+ 155:app/fan.c     ****         }
+ 156:app/fan.c     ****         
+ 157:app/fan.c     ****         /* 设置 PWM 占空比 */
+ 158:app/fan.c     ****         fan_set_pwm(id, speed);
+ 245              		.loc 1 158 9 is_stmt 1 view .LVU80
+ 246              	.LVL9:
+ 247              	.LBB20:
+ 248              	.LBI20:
+  60:app/fan.c     **** {
+ 249              		.loc 1 60 1 view .LVU81
+ 250              	.LBB21:
+  62:app/fan.c     ****     
+ 251              		.loc 1 62 5 view .LVU82
+  64:app/fan.c     ****         return;
+ 252              		.loc 1 64 5 view .LVU83
+ 253              	.LBB22:
+ 254              	.LBI22:
+  60:app/fan.c     **** {
+ARM GAS  /tmp/ccqU6N4Z.s 			page 9
+
+
+ 255              		.loc 1 60 1 view .LVU84
+ 256              	.LBB23:
+  68:app/fan.c     ****     
+ 257              		.loc 1 68 5 view .LVU85
+  68:app/fan.c     ****     
+ 258              		.loc 1 68 12 is_stmt 0 view .LVU86
+ 259 004a 304B     		ldr	r3, .L38+8
+ 260 004c 985D     		ldrb	r0, [r3, r6]	@ zero_extendqisi2
+ 261              	.LVL10:
+  71:app/fan.c     ****         duty = FAN_SPEED_MIN;
+ 262              		.loc 1 71 5 is_stmt 1 view .LVU87
+ 263              	.LBE23:
+ 264              	.LBE22:
+ 265              	.LBE21:
+ 266              	.LBE20:
+ 139:app/fan.c     ****     }
+ 267              		.loc 1 139 15 is_stmt 0 view .LVU88
+ 268 004e B0EE678A 		vmov.f32	s16, s15
+ 269              	.LVL11:
+ 270              	.L20:
+ 271              	.LBB48:
+ 272              	.LBB40:
+ 273              	.LBB32:
+ 274              	.LBB24:
+  78:app/fan.c     **** }
+ 275              		.loc 1 78 5 is_stmt 1 view .LVU89
+ 276 0052 B0EE480A 		vmov.f32	s0, s16
+ 277              	.LBE24:
+ 278              	.LBE32:
+ 279              	.LBE40:
+ 280              	.LBE48:
+ 159:app/fan.c     ****     }
+ 160:app/fan.c     **** }
+ 281              		.loc 1 160 1 is_stmt 0 view .LVU90
+ 282 0056 02B0     		add	sp, sp, #8
+ 283              		.cfi_remember_state
+ 284              		.cfi_def_cfa_offset 24
+ 285              		@ sp needed
+ 286 0058 BDEC028B 		vldm	sp!, {d8}
+ 287              		.cfi_restore 80
+ 288              		.cfi_restore 81
+ 289              		.cfi_def_cfa_offset 16
+ 290              	.LVL12:
+ 291              		.loc 1 160 1 view .LVU91
+ 292 005c BDE87040 		pop	{r4, r5, r6, lr}
+ 293              		.cfi_restore 14
+ 294              		.cfi_restore 6
+ 295              		.cfi_restore 5
+ 296              		.cfi_restore 4
+ 297              		.cfi_def_cfa_offset 0
+ 298              	.LBB49:
+ 299              	.LBB41:
+ 300              	.LBB33:
+ 301              	.LBB25:
+  78:app/fan.c     **** }
+ 302              		.loc 1 78 5 view .LVU92
+ 303 0060 FFF7FEBF 		b	pwm_set_duty
+ARM GAS  /tmp/ccqU6N4Z.s 			page 10
+
+
+ 304              	.LVL13:
+ 305              	.L35:
+ 306              		.cfi_restore_state
+  78:app/fan.c     **** }
+ 307              		.loc 1 78 5 view .LVU93
+ 308              	.LBE25:
+ 309              	.LBE33:
+ 310              	.LBE41:
+ 311              	.LBE49:
+ 143:app/fan.c     ****     
+ 312              		.loc 1 143 5 is_stmt 1 view .LVU94
+ 146:app/fan.c     ****         fan_set_pwm(id, 0.0f);
+ 313              		.loc 1 146 8 is_stmt 0 view .LVU95
+ 314 0064 B5EEC08A 		vcmpe.f32	s16, #0
+ 315 0068 F1EE10FA 		vmrs	APSR_nzcv, FPSCR
+ 143:app/fan.c     ****     
+ 316              		.loc 1 143 27 view .LVU96
+ 317 006c 83ED008A 		vstr.32	s16, [r3]
+ 146:app/fan.c     ****         fan_set_pwm(id, 0.0f);
+ 318              		.loc 1 146 5 is_stmt 1 view .LVU97
+ 146:app/fan.c     ****         fan_set_pwm(id, 0.0f);
+ 319              		.loc 1 146 8 is_stmt 0 view .LVU98
+ 320 0070 11D9     		bls	.L22
+ 152:app/fan.c     ****             pwm_enable(s_fan_pwm_channel[id], 1);
+ 321              		.loc 1 152 9 is_stmt 1 view .LVU99
+ 152:app/fan.c     ****             pwm_enable(s_fan_pwm_channel[id], 1);
+ 322              		.loc 1 152 12 is_stmt 0 view .LVU100
+ 323 0072 5B79     		ldrb	r3, [r3, #5]	@ zero_extendqisi2
+ 324 0074 6BB3     		cbz	r3, .L18
+ 153:app/fan.c     ****             s_fan_state[id].pwm_enabled = 1;
+ 325              		.loc 1 153 13 view .LVU101
+ 326 0076 254B     		ldr	r3, .L38+8
+ 327              	.LBB50:
+ 328              	.LBB42:
+ 329              	.LBB34:
+ 330              	.LBB26:
+  71:app/fan.c     ****         duty = FAN_SPEED_MIN;
+ 331              		.loc 1 71 8 view .LVU102
+ 332 0078 B5EEC08A 		vcmpe.f32	s16, #0
+ 333 007c F1EE10FA 		vmrs	APSR_nzcv, FPSCR
+ 334              	.LBE26:
+ 335              	.LBE34:
+ 336              	.LBE42:
+ 337              	.LBE50:
+ 153:app/fan.c     ****             s_fan_state[id].pwm_enabled = 1;
+ 338              		.loc 1 153 13 view .LVU103
+ 339 0080 985D     		ldrb	r0, [r3, r6]	@ zero_extendqisi2
+ 158:app/fan.c     ****     }
+ 340              		.loc 1 158 9 is_stmt 1 view .LVU104
+ 341              	.LVL14:
+ 342              	.LBB51:
+  60:app/fan.c     **** {
+ 343              		.loc 1 60 1 view .LVU105
+ 344              	.LBB43:
+  62:app/fan.c     ****     
+ 345              		.loc 1 62 5 view .LVU106
+  64:app/fan.c     ****         return;
+ARM GAS  /tmp/ccqU6N4Z.s 			page 11
+
+
+ 346              		.loc 1 64 5 view .LVU107
+ 347              	.LBB35:
+  60:app/fan.c     **** {
+ 348              		.loc 1 60 1 view .LVU108
+ 349              	.LBB27:
+  68:app/fan.c     ****     
+ 350              		.loc 1 68 5 view .LVU109
+  71:app/fan.c     ****         duty = FAN_SPEED_MIN;
+ 351              		.loc 1 71 5 view .LVU110
+  71:app/fan.c     ****         duty = FAN_SPEED_MIN;
+ 352              		.loc 1 71 8 is_stmt 0 view .LVU111
+ 353 0082 35D5     		bpl	.L36
+ 354              	.LVL15:
+ 355              	.L23:
+  72:app/fan.c     ****     } else if (duty > FAN_SPEED_MAX) {
+ 356              		.loc 1 72 14 view .LVU112
+ 357 0084 9FED228A 		vldr.32	s16, .L38+12
+ 358              	.LVL16:
+  72:app/fan.c     ****     } else if (duty > FAN_SPEED_MAX) {
+ 359              		.loc 1 72 14 view .LVU113
+ 360 0088 E3E7     		b	.L20
+ 361              	.LVL17:
+ 362              	.L31:
+ 363              		.cfi_def_cfa_offset 0
+ 364              		.cfi_restore 4
+ 365              		.cfi_restore 5
+ 366              		.cfi_restore 6
+ 367              		.cfi_restore 14
+ 368              		.cfi_restore 80
+ 369              		.cfi_restore 81
+  72:app/fan.c     ****     } else if (duty > FAN_SPEED_MAX) {
+ 370              		.loc 1 72 14 view .LVU114
+ 371 008a 7047     		bx	lr
+ 372              	.LVL18:
+ 373              	.L14:
+ 374              		.cfi_def_cfa_offset 32
+ 375              		.cfi_offset 4, -16
+ 376              		.cfi_offset 5, -12
+ 377              		.cfi_offset 6, -8
+ 378              		.cfi_offset 14, -4
+ 379              		.cfi_offset 80, -24
+ 380              		.cfi_offset 81, -20
+  72:app/fan.c     ****     } else if (duty > FAN_SPEED_MAX) {
+ 381              		.loc 1 72 14 view .LVU115
+ 382              	.LBE27:
+ 383              	.LBE35:
+ 384              	.LBE43:
+ 385              	.LBE51:
+ 143:app/fan.c     ****     
+ 386              		.loc 1 143 5 is_stmt 1 view .LVU116
+ 143:app/fan.c     ****     
+ 387              		.loc 1 143 27 is_stmt 0 view .LVU117
+ 388 008c 1E4C     		ldr	r4, .L38+4
+ 389 008e 04EBC602 		add	r2, r4, r6, lsl #3
+ 390 0092 F500     		lsls	r5, r6, #3
+ 391 0094 1360     		str	r3, [r2]	@ float
+ 146:app/fan.c     ****         fan_set_pwm(id, 0.0f);
+ARM GAS  /tmp/ccqU6N4Z.s 			page 12
+
+
+ 392              		.loc 1 146 5 is_stmt 1 view .LVU118
+ 393              	.LVL19:
+ 394              	.L22:
+ 147:app/fan.c     ****         pwm_enable(s_fan_pwm_channel[id], 0);
+ 395              		.loc 1 147 9 view .LVU119
+ 396              	.LBB52:
+ 397              	.LBI52:
+  60:app/fan.c     **** {
+ 398              		.loc 1 60 1 view .LVU120
+ 399              	.LBB53:
+  62:app/fan.c     ****     
+ 400              		.loc 1 62 5 view .LVU121
+  64:app/fan.c     ****         return;
+ 401              		.loc 1 64 5 view .LVU122
+ 402              	.LBB54:
+ 403              	.LBI54:
+  60:app/fan.c     **** {
+ 404              		.loc 1 60 1 view .LVU123
+ 405              	.LBB55:
+  68:app/fan.c     ****     
+ 406              		.loc 1 68 5 view .LVU124
+  68:app/fan.c     ****     
+ 407              		.loc 1 68 12 is_stmt 0 view .LVU125
+ 408 0096 1D4B     		ldr	r3, .L38+8
+  78:app/fan.c     **** }
+ 409              		.loc 1 78 5 view .LVU126
+ 410 0098 9FED1D0A 		vldr.32	s0, .L38+12
+  68:app/fan.c     ****     
+ 411              		.loc 1 68 12 view .LVU127
+ 412 009c 985D     		ldrb	r0, [r3, r6]	@ zero_extendqisi2
+ 413              	.LVL20:
+  71:app/fan.c     ****         duty = FAN_SPEED_MIN;
+ 414              		.loc 1 71 5 is_stmt 1 view .LVU128
+  73:app/fan.c     ****         duty = FAN_SPEED_MAX;
+ 415              		.loc 1 73 12 view .LVU129
+  78:app/fan.c     **** }
+ 416              		.loc 1 78 5 view .LVU130
+ 417 009e 0190     		str	r0, [sp, #4]
+ 418 00a0 FFF7FEFF 		bl	pwm_set_duty
+ 419              	.LVL21:
+  78:app/fan.c     **** }
+ 420              		.loc 1 78 5 is_stmt 0 view .LVU131
+ 421              	.LBE55:
+ 422              	.LBE54:
+ 423              	.LBE53:
+ 424              	.LBE52:
+ 148:app/fan.c     ****         s_fan_state[id].pwm_enabled = 0;
+ 425              		.loc 1 148 9 is_stmt 1 view .LVU132
+ 426 00a4 0198     		ldr	r0, [sp, #4]
+ 427 00a6 0021     		movs	r1, #0
+ 428 00a8 FFF7FEFF 		bl	pwm_enable
+ 429              	.LVL22:
+ 149:app/fan.c     ****     } else {
+ 430              		.loc 1 149 9 view .LVU133
+ 149:app/fan.c     ****     } else {
+ 431              		.loc 1 149 37 is_stmt 0 view .LVU134
+ 432 00ac 2C44     		add	r4, r4, r5
+ARM GAS  /tmp/ccqU6N4Z.s 			page 13
+
+
+ 433 00ae 0023     		movs	r3, #0
+ 434 00b0 6371     		strb	r3, [r4, #5]
+ 435              		.loc 1 160 1 view .LVU135
+ 436 00b2 02B0     		add	sp, sp, #8
+ 437              		.cfi_remember_state
+ 438              		.cfi_def_cfa_offset 24
+ 439              		@ sp needed
+ 440 00b4 BDEC028B 		vldm	sp!, {d8}
+ 441              		.cfi_restore 80
+ 442              		.cfi_restore 81
+ 443              		.cfi_def_cfa_offset 16
+ 444 00b8 70BD     		pop	{r4, r5, r6, pc}
+ 445              	.LVL23:
+ 446              	.L34:
+ 447              		.cfi_restore_state
+ 132:app/fan.c     ****     }
+ 448              		.loc 1 132 9 is_stmt 1 view .LVU136
+ 449              	.LBB56:
+ 450              	.LBI56:
+  87:app/fan.c     **** {
+ 451              		.loc 1 87 1 view .LVU137
+ 452              	.LBB57:
+  89:app/fan.c     ****     uint8_t i;
+ 453              		.loc 1 89 5 view .LVU138
+  90:app/fan.c     ****     
+ 454              		.loc 1 90 5 view .LVU139
+  92:app/fan.c     ****         return;
+ 455              		.loc 1 92 5 view .LVU140
+ 456 00ba FFF7FEFF 		bl	fan_init.part.0
+ 457              	.LVL24:
+  92:app/fan.c     ****         return;
+ 458              		.loc 1 92 5 is_stmt 0 view .LVU141
+ 459              	.LBE57:
+ 460              	.LBE56:
+ 136:app/fan.c     ****         speed = FAN_SPEED_MIN;
+ 461              		.loc 1 136 5 is_stmt 1 view .LVU142
+ 136:app/fan.c     ****         speed = FAN_SPEED_MIN;
+ 462              		.loc 1 136 8 is_stmt 0 view .LVU143
+ 463 00be B5EEC08A 		vcmpe.f32	s16, #0
+ 464 00c2 F1EE10FA 		vmrs	APSR_nzcv, FPSCR
+ 465 00c6 4FF00003 		mov	r3, #0
+ 466 00ca ADD5     		bpl	.L37
+ 467 00cc DEE7     		b	.L14
+ 468              	.LVL25:
+ 469              	.L24:
+ 139:app/fan.c     ****     }
+ 470              		.loc 1 139 15 view .LVU144
+ 471 00ce B0EE678A 		vmov.f32	s16, s15
+ 472              	.LVL26:
+ 473              	.L18:
+ 153:app/fan.c     ****             s_fan_state[id].pwm_enabled = 1;
+ 474              		.loc 1 153 13 is_stmt 1 view .LVU145
+ 475 00d2 0E4B     		ldr	r3, .L38+8
+ 476 00d4 0121     		movs	r1, #1
+ 477 00d6 985D     		ldrb	r0, [r3, r6]	@ zero_extendqisi2
+ 478 00d8 0190     		str	r0, [sp, #4]
+ 154:app/fan.c     ****         }
+ARM GAS  /tmp/ccqU6N4Z.s 			page 14
+
+
+ 479              		.loc 1 154 41 is_stmt 0 view .LVU146
+ 480 00da 2C44     		add	r4, r4, r5
+ 153:app/fan.c     ****             s_fan_state[id].pwm_enabled = 1;
+ 481              		.loc 1 153 13 view .LVU147
+ 482 00dc FFF7FEFF 		bl	pwm_enable
+ 483              	.LVL27:
+ 154:app/fan.c     ****         }
+ 484              		.loc 1 154 13 is_stmt 1 view .LVU148
+ 485              	.LBB58:
+ 486              	.LBB44:
+ 487              	.LBB36:
+ 488              	.LBB28:
+  71:app/fan.c     ****         duty = FAN_SPEED_MIN;
+ 489              		.loc 1 71 8 is_stmt 0 view .LVU149
+ 490 00e0 B5EEC08A 		vcmpe.f32	s16, #0
+ 491              	.LBE28:
+ 492              	.LBE36:
+ 493              	.LBE44:
+ 494              	.LBE58:
+ 154:app/fan.c     ****         }
+ 495              		.loc 1 154 41 view .LVU150
+ 496 00e4 0123     		movs	r3, #1
+ 497              	.LBB59:
+ 498              	.LBB45:
+ 499              	.LBB37:
+ 500              	.LBB29:
+  71:app/fan.c     ****         duty = FAN_SPEED_MIN;
+ 501              		.loc 1 71 8 view .LVU151
+ 502 00e6 F1EE10FA 		vmrs	APSR_nzcv, FPSCR
+ 503              	.LBE29:
+ 504              	.LBE37:
+ 505              	.LBE45:
+ 506              	.LBE59:
+ 154:app/fan.c     ****         }
+ 507              		.loc 1 154 41 view .LVU152
+ 508 00ea 0198     		ldr	r0, [sp, #4]
+ 158:app/fan.c     ****     }
+ 509              		.loc 1 158 9 is_stmt 1 view .LVU153
+ 510              	.LVL28:
+ 511              	.LBB60:
+  60:app/fan.c     **** {
+ 512              		.loc 1 60 1 view .LVU154
+ 513              	.LBB46:
+  62:app/fan.c     ****     
+ 514              		.loc 1 62 5 view .LVU155
+  64:app/fan.c     ****         return;
+ 515              		.loc 1 64 5 view .LVU156
+ 516              	.LBB38:
+  60:app/fan.c     **** {
+ 517              		.loc 1 60 1 view .LVU157
+ 518              	.LBB30:
+  68:app/fan.c     ****     
+ 519              		.loc 1 68 5 view .LVU158
+  71:app/fan.c     ****         duty = FAN_SPEED_MIN;
+ 520              		.loc 1 71 5 view .LVU159
+ 521              	.LBE30:
+ 522              	.LBE38:
+ARM GAS  /tmp/ccqU6N4Z.s 			page 15
+
+
+ 523              	.LBE46:
+ 524              	.LBE60:
+ 154:app/fan.c     ****         }
+ 525              		.loc 1 154 41 is_stmt 0 view .LVU160
+ 526 00ec 6371     		strb	r3, [r4, #5]
+ 527              	.LBB61:
+ 528              	.LBB47:
+ 529              	.LBB39:
+ 530              	.LBB31:
+  71:app/fan.c     ****         duty = FAN_SPEED_MIN;
+ 531              		.loc 1 71 8 view .LVU161
+ 532 00ee C9D4     		bmi	.L23
+ 533              	.LVL29:
+ 534              	.L36:
+  73:app/fan.c     ****         duty = FAN_SPEED_MAX;
+ 535              		.loc 1 73 12 is_stmt 1 view .LVU162
+  73:app/fan.c     ****         duty = FAN_SPEED_MAX;
+ 536              		.loc 1 73 15 is_stmt 0 view .LVU163
+ 537 00f0 F7EE007A 		vmov.f32	s15, #1.0e+0
+  74:app/fan.c     ****     }
+ 538              		.loc 1 74 14 view .LVU164
+ 539 00f4 B4EE678A 		vcmp.f32	s16, s15
+ 540 00f8 F1EE10FA 		vmrs	APSR_nzcv, FPSCR
+ 541 00fc C8BF     		it	gt
+ 542 00fe B0EE678A 		vmovgt.f32	s16, s15
+ 543              	.LVL30:
+  74:app/fan.c     ****     }
+ 544              		.loc 1 74 14 view .LVU165
+ 545 0102 A6E7     		b	.L20
+ 546              	.L39:
+ 547              		.align	2
+ 548              	.L38:
+ 549 0104 00000000 		.word	.LANCHOR1
+ 550 0108 00000000 		.word	.LANCHOR0
+ 551 010c 00000000 		.word	.LANCHOR2
+ 552 0110 00000000 		.word	0
+ 553              	.LBE31:
+ 554              	.LBE39:
+ 555              	.LBE47:
+ 556              	.LBE61:
+ 557              		.cfi_endproc
+ 558              	.LFE14:
+ 560              		.section	.text.fan_get_speed,"ax",%progbits
+ 561              		.align	1
+ 562              		.p2align 2,,3
+ 563              		.global	fan_get_speed
+ 564              		.syntax unified
+ 565              		.thumb
+ 566              		.thumb_func
+ 567              		.fpu fpv4-sp-d16
+ 569              	fan_get_speed:
+ 570              	.LVL31:
+ 571              	.LFB15:
+ 161:app/fan.c     **** 
+ 162:app/fan.c     **** /**
+ 163:app/fan.c     ****  * @brief   获取风扇速度
+ 164:app/fan.c     ****  */
+ARM GAS  /tmp/ccqU6N4Z.s 			page 16
+
+
+ 165:app/fan.c     **** float
+ 166:app/fan.c     **** fan_get_speed(fan_id_t id)
+ 167:app/fan.c     **** {
+ 572              		.loc 1 167 1 is_stmt 1 view -0
+ 573              		.cfi_startproc
+ 574              		@ args = 0, pretend = 0, frame = 0
+ 575              		@ frame_needed = 0, uses_anonymous_args = 0
+ 168:app/fan.c     ****     if (id >= FAN_COUNT) {
+ 576              		.loc 1 168 5 view .LVU167
+ 577              		.loc 1 168 8 is_stmt 0 view .LVU168
+ 578 0000 0128     		cmp	r0, #1
+ 579 0002 0AD8     		bhi	.L43
+ 169:app/fan.c     ****         return -1.0f;
+ 170:app/fan.c     ****     }
+ 171:app/fan.c     ****     
+ 172:app/fan.c     ****     /* 确保模块已初始化 */
+ 173:app/fan.c     ****     if (!s_module_initialized) {
+ 580              		.loc 1 173 5 is_stmt 1 view .LVU169
+ 167:app/fan.c     ****     if (id >= FAN_COUNT) {
+ 581              		.loc 1 167 1 is_stmt 0 view .LVU170
+ 582 0004 10B5     		push	{r4, lr}
+ 583              		.cfi_def_cfa_offset 8
+ 584              		.cfi_offset 4, -8
+ 585              		.cfi_offset 14, -4
+ 586              		.loc 1 173 9 view .LVU171
+ 587 0006 0A4B     		ldr	r3, .L49
+ 588              		.loc 1 173 8 view .LVU172
+ 589 0008 1B78     		ldrb	r3, [r3]	@ zero_extendqisi2
+ 590 000a 0446     		mov	r4, r0
+ 591 000c 43B1     		cbz	r3, .L48
+ 174:app/fan.c     ****         fan_init();
+ 175:app/fan.c     ****     }
+ 176:app/fan.c     ****     
+ 177:app/fan.c     ****     return s_fan_state[id].speed;
+ 592              		.loc 1 177 5 is_stmt 1 view .LVU173
+ 593              		.loc 1 177 27 is_stmt 0 view .LVU174
+ 594 000e 094B     		ldr	r3, .L49+4
+ 595 0010 03EBC400 		add	r0, r3, r4, lsl #3
+ 596              	.LVL32:
+ 597              		.loc 1 177 27 view .LVU175
+ 598 0014 90ED000A 		vldr.32	s0, [r0]
+ 178:app/fan.c     **** }
+ 599              		.loc 1 178 1 view .LVU176
+ 600 0018 10BD     		pop	{r4, pc}
+ 601              	.LVL33:
+ 602              	.L43:
+ 603              		.cfi_def_cfa_offset 0
+ 604              		.cfi_restore 4
+ 605              		.cfi_restore 14
+ 169:app/fan.c     ****     }
+ 606              		.loc 1 169 16 view .LVU177
+ 607 001a BFEE000A 		vmov.f32	s0, #-1.0e+0
+ 608              		.loc 1 178 1 view .LVU178
+ 609 001e 7047     		bx	lr
+ 610              	.L48:
+ 611              		.cfi_def_cfa_offset 8
+ 612              		.cfi_offset 4, -8
+ARM GAS  /tmp/ccqU6N4Z.s 			page 17
+
+
+ 613              		.cfi_offset 14, -4
+ 174:app/fan.c     ****         fan_init();
+ 614              		.loc 1 174 9 is_stmt 1 view .LVU179
+ 615              	.LBB62:
+ 616              	.LBI62:
+  87:app/fan.c     **** {
+ 617              		.loc 1 87 1 view .LVU180
+ 618              	.LBB63:
+  89:app/fan.c     ****     uint8_t i;
+ 619              		.loc 1 89 5 view .LVU181
+  90:app/fan.c     ****     
+ 620              		.loc 1 90 5 view .LVU182
+  92:app/fan.c     ****         return;
+ 621              		.loc 1 92 5 view .LVU183
+ 622 0020 FFF7FEFF 		bl	fan_init.part.0
+ 623              	.LVL34:
+  92:app/fan.c     ****         return;
+ 624              		.loc 1 92 5 is_stmt 0 view .LVU184
+ 625              	.LBE63:
+ 626              	.LBE62:
+ 177:app/fan.c     **** }
+ 627              		.loc 1 177 5 is_stmt 1 view .LVU185
+ 177:app/fan.c     **** }
+ 628              		.loc 1 177 27 is_stmt 0 view .LVU186
+ 629 0024 034B     		ldr	r3, .L49+4
+ 630 0026 03EBC400 		add	r0, r3, r4, lsl #3
+ 631 002a 90ED000A 		vldr.32	s0, [r0]
+ 632              		.loc 1 178 1 view .LVU187
+ 633 002e 10BD     		pop	{r4, pc}
+ 634              	.L50:
+ 635              		.align	2
+ 636              	.L49:
+ 637 0030 00000000 		.word	.LANCHOR1
+ 638 0034 00000000 		.word	.LANCHOR0
+ 639              		.cfi_endproc
+ 640              	.LFE15:
+ 642              		.section	.bss.s_fan_state,"aw",%nobits
+ 643              		.align	2
+ 644              		.set	.LANCHOR0,. + 0
+ 647              	s_fan_state:
+ 648 0000 00000000 		.space	16
+ 648      00000000 
+ 648      00000000 
+ 648      00000000 
+ 649              		.section	.bss.s_module_initialized,"aw",%nobits
+ 650              		.set	.LANCHOR1,. + 0
+ 653              	s_module_initialized:
+ 654 0000 00       		.space	1
+ 655              		.section	.rodata.s_fan_pwm_channel,"a"
+ 656              		.align	2
+ 657              		.set	.LANCHOR2,. + 0
+ 660              	s_fan_pwm_channel:
+ 661 0000 02       		.byte	2
+ 662 0001 03       		.byte	3
+ 663              		.text
+ 664              	.Letext0:
+ 665              		.file 2 "/usr/lib/gcc/arm-none-eabi/10.3.1/include/stdint.h"
+ARM GAS  /tmp/ccqU6N4Z.s 			page 18
+
+
+ 666              		.file 3 "app/fan.h"
+ 667              		.file 4 "./src/pwmcmds.h"
+ARM GAS  /tmp/ccqU6N4Z.s 			page 19
+
+
+DEFINED SYMBOLS
+                            *ABS*:0000000000000000 fan.c
+     /tmp/ccqU6N4Z.s:18     .text.fan_init.part.0:0000000000000000 $t
+     /tmp/ccqU6N4Z.s:26     .text.fan_init.part.0:0000000000000000 fan_init.part.0
+     /tmp/ccqU6N4Z.s:128    .text.fan_init.part.0:0000000000000048 $d
+     /tmp/ccqU6N4Z.s:134    .text.fan_init:0000000000000000 $t
+     /tmp/ccqU6N4Z.s:142    .text.fan_init:0000000000000000 fan_init
+     /tmp/ccqU6N4Z.s:165    .text.fan_init:000000000000000c $d
+     /tmp/ccqU6N4Z.s:170    .text.fan_set_speed:0000000000000000 $t
+     /tmp/ccqU6N4Z.s:178    .text.fan_set_speed:0000000000000000 fan_set_speed
+     /tmp/ccqU6N4Z.s:549    .text.fan_set_speed:0000000000000104 $d
+     /tmp/ccqU6N4Z.s:561    .text.fan_get_speed:0000000000000000 $t
+     /tmp/ccqU6N4Z.s:569    .text.fan_get_speed:0000000000000000 fan_get_speed
+     /tmp/ccqU6N4Z.s:637    .text.fan_get_speed:0000000000000030 $d
+     /tmp/ccqU6N4Z.s:643    .bss.s_fan_state:0000000000000000 $d
+     /tmp/ccqU6N4Z.s:647    .bss.s_fan_state:0000000000000000 s_fan_state
+     /tmp/ccqU6N4Z.s:653    .bss.s_module_initialized:0000000000000000 s_module_initialized
+     /tmp/ccqU6N4Z.s:654    .bss.s_module_initialized:0000000000000000 $d
+     /tmp/ccqU6N4Z.s:656    .rodata.s_fan_pwm_channel:0000000000000000 $d
+     /tmp/ccqU6N4Z.s:660    .rodata.s_fan_pwm_channel:0000000000000000 s_fan_pwm_channel
+
+UNDEFINED SYMBOLS
+pwm_init
+pwm_config
+pwm_set_duty
+pwm_enable

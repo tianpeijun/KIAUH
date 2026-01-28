@@ -1,0 +1,8 @@
+# Placeholder for Klipper src/ files
+# This directory will contain:
+# - sched.c/h (调度器)
+# - stepper.c/h (步进驱动)
+# - endstop.c (限位开关)
+# - adccmds.c (ADC)
+# - pwmcmds.c (PWM)
+# - command.c/h (命令处理)

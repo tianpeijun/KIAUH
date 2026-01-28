@@ -1,0 +1,1067 @@
+ARM GAS  /tmp/ccx3XVlq.s 			page 1
+
+
+   1              		.cpu cortex-m4
+   2              		.eabi_attribute 27, 1
+   3              		.eabi_attribute 28, 1
+   4              		.eabi_attribute 20, 1
+   5              		.eabi_attribute 21, 1
+   6              		.eabi_attribute 23, 3
+   7              		.eabi_attribute 24, 1
+   8              		.eabi_attribute 25, 1
+   9              		.eabi_attribute 26, 1
+  10              		.eabi_attribute 30, 2
+  11              		.eabi_attribute 34, 1
+  12              		.eabi_attribute 18, 4
+  13              		.file	"endstop.c"
+  14              		.text
+  15              	.Ltext0:
+  16              		.cfi_sections	.debug_frame
+  17              		.section	.text.endstop_timer_callback,"ax",%progbits
+  18              		.align	1
+  19              		.p2align 2,,3
+  20              		.arch armv7e-m
+  21              		.syntax unified
+  22              		.thumb
+  23              		.thumb_func
+  24              		.fpu fpv4-sp-d16
+  26              	endstop_timer_callback:
+  27              	.LVL0:
+  28              	.LFB1:
+  29              		.file 1 "src/endstop.c"
+   1:src/endstop.c **** /**
+   2:src/endstop.c ****  * @file    endstop.c
+   3:src/endstop.c ****  * @brief   限位开关检测实现
+   4:src/endstop.c ****  * 
+   5:src/endstop.c ****  * 复用自 Klipper src/endstop.c
+   6:src/endstop.c ****  * 提供限位开关状态检测和归零停止功能
+   7:src/endstop.c ****  */
+   8:src/endstop.c **** 
+   9:src/endstop.c **** #include "endstop.h"
+  10:src/endstop.c **** #include "sched.h"
+  11:src/endstop.c **** #include "stepper.h"
+  12:src/endstop.c **** #include <stddef.h>
+  13:src/endstop.c **** 
+  14:src/endstop.c **** /* ========== 私有类型定义 ========== */
+  15:src/endstop.c **** 
+  16:src/endstop.c **** /* 限位开关状态 */
+  17:src/endstop.c **** typedef struct {
+  18:src/endstop.c ****     uint8_t pin;                /* GPIO 引脚 */
+  19:src/endstop.c ****     uint8_t invert;             /* 电平反相 */
+  20:src/endstop.c ****     uint8_t configured;         /* 是否已配置 */
+  21:src/endstop.c ****     uint8_t triggered;          /* 触发状态 */
+  22:src/endstop.c ****     uint8_t homing;             /* 归零模式 */
+  23:src/endstop.c ****     stepper_id_t stepper_id;    /* 关联的步进电机 */
+  24:src/endstop.c ****     endstop_callback_fn_t callback; /* 触发回调 */
+  25:src/endstop.c ****     void* callback_arg;         /* 回调参数 */
+  26:src/endstop.c **** } endstop_state_t;
+  27:src/endstop.c **** 
+  28:src/endstop.c **** /* ========== 私有变量 ========== */
+  29:src/endstop.c **** 
+ARM GAS  /tmp/ccx3XVlq.s 			page 2
+
+
+  30:src/endstop.c **** /* 限位开关状态数组 */
+  31:src/endstop.c **** static endstop_state_t s_endstops[ENDSTOP_COUNT];
+  32:src/endstop.c **** 
+  33:src/endstop.c **** /* 采样定时器 */
+  34:src/endstop.c **** static sched_timer_t s_endstop_timer;
+  35:src/endstop.c **** 
+  36:src/endstop.c **** /* 采样间隔（时钟周期） */
+  37:src/endstop.c **** #define ENDSTOP_SAMPLE_INTERVAL     1000    /* 约 1ms */
+  38:src/endstop.c **** 
+  39:src/endstop.c **** /* ========== GPIO 操作 ========== */
+  40:src/endstop.c **** 
+  41:src/endstop.c **** /* TODO: 需要 HAL 层实现这些函数 */
+  42:src/endstop.c **** extern void gpio_in_setup(uint8_t pin, int8_t pull);
+  43:src/endstop.c **** extern uint8_t gpio_in_read(uint8_t pin);
+  44:src/endstop.c **** 
+  45:src/endstop.c **** /* ========== 私有函数 ========== */
+  46:src/endstop.c **** 
+  47:src/endstop.c **** /**
+  48:src/endstop.c ****  * @brief  读取限位开关状态
+  49:src/endstop.c ****  * @param  endstop 限位开关状态指针
+  50:src/endstop.c ****  * @retval 1 触发，0 未触发
+  51:src/endstop.c ****  */
+  52:src/endstop.c **** static int endstop_read_state(endstop_state_t* endstop)
+  53:src/endstop.c **** {
+  54:src/endstop.c ****     uint8_t value;
+  55:src/endstop.c ****     
+  56:src/endstop.c ****     if (endstop == NULL || !endstop->configured) {
+  57:src/endstop.c ****         return 0;
+  58:src/endstop.c ****     }
+  59:src/endstop.c ****     
+  60:src/endstop.c ****     value = gpio_in_read(endstop->pin);
+  61:src/endstop.c ****     
+  62:src/endstop.c ****     if (endstop->invert) {
+  63:src/endstop.c ****         value = !value;
+  64:src/endstop.c ****     }
+  65:src/endstop.c ****     
+  66:src/endstop.c ****     return value ? 1 : 0;
+  67:src/endstop.c **** }
+  68:src/endstop.c **** 
+  69:src/endstop.c **** /**
+  70:src/endstop.c ****  * @brief  限位开关采样定时器回调
+  71:src/endstop.c ****  * @param  waketime 唤醒时间
+  72:src/endstop.c ****  * @retval 下次唤醒时间
+  73:src/endstop.c ****  */
+  74:src/endstop.c **** static sched_time_t endstop_timer_callback(sched_time_t waketime)
+  75:src/endstop.c **** {
+  30              		.loc 1 75 1 view -0
+  31              		.cfi_startproc
+  32              		@ args = 0, pretend = 0, frame = 0
+  33              		@ frame_needed = 0, uses_anonymous_args = 0
+  76:src/endstop.c ****     int i;
+  34              		.loc 1 76 5 view .LVU1
+  77:src/endstop.c ****     int state;
+  35              		.loc 1 77 5 view .LVU2
+  78:src/endstop.c ****     
+  79:src/endstop.c ****     /* 遍历所有限位开关 */
+  80:src/endstop.c ****     for (i = 0; i < ENDSTOP_COUNT; i++) {
+ARM GAS  /tmp/ccx3XVlq.s 			page 3
+
+
+  36              		.loc 1 80 5 view .LVU3
+  37              		.loc 1 80 17 view .LVU4
+  75:src/endstop.c ****     int i;
+  38              		.loc 1 75 1 is_stmt 0 view .LVU5
+  39 0000 2DE9F041 		push	{r4, r5, r6, r7, r8, lr}
+  40              		.cfi_def_cfa_offset 24
+  41              		.cfi_offset 4, -24
+  42              		.cfi_offset 5, -20
+  43              		.cfi_offset 6, -16
+  44              		.cfi_offset 7, -12
+  45              		.cfi_offset 8, -8
+  46              		.cfi_offset 14, -4
+  47              		.loc 1 80 12 view .LVU6
+  48 0004 0025     		movs	r5, #0
+  49 0006 184C     		ldr	r4, .L31
+  75:src/endstop.c ****     int i;
+  50              		.loc 1 75 1 view .LVU7
+  51 0008 0646     		mov	r6, r0
+  52              	.LBB7:
+  81:src/endstop.c ****         endstop_state_t* endstop = &s_endstops[i];
+  82:src/endstop.c ****         
+  83:src/endstop.c ****         if (!endstop->configured) {
+  84:src/endstop.c ****             continue;
+  85:src/endstop.c ****         }
+  86:src/endstop.c ****         
+  87:src/endstop.c ****         /* 读取当前状态 */
+  88:src/endstop.c ****         state = endstop_read_state(endstop);
+  89:src/endstop.c ****         
+  90:src/endstop.c ****         /* 检测触发 */
+  91:src/endstop.c ****         if (state && !endstop->triggered) {
+  92:src/endstop.c ****             endstop->triggered = 1;
+  93:src/endstop.c ****             
+  94:src/endstop.c ****             /* 如果在归零模式，停止关联的步进电机 */
+  95:src/endstop.c ****             if (endstop->homing) {
+  96:src/endstop.c ****                 stepper_stop(endstop->stepper_id);
+  97:src/endstop.c ****             }
+  98:src/endstop.c ****             
+  99:src/endstop.c ****             /* 调用回调函数 */
+ 100:src/endstop.c ****             if (endstop->callback != NULL) {
+ 101:src/endstop.c ****                 endstop->callback((endstop_id_t)i, endstop->callback_arg);
+ 102:src/endstop.c ****             }
+ 103:src/endstop.c ****         } else if (!state && endstop->triggered) {
+ 104:src/endstop.c ****             /* 限位开关释放 */
+ 105:src/endstop.c ****             endstop->triggered = 0;
+  53              		.loc 1 105 32 view .LVU8
+  54 000a A846     		mov	r8, r5
+  92:src/endstop.c ****             
+  55              		.loc 1 92 32 view .LVU9
+  56 000c 0127     		movs	r7, #1
+  57              	.LVL1:
+  58              	.L9:
+  81:src/endstop.c ****         endstop_state_t* endstop = &s_endstops[i];
+  59              		.loc 1 81 9 is_stmt 1 view .LVU10
+  83:src/endstop.c ****             continue;
+  60              		.loc 1 83 9 view .LVU11
+  83:src/endstop.c ****             continue;
+  61              		.loc 1 83 12 is_stmt 0 view .LVU12
+ARM GAS  /tmp/ccx3XVlq.s 			page 4
+
+
+  62 000e A378     		ldrb	r3, [r4, #2]	@ zero_extendqisi2
+  63 0010 4BB1     		cbz	r3, .L3
+  88:src/endstop.c ****         
+  64              		.loc 1 88 9 is_stmt 1 view .LVU13
+  65              	.LVL2:
+  66              	.LBB8:
+  67              	.LBI8:
+  52:src/endstop.c **** {
+  68              		.loc 1 52 12 view .LVU14
+  69              	.LBB9:
+  54:src/endstop.c ****     
+  70              		.loc 1 54 5 view .LVU15
+  56:src/endstop.c ****         return 0;
+  71              		.loc 1 56 5 view .LVU16
+  72              	.LBB10:
+  73              	.LBI10:
+  52:src/endstop.c **** {
+  74              		.loc 1 52 12 view .LVU17
+  75              	.LBB11:
+  60:src/endstop.c ****     
+  76              		.loc 1 60 5 view .LVU18
+  60:src/endstop.c ****     
+  77              		.loc 1 60 13 is_stmt 0 view .LVU19
+  78 0012 2078     		ldrb	r0, [r4]	@ zero_extendqisi2
+  79 0014 FFF7FEFF 		bl	gpio_in_read
+  80              	.LVL3:
+  62:src/endstop.c ****         value = !value;
+  81              		.loc 1 62 5 is_stmt 1 view .LVU20
+  62:src/endstop.c ****         value = !value;
+  82              		.loc 1 62 8 is_stmt 0 view .LVU21
+  83 0018 6378     		ldrb	r3, [r4, #1]	@ zero_extendqisi2
+  84 001a 6BB9     		cbnz	r3, .L28
+  66:src/endstop.c **** }
+  85              		.loc 1 66 5 is_stmt 1 view .LVU22
+  86              	.LVL4:
+  66:src/endstop.c **** }
+  87              		.loc 1 66 5 is_stmt 0 view .LVU23
+  88              	.LBE11:
+  89              	.LBE10:
+  90              	.LBE9:
+  91              	.LBE8:
+  91:src/endstop.c ****             endstop->triggered = 1;
+  92              		.loc 1 91 9 is_stmt 1 view .LVU24
+  91:src/endstop.c ****             endstop->triggered = 1;
+  93              		.loc 1 91 12 is_stmt 0 view .LVU25
+  94 001c 70B9     		cbnz	r0, .L5
+  95              	.L6:
+ 103:src/endstop.c ****             /* 限位开关释放 */
+  96              		.loc 1 103 16 is_stmt 1 discriminator 1 view .LVU26
+ 103:src/endstop.c ****             /* 限位开关释放 */
+  97              		.loc 1 103 27 is_stmt 0 discriminator 1 view .LVU27
+  98 001e E378     		ldrb	r3, [r4, #3]	@ zero_extendqisi2
+  99 0020 0BB1     		cbz	r3, .L3
+ 100              		.loc 1 105 13 is_stmt 1 view .LVU28
+ 101              		.loc 1 105 32 is_stmt 0 view .LVU29
+ 102 0022 84F80380 		strb	r8, [r4, #3]
+ 103              	.L3:
+ARM GAS  /tmp/ccx3XVlq.s 			page 5
+
+
+ 104              	.LBE7:
+  80:src/endstop.c ****         endstop_state_t* endstop = &s_endstops[i];
+ 105              		.loc 1 80 36 is_stmt 1 discriminator 2 view .LVU30
+  80:src/endstop.c ****         endstop_state_t* endstop = &s_endstops[i];
+ 106              		.loc 1 80 37 is_stmt 0 discriminator 2 view .LVU31
+ 107 0026 0135     		adds	r5, r5, #1
+ 108              	.LVL5:
+  80:src/endstop.c ****         endstop_state_t* endstop = &s_endstops[i];
+ 109              		.loc 1 80 17 is_stmt 1 discriminator 2 view .LVU32
+  80:src/endstop.c ****         endstop_state_t* endstop = &s_endstops[i];
+ 110              		.loc 1 80 5 is_stmt 0 discriminator 2 view .LVU33
+ 111 0028 032D     		cmp	r5, #3
+ 112 002a 04F11004 		add	r4, r4, #16
+ 113 002e EED1     		bne	.L9
+ 114              	.LVL6:
+ 115              	.L30:
+ 106:src/endstop.c ****         }
+ 107:src/endstop.c ****     }
+ 108:src/endstop.c ****     
+ 109:src/endstop.c ****     /* 返回下次采样时间 */
+ 110:src/endstop.c ****     return waketime + ENDSTOP_SAMPLE_INTERVAL;
+ 116              		.loc 1 110 5 is_stmt 1 view .LVU34
+ 111:src/endstop.c **** }
+ 117              		.loc 1 111 1 is_stmt 0 view .LVU35
+ 118 0030 06F57A70 		add	r0, r6, #1000
+ 119 0034 BDE8F081 		pop	{r4, r5, r6, r7, r8, pc}
+ 120              	.LVL7:
+ 121              	.L28:
+ 122              	.LBB16:
+ 123              	.LBB15:
+ 124              	.LBB14:
+ 125              	.LBB13:
+ 126              	.LBB12:
+  63:src/endstop.c ****     }
+ 127              		.loc 1 63 9 is_stmt 1 view .LVU36
+  66:src/endstop.c **** }
+ 128              		.loc 1 66 5 view .LVU37
+  66:src/endstop.c **** }
+ 129              		.loc 1 66 5 is_stmt 0 view .LVU38
+ 130              	.LBE12:
+ 131              	.LBE13:
+ 132              	.LBE14:
+ 133              	.LBE15:
+  91:src/endstop.c ****             endstop->triggered = 1;
+ 134              		.loc 1 91 9 is_stmt 1 view .LVU39
+  91:src/endstop.c ****             endstop->triggered = 1;
+ 135              		.loc 1 91 12 is_stmt 0 view .LVU40
+ 136 0038 0028     		cmp	r0, #0
+ 137 003a F0D1     		bne	.L6
+ 138              	.L5:
+  91:src/endstop.c ****             endstop->triggered = 1;
+ 139              		.loc 1 91 19 discriminator 1 view .LVU41
+ 140 003c E378     		ldrb	r3, [r4, #3]	@ zero_extendqisi2
+ 141 003e 002B     		cmp	r3, #0
+ 142 0040 F1D1     		bne	.L3
+  92:src/endstop.c ****             
+ 143              		.loc 1 92 13 is_stmt 1 view .LVU42
+ARM GAS  /tmp/ccx3XVlq.s 			page 6
+
+
+  95:src/endstop.c ****                 stepper_stop(endstop->stepper_id);
+ 144              		.loc 1 95 16 is_stmt 0 view .LVU43
+ 145 0042 2379     		ldrb	r3, [r4, #4]	@ zero_extendqisi2
+  92:src/endstop.c ****             
+ 146              		.loc 1 92 32 view .LVU44
+ 147 0044 E770     		strb	r7, [r4, #3]
+  95:src/endstop.c ****                 stepper_stop(endstop->stepper_id);
+ 148              		.loc 1 95 13 is_stmt 1 view .LVU45
+  95:src/endstop.c ****                 stepper_stop(endstop->stepper_id);
+ 149              		.loc 1 95 16 is_stmt 0 view .LVU46
+ 150 0046 5BB9     		cbnz	r3, .L29
+ 151              	.L8:
+ 100:src/endstop.c ****                 endstop->callback((endstop_id_t)i, endstop->callback_arg);
+ 152              		.loc 1 100 13 is_stmt 1 view .LVU47
+ 100:src/endstop.c ****                 endstop->callback((endstop_id_t)i, endstop->callback_arg);
+ 153              		.loc 1 100 24 is_stmt 0 view .LVU48
+ 154 0048 A368     		ldr	r3, [r4, #8]
+ 100:src/endstop.c ****                 endstop->callback((endstop_id_t)i, endstop->callback_arg);
+ 155              		.loc 1 100 16 view .LVU49
+ 156 004a 002B     		cmp	r3, #0
+ 157 004c EBD0     		beq	.L3
+ 101:src/endstop.c ****             }
+ 158              		.loc 1 101 17 is_stmt 1 view .LVU50
+ 159 004e E168     		ldr	r1, [r4, #12]
+ 160 0050 E8B2     		uxtb	r0, r5
+ 161              	.LBE16:
+  80:src/endstop.c ****         endstop_state_t* endstop = &s_endstops[i];
+ 162              		.loc 1 80 37 is_stmt 0 view .LVU51
+ 163 0052 0135     		adds	r5, r5, #1
+ 164              	.LVL8:
+ 165              	.LBB17:
+ 101:src/endstop.c ****             }
+ 166              		.loc 1 101 17 view .LVU52
+ 167 0054 9847     		blx	r3
+ 168              	.LVL9:
+ 169              	.LBE17:
+  80:src/endstop.c ****         endstop_state_t* endstop = &s_endstops[i];
+ 170              		.loc 1 80 36 is_stmt 1 view .LVU53
+  80:src/endstop.c ****         endstop_state_t* endstop = &s_endstops[i];
+ 171              		.loc 1 80 17 view .LVU54
+  80:src/endstop.c ****         endstop_state_t* endstop = &s_endstops[i];
+ 172              		.loc 1 80 5 is_stmt 0 view .LVU55
+ 173 0056 032D     		cmp	r5, #3
+ 174 0058 04F11004 		add	r4, r4, #16
+ 175 005c D7D1     		bne	.L9
+ 176 005e E7E7     		b	.L30
+ 177              	.LVL10:
+ 178              	.L29:
+ 179              	.LBB18:
+  96:src/endstop.c ****             }
+ 180              		.loc 1 96 17 is_stmt 1 view .LVU56
+ 181 0060 6079     		ldrb	r0, [r4, #5]	@ zero_extendqisi2
+ 182 0062 FFF7FEFF 		bl	stepper_stop
+ 183              	.LVL11:
+ 184 0066 EFE7     		b	.L8
+ 185              	.L32:
+ 186              		.align	2
+ARM GAS  /tmp/ccx3XVlq.s 			page 7
+
+
+ 187              	.L31:
+ 188 0068 00000000 		.word	.LANCHOR0
+ 189              	.LBE18:
+ 190              		.cfi_endproc
+ 191              	.LFE1:
+ 193              		.section	.text.endstop_init,"ax",%progbits
+ 194              		.align	1
+ 195              		.p2align 2,,3
+ 196              		.global	endstop_init
+ 197              		.syntax unified
+ 198              		.thumb
+ 199              		.thumb_func
+ 200              		.fpu fpv4-sp-d16
+ 202              	endstop_init:
+ 203              	.LFB2:
+ 112:src/endstop.c **** 
+ 113:src/endstop.c **** /* ========== 公共接口实现 ========== */
+ 114:src/endstop.c **** 
+ 115:src/endstop.c **** /**
+ 116:src/endstop.c ****  * @brief  初始化限位开关模块
+ 117:src/endstop.c ****  * @retval 0 成功，负数 失败
+ 118:src/endstop.c ****  */
+ 119:src/endstop.c **** int endstop_init(void)
+ 120:src/endstop.c **** {
+ 204              		.loc 1 120 1 view -0
+ 205              		.cfi_startproc
+ 206              		@ args = 0, pretend = 0, frame = 0
+ 207              		@ frame_needed = 0, uses_anonymous_args = 0
+ 121:src/endstop.c ****     int i;
+ 208              		.loc 1 121 5 view .LVU58
+ 122:src/endstop.c ****     
+ 123:src/endstop.c ****     /* 清零所有状态 */
+ 124:src/endstop.c ****     for (i = 0; i < ENDSTOP_COUNT; i++) {
+ 209              		.loc 1 124 5 view .LVU59
+ 210              	.LVL12:
+ 211              		.loc 1 124 17 view .LVU60
+ 120:src/endstop.c ****     int i;
+ 212              		.loc 1 120 1 is_stmt 0 view .LVU61
+ 213 0000 38B5     		push	{r3, r4, r5, lr}
+ 214              		.cfi_def_cfa_offset 16
+ 215              		.cfi_offset 3, -16
+ 216              		.cfi_offset 4, -12
+ 217              		.cfi_offset 5, -8
+ 218              		.cfi_offset 14, -4
+ 219 0002 0E4B     		ldr	r3, .L37
+ 125:src/endstop.c ****         s_endstops[i].pin = 0;
+ 220              		.loc 1 125 27 view .LVU62
+ 221 0004 0024     		movs	r4, #0
+ 222 0006 03F13002 		add	r2, r3, #48
+ 223              	.LVL13:
+ 224              	.L34:
+ 225              		.loc 1 125 9 is_stmt 1 discriminator 3 view .LVU63
+ 226              		.loc 1 125 27 is_stmt 0 discriminator 3 view .LVU64
+ 227 000a 1C70     		strb	r4, [r3]
+ 126:src/endstop.c ****         s_endstops[i].invert = 0;
+ 228              		.loc 1 126 9 is_stmt 1 discriminator 3 view .LVU65
+ 229              		.loc 1 126 30 is_stmt 0 discriminator 3 view .LVU66
+ARM GAS  /tmp/ccx3XVlq.s 			page 8
+
+
+ 230 000c 5C70     		strb	r4, [r3, #1]
+ 127:src/endstop.c ****         s_endstops[i].configured = 0;
+ 231              		.loc 1 127 9 is_stmt 1 discriminator 3 view .LVU67
+ 232              		.loc 1 127 34 is_stmt 0 discriminator 3 view .LVU68
+ 233 000e 9C70     		strb	r4, [r3, #2]
+ 128:src/endstop.c ****         s_endstops[i].triggered = 0;
+ 234              		.loc 1 128 9 is_stmt 1 discriminator 3 view .LVU69
+ 235              		.loc 1 128 33 is_stmt 0 discriminator 3 view .LVU70
+ 236 0010 DC70     		strb	r4, [r3, #3]
+ 129:src/endstop.c ****         s_endstops[i].homing = 0;
+ 237              		.loc 1 129 9 is_stmt 1 discriminator 3 view .LVU71
+ 238              		.loc 1 129 30 is_stmt 0 discriminator 3 view .LVU72
+ 239 0012 1C71     		strb	r4, [r3, #4]
+ 130:src/endstop.c ****         s_endstops[i].stepper_id = STEPPER_X;
+ 240              		.loc 1 130 9 is_stmt 1 discriminator 3 view .LVU73
+ 241              		.loc 1 130 34 is_stmt 0 discriminator 3 view .LVU74
+ 242 0014 5C71     		strb	r4, [r3, #5]
+ 131:src/endstop.c ****         s_endstops[i].callback = NULL;
+ 243              		.loc 1 131 9 is_stmt 1 discriminator 3 view .LVU75
+ 132:src/endstop.c ****         s_endstops[i].callback_arg = NULL;
+ 244              		.loc 1 132 36 is_stmt 0 discriminator 3 view .LVU76
+ 245 0016 C3E90244 		strd	r4, r4, [r3, #8]
+ 124:src/endstop.c ****         s_endstops[i].pin = 0;
+ 246              		.loc 1 124 36 is_stmt 1 discriminator 3 view .LVU77
+ 124:src/endstop.c ****         s_endstops[i].pin = 0;
+ 247              		.loc 1 124 17 discriminator 3 view .LVU78
+ 124:src/endstop.c ****         s_endstops[i].pin = 0;
+ 248              		.loc 1 124 5 is_stmt 0 discriminator 3 view .LVU79
+ 249 001a 1033     		adds	r3, r3, #16
+ 250 001c 9342     		cmp	r3, r2
+ 251 001e F4D1     		bne	.L34
+ 133:src/endstop.c ****     }
+ 134:src/endstop.c ****     
+ 135:src/endstop.c ****     /* 初始化采样定时器 */
+ 136:src/endstop.c ****     s_endstop_timer.func = endstop_timer_callback;
+ 252              		.loc 1 136 5 is_stmt 1 view .LVU80
+ 253              		.loc 1 136 26 is_stmt 0 view .LVU81
+ 254 0020 074D     		ldr	r5, .L37+4
+ 255 0022 084B     		ldr	r3, .L37+8
+ 256 0024 AB60     		str	r3, [r5, #8]
+ 137:src/endstop.c ****     s_endstop_timer.waketime = sched_get_time() + ENDSTOP_SAMPLE_INTERVAL;
+ 257              		.loc 1 137 5 is_stmt 1 view .LVU82
+ 258              		.loc 1 137 32 is_stmt 0 view .LVU83
+ 259 0026 FFF7FEFF 		bl	sched_get_time
+ 260              	.LVL14:
+ 261              		.loc 1 137 49 view .LVU84
+ 262 002a 00F57A73 		add	r3, r0, #1000
+ 138:src/endstop.c ****     s_endstop_timer.next = NULL;
+ 139:src/endstop.c ****     
+ 140:src/endstop.c ****     /* 启动采样定时器 */
+ 141:src/endstop.c ****     sched_add_timer(&s_endstop_timer);
+ 263              		.loc 1 141 5 view .LVU85
+ 264 002e 2846     		mov	r0, r5
+ 138:src/endstop.c ****     s_endstop_timer.next = NULL;
+ 265              		.loc 1 138 26 view .LVU86
+ 266 0030 C5E90043 		strd	r4, r3, [r5]
+ 267              		.loc 1 141 5 is_stmt 1 view .LVU87
+ARM GAS  /tmp/ccx3XVlq.s 			page 9
+
+
+ 268 0034 FFF7FEFF 		bl	sched_add_timer
+ 269              	.LVL15:
+ 142:src/endstop.c ****     
+ 143:src/endstop.c ****     return 0;
+ 270              		.loc 1 143 5 view .LVU88
+ 144:src/endstop.c **** }
+ 271              		.loc 1 144 1 is_stmt 0 view .LVU89
+ 272 0038 0020     		movs	r0, #0
+ 273 003a 38BD     		pop	{r3, r4, r5, pc}
+ 274              	.L38:
+ 275              		.align	2
+ 276              	.L37:
+ 277 003c 00000000 		.word	.LANCHOR0
+ 278 0040 00000000 		.word	.LANCHOR1
+ 279 0044 00000000 		.word	endstop_timer_callback
+ 280              		.cfi_endproc
+ 281              	.LFE2:
+ 283              		.section	.text.endstop_config,"ax",%progbits
+ 284              		.align	1
+ 285              		.p2align 2,,3
+ 286              		.global	endstop_config
+ 287              		.syntax unified
+ 288              		.thumb
+ 289              		.thumb_func
+ 290              		.fpu fpv4-sp-d16
+ 292              	endstop_config:
+ 293              	.LVL16:
+ 294              	.LFB3:
+ 145:src/endstop.c **** 
+ 146:src/endstop.c **** /**
+ 147:src/endstop.c ****  * @brief  配置限位开关
+ 148:src/endstop.c ****  * @param  id 限位开关 ID
+ 149:src/endstop.c ****  * @param  config 配置参数
+ 150:src/endstop.c ****  * @retval 0 成功，负数 失败
+ 151:src/endstop.c ****  */
+ 152:src/endstop.c **** int endstop_config(endstop_id_t id, const endstop_config_t* config)
+ 153:src/endstop.c **** {
+ 295              		.loc 1 153 1 is_stmt 1 view -0
+ 296              		.cfi_startproc
+ 297              		@ args = 0, pretend = 0, frame = 0
+ 298              		@ frame_needed = 0, uses_anonymous_args = 0
+ 154:src/endstop.c ****     endstop_state_t* endstop;
+ 299              		.loc 1 154 5 view .LVU91
+ 155:src/endstop.c ****     
+ 156:src/endstop.c ****     if (id >= ENDSTOP_COUNT || config == NULL) {
+ 300              		.loc 1 156 5 view .LVU92
+ 301              		.loc 1 156 8 is_stmt 0 view .LVU93
+ 302 0000 0228     		cmp	r0, #2
+ 303 0002 17D8     		bhi	.L42
+ 304              		.loc 1 156 29 discriminator 1 view .LVU94
+ 305 0004 B1B1     		cbz	r1, .L42
+ 153:src/endstop.c ****     endstop_state_t* endstop;
+ 306              		.loc 1 153 1 view .LVU95
+ 307 0006 08B5     		push	{r3, lr}
+ 308              		.cfi_def_cfa_offset 8
+ 309              		.cfi_offset 3, -8
+ 310              		.cfi_offset 14, -4
+ARM GAS  /tmp/ccx3XVlq.s 			page 10
+
+
+ 157:src/endstop.c ****         return -1;
+ 158:src/endstop.c ****     }
+ 159:src/endstop.c ****     
+ 160:src/endstop.c ****     endstop = &s_endstops[id];
+ 161:src/endstop.c ****     endstop->pin = config->pin;
+ 311              		.loc 1 161 18 view .LVU96
+ 312 0008 0C4A     		ldr	r2, .L47
+ 313 000a 4FEA001C 		lsl	ip, r0, #4
+ 314 000e 0346     		mov	r3, r0
+ 160:src/endstop.c ****     endstop->pin = config->pin;
+ 315              		.loc 1 160 5 is_stmt 1 view .LVU97
+ 316              	.LVL17:
+ 317              		.loc 1 161 5 view .LVU98
+ 318              		.loc 1 161 26 is_stmt 0 view .LVU99
+ 319 0010 0878     		ldrb	r0, [r1]	@ zero_extendqisi2
+ 320              	.LVL18:
+ 321              		.loc 1 161 18 view .LVU100
+ 322 0012 02F80C00 		strb	r0, [r2, ip]
+ 162:src/endstop.c ****     endstop->invert = config->invert;
+ 323              		.loc 1 162 5 is_stmt 1 view .LVU101
+ 161:src/endstop.c ****     endstop->invert = config->invert;
+ 324              		.loc 1 161 18 is_stmt 0 view .LVU102
+ 325 0016 02EB0313 		add	r3, r2, r3, lsl #4
+ 326              	.LVL19:
+ 327              		.loc 1 162 21 view .LVU103
+ 328 001a 4A78     		ldrb	r2, [r1, #1]	@ zero_extendqisi2
+ 329 001c 5A70     		strb	r2, [r3, #1]
+ 163:src/endstop.c ****     endstop->stepper_id = config->stepper_id;
+ 330              		.loc 1 163 5 is_stmt 1 view .LVU104
+ 331              		.loc 1 163 25 is_stmt 0 view .LVU105
+ 332 001e 91F802C0 		ldrb	ip, [r1, #2]	@ zero_extendqisi2
+ 333 0022 83F805C0 		strb	ip, [r3, #5]
+ 164:src/endstop.c ****     endstop->configured = 1;
+ 334              		.loc 1 164 5 is_stmt 1 view .LVU106
+ 335              		.loc 1 164 25 is_stmt 0 view .LVU107
+ 336 0026 0122     		movs	r2, #1
+ 165:src/endstop.c ****     
+ 166:src/endstop.c ****     /* 配置 GPIO 为输入，带上拉 */
+ 167:src/endstop.c ****     gpio_in_setup(config->pin, 1);  /* 1 = 上拉 */
+ 337              		.loc 1 167 5 view .LVU108
+ 338 0028 1146     		mov	r1, r2
+ 339              	.LVL20:
+ 164:src/endstop.c ****     endstop->configured = 1;
+ 340              		.loc 1 164 25 view .LVU109
+ 341 002a 9A70     		strb	r2, [r3, #2]
+ 342              		.loc 1 167 5 is_stmt 1 view .LVU110
+ 343 002c FFF7FEFF 		bl	gpio_in_setup
+ 344              	.LVL21:
+ 168:src/endstop.c ****     
+ 169:src/endstop.c ****     return 0;
+ 345              		.loc 1 169 5 view .LVU111
+ 346              		.loc 1 169 12 is_stmt 0 view .LVU112
+ 347 0030 0020     		movs	r0, #0
+ 170:src/endstop.c **** }
+ 348              		.loc 1 170 1 view .LVU113
+ 349 0032 08BD     		pop	{r3, pc}
+ 350              	.LVL22:
+ARM GAS  /tmp/ccx3XVlq.s 			page 11
+
+
+ 351              	.L42:
+ 352              		.cfi_def_cfa_offset 0
+ 353              		.cfi_restore 3
+ 354              		.cfi_restore 14
+ 157:src/endstop.c ****     }
+ 355              		.loc 1 157 16 view .LVU114
+ 356 0034 4FF0FF30 		mov	r0, #-1
+ 357              	.LVL23:
+ 358              		.loc 1 170 1 view .LVU115
+ 359 0038 7047     		bx	lr
+ 360              	.L48:
+ 361 003a 00BF     		.align	2
+ 362              	.L47:
+ 363 003c 00000000 		.word	.LANCHOR0
+ 364              		.cfi_endproc
+ 365              	.LFE3:
+ 367              		.section	.text.endstop_get_state,"ax",%progbits
+ 368              		.align	1
+ 369              		.p2align 2,,3
+ 370              		.global	endstop_get_state
+ 371              		.syntax unified
+ 372              		.thumb
+ 373              		.thumb_func
+ 374              		.fpu fpv4-sp-d16
+ 376              	endstop_get_state:
+ 377              	.LVL24:
+ 378              	.LFB4:
+ 171:src/endstop.c **** 
+ 172:src/endstop.c **** /**
+ 173:src/endstop.c ****  * @brief  读取限位开关状态
+ 174:src/endstop.c ****  * @param  id 限位开关 ID
+ 175:src/endstop.c ****  * @retval 1 触发，0 未触发，负数 错误
+ 176:src/endstop.c ****  */
+ 177:src/endstop.c **** int endstop_get_state(endstop_id_t id)
+ 178:src/endstop.c **** {
+ 379              		.loc 1 178 1 is_stmt 1 view -0
+ 380              		.cfi_startproc
+ 381              		@ args = 0, pretend = 0, frame = 0
+ 382              		@ frame_needed = 0, uses_anonymous_args = 0
+ 179:src/endstop.c ****     if (id >= ENDSTOP_COUNT) {
+ 383              		.loc 1 179 5 view .LVU117
+ 384              		.loc 1 179 8 is_stmt 0 view .LVU118
+ 385 0000 0228     		cmp	r0, #2
+ 386 0002 16D8     		bhi	.L53
+ 180:src/endstop.c ****         return -1;
+ 181:src/endstop.c ****     }
+ 182:src/endstop.c ****     
+ 183:src/endstop.c ****     if (!s_endstops[id].configured) {
+ 387              		.loc 1 183 5 is_stmt 1 view .LVU119
+ 178:src/endstop.c ****     if (id >= ENDSTOP_COUNT) {
+ 388              		.loc 1 178 1 is_stmt 0 view .LVU120
+ 389 0004 10B5     		push	{r4, lr}
+ 390              		.cfi_def_cfa_offset 8
+ 391              		.cfi_offset 4, -8
+ 392              		.cfi_offset 14, -4
+ 393              		.loc 1 183 24 view .LVU121
+ 394 0006 0C4B     		ldr	r3, .L60
+ARM GAS  /tmp/ccx3XVlq.s 			page 12
+
+
+ 395 0008 03EB0014 		add	r4, r3, r0, lsl #4
+ 396 000c 0101     		lsls	r1, r0, #4
+ 397              		.loc 1 183 8 view .LVU122
+ 398 000e A278     		ldrb	r2, [r4, #2]	@ zero_extendqisi2
+ 399 0010 62B1     		cbz	r2, .L54
+ 184:src/endstop.c ****         return -2;
+ 185:src/endstop.c ****     }
+ 186:src/endstop.c ****     
+ 187:src/endstop.c ****     return endstop_read_state(&s_endstops[id]);
+ 400              		.loc 1 187 5 is_stmt 1 view .LVU123
+ 401              	.LVL25:
+ 402              	.LBB23:
+ 403              	.LBI23:
+  52:src/endstop.c **** {
+ 404              		.loc 1 52 12 view .LVU124
+ 405              	.LBB24:
+  54:src/endstop.c ****     
+ 406              		.loc 1 54 5 view .LVU125
+  56:src/endstop.c ****         return 0;
+ 407              		.loc 1 56 5 view .LVU126
+ 408              	.LBB25:
+ 409              	.LBI25:
+  52:src/endstop.c **** {
+ 410              		.loc 1 52 12 view .LVU127
+ 411              	.LBB26:
+  60:src/endstop.c ****     
+ 412              		.loc 1 60 5 view .LVU128
+  60:src/endstop.c ****     
+ 413              		.loc 1 60 13 is_stmt 0 view .LVU129
+ 414 0012 585C     		ldrb	r0, [r3, r1]	@ zero_extendqisi2
+ 415              	.LVL26:
+  60:src/endstop.c ****     
+ 416              		.loc 1 60 13 view .LVU130
+ 417 0014 FFF7FEFF 		bl	gpio_in_read
+ 418              	.LVL27:
+  62:src/endstop.c ****         value = !value;
+ 419              		.loc 1 62 8 view .LVU131
+ 420 0018 6378     		ldrb	r3, [r4, #1]	@ zero_extendqisi2
+ 421              	.LVL28:
+  62:src/endstop.c ****         value = !value;
+ 422              		.loc 1 62 5 is_stmt 1 view .LVU132
+  62:src/endstop.c ****         value = !value;
+ 423              		.loc 1 62 8 is_stmt 0 view .LVU133
+ 424 001a 1BB1     		cbz	r3, .L59
+  63:src/endstop.c ****     }
+ 425              		.loc 1 63 9 is_stmt 1 view .LVU134
+  63:src/endstop.c ****     }
+ 426              		.loc 1 63 17 is_stmt 0 view .LVU135
+ 427 001c B0FA80F0 		clz	r0, r0
+ 428              	.LVL29:
+  63:src/endstop.c ****     }
+ 429              		.loc 1 63 17 view .LVU136
+ 430 0020 4009     		lsrs	r0, r0, #5
+ 431              	.LVL30:
+  66:src/endstop.c **** }
+ 432              		.loc 1 66 5 is_stmt 1 view .LVU137
+  66:src/endstop.c **** }
+ARM GAS  /tmp/ccx3XVlq.s 			page 13
+
+
+ 433              		.loc 1 66 5 is_stmt 0 view .LVU138
+ 434              	.LBE26:
+ 435              	.LBE25:
+ 436              	.LBE24:
+ 437              	.LBE23:
+ 188:src/endstop.c **** }
+ 438              		.loc 1 188 1 view .LVU139
+ 439 0022 10BD     		pop	{r4, pc}
+ 440              	.LVL31:
+ 441              	.L59:
+ 442              	.LBB30:
+ 443              	.LBB29:
+ 444              	.LBB28:
+ 445              	.LBB27:
+  66:src/endstop.c **** }
+ 446              		.loc 1 66 22 view .LVU140
+ 447 0024 0038     		subs	r0, r0, #0
+ 448              	.LVL32:
+  66:src/endstop.c **** }
+ 449              		.loc 1 66 22 view .LVU141
+ 450 0026 18BF     		it	ne
+ 451 0028 0120     		movne	r0, #1
+ 452              	.LBE27:
+ 453              	.LBE28:
+ 454              	.LBE29:
+ 455              	.LBE30:
+ 456              		.loc 1 188 1 view .LVU142
+ 457 002a 10BD     		pop	{r4, pc}
+ 458              	.LVL33:
+ 459              	.L54:
+ 184:src/endstop.c ****     }
+ 460              		.loc 1 184 16 view .LVU143
+ 461 002c 6FF00100 		mvn	r0, #1
+ 462              	.LVL34:
+ 463              		.loc 1 188 1 view .LVU144
+ 464 0030 10BD     		pop	{r4, pc}
+ 465              	.LVL35:
+ 466              	.L53:
+ 467              		.cfi_def_cfa_offset 0
+ 468              		.cfi_restore 4
+ 469              		.cfi_restore 14
+ 180:src/endstop.c ****     }
+ 470              		.loc 1 180 16 view .LVU145
+ 471 0032 4FF0FF30 		mov	r0, #-1
+ 472              	.LVL36:
+ 473              		.loc 1 188 1 view .LVU146
+ 474 0036 7047     		bx	lr
+ 475              	.L61:
+ 476              		.align	2
+ 477              	.L60:
+ 478 0038 00000000 		.word	.LANCHOR0
+ 479              		.cfi_endproc
+ 480              	.LFE4:
+ 482              		.section	.text.endstop_is_triggered,"ax",%progbits
+ 483              		.align	1
+ 484              		.p2align 2,,3
+ 485              		.global	endstop_is_triggered
+ARM GAS  /tmp/ccx3XVlq.s 			page 14
+
+
+ 486              		.syntax unified
+ 487              		.thumb
+ 488              		.thumb_func
+ 489              		.fpu fpv4-sp-d16
+ 491              	endstop_is_triggered:
+ 492              	.LVL37:
+ 493              	.LFB5:
+ 189:src/endstop.c **** 
+ 190:src/endstop.c **** /**
+ 191:src/endstop.c ****  * @brief  检查限位开关是否已触发
+ 192:src/endstop.c ****  * @param  id 限位开关 ID
+ 193:src/endstop.c ****  * @retval 1 已触发，0 未触发
+ 194:src/endstop.c ****  */
+ 195:src/endstop.c **** int endstop_is_triggered(endstop_id_t id)
+ 196:src/endstop.c **** {
+ 494              		.loc 1 196 1 is_stmt 1 view -0
+ 495              		.cfi_startproc
+ 496              		@ args = 0, pretend = 0, frame = 0
+ 497              		@ frame_needed = 0, uses_anonymous_args = 0
+ 498              		@ link register save eliminated.
+ 197:src/endstop.c ****     if (id >= ENDSTOP_COUNT) {
+ 499              		.loc 1 197 5 view .LVU148
+ 198:src/endstop.c ****         return 0;
+ 199:src/endstop.c ****     }
+ 200:src/endstop.c ****     
+ 201:src/endstop.c ****     return s_endstops[id].triggered;
+ 500              		.loc 1 201 5 view .LVU149
+ 197:src/endstop.c ****     if (id >= ENDSTOP_COUNT) {
+ 501              		.loc 1 197 8 is_stmt 0 view .LVU150
+ 502 0000 0228     		cmp	r0, #2
+ 503              		.loc 1 201 26 view .LVU151
+ 504 0002 9DBF     		ittte	ls
+ 505 0004 024B     		ldrls	r3, .L65
+ 506 0006 03EB0010 		addls	r0, r3, r0, lsl #4
+ 507              	.LVL38:
+ 508              		.loc 1 201 26 view .LVU152
+ 509 000a C078     		ldrbls	r0, [r0, #3]	@ zero_extendqisi2
+ 198:src/endstop.c ****         return 0;
+ 510              		.loc 1 198 16 view .LVU153
+ 511 000c 0020     		movhi	r0, #0
+ 202:src/endstop.c **** }
+ 512              		.loc 1 202 1 view .LVU154
+ 513 000e 7047     		bx	lr
+ 514              	.L66:
+ 515              		.align	2
+ 516              	.L65:
+ 517 0010 00000000 		.word	.LANCHOR0
+ 518              		.cfi_endproc
+ 519              	.LFE5:
+ 521              		.section	.text.endstop_home_start,"ax",%progbits
+ 522              		.align	1
+ 523              		.p2align 2,,3
+ 524              		.global	endstop_home_start
+ 525              		.syntax unified
+ 526              		.thumb
+ 527              		.thumb_func
+ 528              		.fpu fpv4-sp-d16
+ARM GAS  /tmp/ccx3XVlq.s 			page 15
+
+
+ 530              	endstop_home_start:
+ 531              	.LVL39:
+ 532              	.LFB6:
+ 203:src/endstop.c **** 
+ 204:src/endstop.c **** /**
+ 205:src/endstop.c ****  * @brief  启用归零模式
+ 206:src/endstop.c ****  * @param  id 限位开关 ID
+ 207:src/endstop.c ****  * @note   归零模式下，触发时自动停止关联的步进电机
+ 208:src/endstop.c ****  */
+ 209:src/endstop.c **** void endstop_home_start(endstop_id_t id)
+ 210:src/endstop.c **** {
+ 533              		.loc 1 210 1 is_stmt 1 view -0
+ 534              		.cfi_startproc
+ 535              		@ args = 0, pretend = 0, frame = 0
+ 536              		@ frame_needed = 0, uses_anonymous_args = 0
+ 537              		@ link register save eliminated.
+ 211:src/endstop.c ****     if (id >= ENDSTOP_COUNT) {
+ 538              		.loc 1 211 5 view .LVU156
+ 539              		.loc 1 211 8 is_stmt 0 view .LVU157
+ 540 0000 0228     		cmp	r0, #2
+ 541 0002 06D8     		bhi	.L67
+ 212:src/endstop.c ****         return;
+ 213:src/endstop.c ****     }
+ 214:src/endstop.c ****     
+ 215:src/endstop.c ****     s_endstops[id].homing = 1;
+ 542              		.loc 1 215 5 is_stmt 1 view .LVU158
+ 543              		.loc 1 215 27 is_stmt 0 view .LVU159
+ 544 0004 034B     		ldr	r3, .L69
+ 545 0006 03EB0010 		add	r0, r3, r0, lsl #4
+ 546              	.LVL40:
+ 547              		.loc 1 215 27 view .LVU160
+ 548 000a 0122     		movs	r2, #1
+ 216:src/endstop.c ****     s_endstops[id].triggered = 0;
+ 549              		.loc 1 216 30 view .LVU161
+ 550 000c 0023     		movs	r3, #0
+ 215:src/endstop.c ****     s_endstops[id].triggered = 0;
+ 551              		.loc 1 215 27 view .LVU162
+ 552 000e 0271     		strb	r2, [r0, #4]
+ 553              		.loc 1 216 5 is_stmt 1 view .LVU163
+ 554              		.loc 1 216 30 is_stmt 0 view .LVU164
+ 555 0010 C370     		strb	r3, [r0, #3]
+ 556              	.L67:
+ 217:src/endstop.c **** }
+ 557              		.loc 1 217 1 view .LVU165
+ 558 0012 7047     		bx	lr
+ 559              	.L70:
+ 560              		.align	2
+ 561              	.L69:
+ 562 0014 00000000 		.word	.LANCHOR0
+ 563              		.cfi_endproc
+ 564              	.LFE6:
+ 566              		.section	.text.endstop_home_end,"ax",%progbits
+ 567              		.align	1
+ 568              		.p2align 2,,3
+ 569              		.global	endstop_home_end
+ 570              		.syntax unified
+ 571              		.thumb
+ARM GAS  /tmp/ccx3XVlq.s 			page 16
+
+
+ 572              		.thumb_func
+ 573              		.fpu fpv4-sp-d16
+ 575              	endstop_home_end:
+ 576              	.LVL41:
+ 577              	.LFB7:
+ 218:src/endstop.c **** 
+ 219:src/endstop.c **** /**
+ 220:src/endstop.c ****  * @brief  结束归零模式
+ 221:src/endstop.c ****  * @param  id 限位开关 ID
+ 222:src/endstop.c ****  */
+ 223:src/endstop.c **** void endstop_home_end(endstop_id_t id)
+ 224:src/endstop.c **** {
+ 578              		.loc 1 224 1 is_stmt 1 view -0
+ 579              		.cfi_startproc
+ 580              		@ args = 0, pretend = 0, frame = 0
+ 581              		@ frame_needed = 0, uses_anonymous_args = 0
+ 582              		@ link register save eliminated.
+ 225:src/endstop.c ****     if (id >= ENDSTOP_COUNT) {
+ 583              		.loc 1 225 5 view .LVU167
+ 584              		.loc 1 225 8 is_stmt 0 view .LVU168
+ 585 0000 0228     		cmp	r0, #2
+ 586 0002 04D8     		bhi	.L71
+ 226:src/endstop.c ****         return;
+ 227:src/endstop.c ****     }
+ 228:src/endstop.c ****     
+ 229:src/endstop.c ****     s_endstops[id].homing = 0;
+ 587              		.loc 1 229 5 is_stmt 1 view .LVU169
+ 588              		.loc 1 229 27 is_stmt 0 view .LVU170
+ 589 0004 024B     		ldr	r3, .L73
+ 590 0006 03EB0010 		add	r0, r3, r0, lsl #4
+ 591              	.LVL42:
+ 592              		.loc 1 229 27 view .LVU171
+ 593 000a 0022     		movs	r2, #0
+ 594 000c 0271     		strb	r2, [r0, #4]
+ 595              	.L71:
+ 230:src/endstop.c **** }
+ 596              		.loc 1 230 1 view .LVU172
+ 597 000e 7047     		bx	lr
+ 598              	.L74:
+ 599              		.align	2
+ 600              	.L73:
+ 601 0010 00000000 		.word	.LANCHOR0
+ 602              		.cfi_endproc
+ 603              	.LFE7:
+ 605              		.section	.text.endstop_set_callback,"ax",%progbits
+ 606              		.align	1
+ 607              		.p2align 2,,3
+ 608              		.global	endstop_set_callback
+ 609              		.syntax unified
+ 610              		.thumb
+ 611              		.thumb_func
+ 612              		.fpu fpv4-sp-d16
+ 614              	endstop_set_callback:
+ 615              	.LVL43:
+ 616              	.LFB8:
+ 231:src/endstop.c **** 
+ 232:src/endstop.c **** /**
+ARM GAS  /tmp/ccx3XVlq.s 			page 17
+
+
+ 233:src/endstop.c ****  * @brief  设置触发回调函数
+ 234:src/endstop.c ****  * @param  id 限位开关 ID
+ 235:src/endstop.c ****  * @param  callback 回调函数
+ 236:src/endstop.c ****  * @param  arg 回调参数
+ 237:src/endstop.c ****  */
+ 238:src/endstop.c **** void endstop_set_callback(endstop_id_t id, endstop_callback_fn_t callback, void* arg)
+ 239:src/endstop.c **** {
+ 617              		.loc 1 239 1 is_stmt 1 view -0
+ 618              		.cfi_startproc
+ 619              		@ args = 0, pretend = 0, frame = 0
+ 620              		@ frame_needed = 0, uses_anonymous_args = 0
+ 621              		@ link register save eliminated.
+ 240:src/endstop.c ****     if (id >= ENDSTOP_COUNT) {
+ 622              		.loc 1 240 5 view .LVU174
+ 623              		.loc 1 240 8 is_stmt 0 view .LVU175
+ 624 0000 0228     		cmp	r0, #2
+ 625 0002 04D8     		bhi	.L75
+ 241:src/endstop.c ****         return;
+ 242:src/endstop.c ****     }
+ 243:src/endstop.c ****     
+ 244:src/endstop.c ****     s_endstops[id].callback = callback;
+ 626              		.loc 1 244 5 is_stmt 1 view .LVU176
+ 627              		.loc 1 244 29 is_stmt 0 view .LVU177
+ 628 0004 024B     		ldr	r3, .L77
+ 629 0006 03EB0010 		add	r0, r3, r0, lsl #4
+ 630              	.LVL44:
+ 245:src/endstop.c ****     s_endstops[id].callback_arg = arg;
+ 631              		.loc 1 245 33 view .LVU178
+ 632 000a C0E90212 		strd	r1, r2, [r0, #8]
+ 633              	.L75:
+ 246:src/endstop.c **** }
+ 634              		.loc 1 246 1 view .LVU179
+ 635 000e 7047     		bx	lr
+ 636              	.L78:
+ 637              		.align	2
+ 638              	.L77:
+ 639 0010 00000000 		.word	.LANCHOR0
+ 640              		.cfi_endproc
+ 641              	.LFE8:
+ 643              		.section	.bss.s_endstop_timer,"aw",%nobits
+ 644              		.align	2
+ 645              		.set	.LANCHOR1,. + 0
+ 648              	s_endstop_timer:
+ 649 0000 00000000 		.space	12
+ 649      00000000 
+ 649      00000000 
+ 650              		.section	.bss.s_endstops,"aw",%nobits
+ 651              		.align	2
+ 652              		.set	.LANCHOR0,. + 0
+ 655              	s_endstops:
+ 656 0000 00000000 		.space	48
+ 656      00000000 
+ 656      00000000 
+ 656      00000000 
+ 656      00000000 
+ 657              		.text
+ 658              	.Letext0:
+ARM GAS  /tmp/ccx3XVlq.s 			page 18
+
+
+ 659              		.file 2 "/usr/lib/gcc/arm-none-eabi/10.3.1/include/stdint.h"
+ 660              		.file 3 "src/sched.h"
+ 661              		.file 4 "src/stepper.h"
+ 662              		.file 5 "src/endstop.h"
+ARM GAS  /tmp/ccx3XVlq.s 			page 19
+
+
+DEFINED SYMBOLS
+                            *ABS*:0000000000000000 endstop.c
+     /tmp/ccx3XVlq.s:18     .text.endstop_timer_callback:0000000000000000 $t
+     /tmp/ccx3XVlq.s:26     .text.endstop_timer_callback:0000000000000000 endstop_timer_callback
+     /tmp/ccx3XVlq.s:188    .text.endstop_timer_callback:0000000000000068 $d
+     /tmp/ccx3XVlq.s:194    .text.endstop_init:0000000000000000 $t
+     /tmp/ccx3XVlq.s:202    .text.endstop_init:0000000000000000 endstop_init
+     /tmp/ccx3XVlq.s:277    .text.endstop_init:000000000000003c $d
+     /tmp/ccx3XVlq.s:284    .text.endstop_config:0000000000000000 $t
+     /tmp/ccx3XVlq.s:292    .text.endstop_config:0000000000000000 endstop_config
+     /tmp/ccx3XVlq.s:363    .text.endstop_config:000000000000003c $d
+     /tmp/ccx3XVlq.s:368    .text.endstop_get_state:0000000000000000 $t
+     /tmp/ccx3XVlq.s:376    .text.endstop_get_state:0000000000000000 endstop_get_state
+     /tmp/ccx3XVlq.s:478    .text.endstop_get_state:0000000000000038 $d
+     /tmp/ccx3XVlq.s:483    .text.endstop_is_triggered:0000000000000000 $t
+     /tmp/ccx3XVlq.s:491    .text.endstop_is_triggered:0000000000000000 endstop_is_triggered
+     /tmp/ccx3XVlq.s:517    .text.endstop_is_triggered:0000000000000010 $d
+     /tmp/ccx3XVlq.s:522    .text.endstop_home_start:0000000000000000 $t
+     /tmp/ccx3XVlq.s:530    .text.endstop_home_start:0000000000000000 endstop_home_start
+     /tmp/ccx3XVlq.s:562    .text.endstop_home_start:0000000000000014 $d
+     /tmp/ccx3XVlq.s:567    .text.endstop_home_end:0000000000000000 $t
+     /tmp/ccx3XVlq.s:575    .text.endstop_home_end:0000000000000000 endstop_home_end
+     /tmp/ccx3XVlq.s:601    .text.endstop_home_end:0000000000000010 $d
+     /tmp/ccx3XVlq.s:606    .text.endstop_set_callback:0000000000000000 $t
+     /tmp/ccx3XVlq.s:614    .text.endstop_set_callback:0000000000000000 endstop_set_callback
+     /tmp/ccx3XVlq.s:639    .text.endstop_set_callback:0000000000000010 $d
+     /tmp/ccx3XVlq.s:644    .bss.s_endstop_timer:0000000000000000 $d
+     /tmp/ccx3XVlq.s:648    .bss.s_endstop_timer:0000000000000000 s_endstop_timer
+     /tmp/ccx3XVlq.s:651    .bss.s_endstops:0000000000000000 $d
+     /tmp/ccx3XVlq.s:655    .bss.s_endstops:0000000000000000 s_endstops
+
+UNDEFINED SYMBOLS
+gpio_in_read
+stepper_stop
+sched_get_time
+sched_add_timer
+gpio_in_setup

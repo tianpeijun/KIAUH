@@ -1,0 +1,6 @@
+# Placeholder for chelper motion library files
+# This directory will contain:
+# - trapq.c/h (梯形运动队列)
+# - itersolve.c/h (迭代求解器)
+# - kin_cartesian.c (笛卡尔运动学)
+# - list.h (链表工具)

@@ -1,0 +1,7 @@
+# Placeholder for application layer files (新增/移植代码)
+# This directory will contain:
+# - main.c (主程序入口)
+# - gcode.c/h (G-code 解析 - 移植自 klippy/gcode.py)
+# - toolhead.c/h (运动规划 - 移植自 klippy/toolhead.py)
+# - heater.c/h (温度控制 - 移植自 klippy/extras/heaters.py)
+# - fan.c/h (风扇控制 - 移植自 klippy/extras/fan.py)

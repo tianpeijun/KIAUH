@@ -1,0 +1,1584 @@
+ARM GAS  /tmp/ccsAsLMT.s 			page 1
+
+
+   1              		.cpu cortex-m4
+   2              		.eabi_attribute 27, 1
+   3              		.eabi_attribute 28, 1
+   4              		.eabi_attribute 20, 1
+   5              		.eabi_attribute 21, 1
+   6              		.eabi_attribute 23, 3
+   7              		.eabi_attribute 24, 1
+   8              		.eabi_attribute 25, 1
+   9              		.eabi_attribute 26, 1
+  10              		.eabi_attribute 30, 2
+  11              		.eabi_attribute 34, 1
+  12              		.eabi_attribute 18, 4
+  13              		.file	"command.c"
+  14              		.text
+  15              	.Ltext0:
+  16              		.cfi_sections	.debug_frame
+  17              		.section	.text.command_init,"ax",%progbits
+  18              		.align	1
+  19              		.p2align 2,,3
+  20              		.global	command_init
+  21              		.arch armv7e-m
+  22              		.syntax unified
+  23              		.thumb
+  24              		.thumb_func
+  25              		.fpu fpv4-sp-d16
+  27              	command_init:
+  28              	.LFB0:
+  29              		.file 1 "src/command.c"
+   1:src/command.c **** /**
+   2:src/command.c ****  * @file    command.c
+   3:src/command.c ****  * @brief   命令处理实现
+   4:src/command.c ****  * 
+   5:src/command.c ****  * 复用自 Klipper src/command.c
+   6:src/command.c ****  * 提供命令注册和分发功能
+   7:src/command.c ****  */
+   8:src/command.c **** 
+   9:src/command.c **** #include "command.h"
+  10:src/command.c **** #include "sched.h"
+  11:src/command.c **** #include <stdarg.h>
+  12:src/command.c **** #include <string.h>
+  13:src/command.c **** 
+  14:src/command.c **** /* ========== 私有常量 ========== */
+  15:src/command.c **** 
+  16:src/command.c **** /* 最大注册命令数 */
+  17:src/command.c **** #define CMD_MAX_HANDLERS        32
+  18:src/command.c **** 
+  19:src/command.c **** /* 响应缓冲区大小 */
+  20:src/command.c **** #define CMD_TX_BUF_SIZE         256
+  21:src/command.c **** 
+  22:src/command.c **** /* ========== 私有变量 ========== */
+  23:src/command.c **** 
+  24:src/command.c **** /* 命令处理函数表 */
+  25:src/command.c **** static cmd_desc_t s_cmd_handlers[CMD_MAX_HANDLERS];
+  26:src/command.c **** static uint8_t s_cmd_count = 0;
+  27:src/command.c **** 
+  28:src/command.c **** /* 发送缓冲区 */
+  29:src/command.c **** static uint8_t s_tx_buf[CMD_TX_BUF_SIZE];
+ARM GAS  /tmp/ccsAsLMT.s 			page 2
+
+
+  30:src/command.c **** static size_t s_tx_len = 0;
+  31:src/command.c **** 
+  32:src/command.c **** /* ========== HAL 接口 ========== */
+  33:src/command.c **** 
+  34:src/command.c **** /* TODO: 需要 HAL 层实现这些函数 */
+  35:src/command.c **** extern void serial_write(const uint8_t* data, size_t len);
+  36:src/command.c **** 
+  37:src/command.c **** /* ========== 公共接口实现 ========== */
+  38:src/command.c **** 
+  39:src/command.c **** /**
+  40:src/command.c ****  * @brief  初始化命令处理模块
+  41:src/command.c ****  * @retval 0 成功，负数 失败
+  42:src/command.c ****  */
+  43:src/command.c **** int command_init(void)
+  44:src/command.c **** {
+  30              		.loc 1 44 1 view -0
+  31              		.cfi_startproc
+  32              		@ args = 0, pretend = 0, frame = 0
+  33              		@ frame_needed = 0, uses_anonymous_args = 0
+  45:src/command.c ****     /* 清零命令表 */
+  46:src/command.c ****     memset(s_cmd_handlers, 0, sizeof(s_cmd_handlers));
+  34              		.loc 1 46 5 view .LVU1
+  44:src/command.c ****     /* 清零命令表 */
+  35              		.loc 1 44 1 is_stmt 0 view .LVU2
+  36 0000 10B5     		push	{r4, lr}
+  37              		.cfi_def_cfa_offset 8
+  38              		.cfi_offset 4, -8
+  39              		.cfi_offset 14, -4
+  40              		.loc 1 46 5 view .LVU3
+  41 0002 4FF4C072 		mov	r2, #384
+  42 0006 0021     		movs	r1, #0
+  43 0008 0648     		ldr	r0, .L4
+  44 000a FFF7FEFF 		bl	memset
+  45              	.LVL0:
+  47:src/command.c ****     s_cmd_count = 0;
+  46              		.loc 1 47 5 is_stmt 1 view .LVU4
+  47              		.loc 1 47 17 is_stmt 0 view .LVU5
+  48 000e 0024     		movs	r4, #0
+  49 0010 054B     		ldr	r3, .L4+4
+  48:src/command.c ****     
+  49:src/command.c ****     /* 清零发送缓冲区 */
+  50:src/command.c ****     memset(s_tx_buf, 0, sizeof(s_tx_buf));
+  50              		.loc 1 50 5 view .LVU6
+  51 0012 0648     		ldr	r0, .L4+8
+  47:src/command.c ****     s_cmd_count = 0;
+  52              		.loc 1 47 17 view .LVU7
+  53 0014 1C70     		strb	r4, [r3]
+  54              		.loc 1 50 5 is_stmt 1 view .LVU8
+  55 0016 4FF48072 		mov	r2, #256
+  56 001a 2146     		mov	r1, r4
+  57 001c FFF7FEFF 		bl	memset
+  58              	.LVL1:
+  51:src/command.c ****     s_tx_len = 0;
+  59              		.loc 1 51 5 view .LVU9
+  52:src/command.c ****     
+  53:src/command.c ****     return 0;
+  60              		.loc 1 53 5 view .LVU10
+ARM GAS  /tmp/ccsAsLMT.s 			page 3
+
+
+  54:src/command.c **** }
+  61              		.loc 1 54 1 is_stmt 0 view .LVU11
+  62 0020 2046     		mov	r0, r4
+  63 0022 10BD     		pop	{r4, pc}
+  64              	.L5:
+  65              		.align	2
+  66              	.L4:
+  67 0024 00000000 		.word	.LANCHOR0
+  68 0028 00000000 		.word	.LANCHOR1
+  69 002c 00000000 		.word	.LANCHOR2
+  70              		.cfi_endproc
+  71              	.LFE0:
+  73              		.section	.text.command_register,"ax",%progbits
+  74              		.align	1
+  75              		.p2align 2,,3
+  76              		.global	command_register
+  77              		.syntax unified
+  78              		.thumb
+  79              		.thumb_func
+  80              		.fpu fpv4-sp-d16
+  82              	command_register:
+  83              	.LVL2:
+  84              	.LFB1:
+  55:src/command.c **** 
+  56:src/command.c **** /**
+  57:src/command.c ****  * @brief  注册命令处理函数
+  58:src/command.c ****  * @param  desc 命令描述结构指针
+  59:src/command.c ****  * @retval 0 成功，负数 失败
+  60:src/command.c ****  */
+  61:src/command.c **** int command_register(const cmd_desc_t* desc)
+  62:src/command.c **** {
+  85              		.loc 1 62 1 is_stmt 1 view -0
+  86              		.cfi_startproc
+  87              		@ args = 0, pretend = 0, frame = 0
+  88              		@ frame_needed = 0, uses_anonymous_args = 0
+  89              		@ link register save eliminated.
+  63:src/command.c ****     if (desc == NULL) {
+  90              		.loc 1 63 5 view .LVU13
+  91              		.loc 1 63 8 is_stmt 0 view .LVU14
+  92 0000 68B3     		cbz	r0, .L10
+  64:src/command.c ****         return -1;
+  65:src/command.c ****     }
+  66:src/command.c ****     
+  67:src/command.c ****     if (s_cmd_count >= CMD_MAX_HANDLERS) {
+  93              		.loc 1 67 5 is_stmt 1 view .LVU15
+  62:src/command.c ****     if (desc == NULL) {
+  94              		.loc 1 62 1 is_stmt 0 view .LVU16
+  95 0002 70B4     		push	{r4, r5, r6}
+  96              		.cfi_def_cfa_offset 12
+  97              		.cfi_offset 4, -12
+  98              		.cfi_offset 5, -8
+  99              		.cfi_offset 6, -4
+ 100              		.loc 1 67 21 view .LVU17
+ 101 0004 184E     		ldr	r6, .L22
+ 102 0006 3478     		ldrb	r4, [r6]	@ zero_extendqisi2
+ 103              		.loc 1 67 8 view .LVU18
+ 104 0008 1F2C     		cmp	r4, #31
+ARM GAS  /tmp/ccsAsLMT.s 			page 4
+
+
+ 105 000a 25D8     		bhi	.L11
+ 106              	.LVL3:
+ 107              	.LBB4:
+  68:src/command.c ****         return -2;
+  69:src/command.c ****     }
+  70:src/command.c ****     
+  71:src/command.c ****     /* 检查是否已注册 */
+  72:src/command.c ****     for (uint8_t i = 0; i < s_cmd_count; i++) {
+ 108              		.loc 1 72 25 is_stmt 1 view .LVU19
+ 109 000c 174D     		ldr	r5, .L22+4
+ 110              		.loc 1 72 5 is_stmt 0 view .LVU20
+ 111 000e B4B1     		cbz	r4, .L8
+ 112 0010 611E     		subs	r1, r4, #1
+ 113 0012 CBB2     		uxtb	r3, r1
+ 114 0014 05F10C02 		add	r2, r5, #12
+ 115 0018 0C21     		movs	r1, #12
+ 116 001a 11FB0321 		smlabb	r1, r1, r3, r2
+  73:src/command.c ****         if (s_cmd_handlers[i].id == desc->id) {
+ 117              		.loc 1 73 41 view .LVU21
+ 118 001e 90F800C0 		ldrb	ip, [r0]	@ zero_extendqisi2
+ 119 0022 2B46     		mov	r3, r5
+ 120 0024 01E0     		b	.L9
+ 121              	.LVL4:
+ 122              	.L21:
+  72:src/command.c ****         if (s_cmd_handlers[i].id == desc->id) {
+ 123              		.loc 1 72 5 discriminator 2 view .LVU22
+ 124 0026 8B42     		cmp	r3, r1
+ 125 0028 09D0     		beq	.L8
+ 126              	.LVL5:
+ 127              	.L9:
+ 128              		.loc 1 73 9 is_stmt 1 view .LVU23
+  72:src/command.c ****         if (s_cmd_handlers[i].id == desc->id) {
+ 129              		.loc 1 72 42 view .LVU24
+  72:src/command.c ****         if (s_cmd_handlers[i].id == desc->id) {
+ 130              		.loc 1 72 25 view .LVU25
+ 131              		.loc 1 73 12 is_stmt 0 view .LVU26
+ 132 002a 1A78     		ldrb	r2, [r3]	@ zero_extendqisi2
+ 133 002c 6245     		cmp	r2, ip
+  72:src/command.c ****         if (s_cmd_handlers[i].id == desc->id) {
+ 134              		.loc 1 72 5 view .LVU27
+ 135 002e 03F10C03 		add	r3, r3, #12
+ 136              	.LVL6:
+ 137              		.loc 1 73 12 view .LVU28
+ 138 0032 F8D1     		bne	.L21
+  74:src/command.c ****             return -3;  /* 已存在 */
+ 139              		.loc 1 74 20 view .LVU29
+ 140 0034 6FF00203 		mvn	r3, #2
+ 141              	.LVL7:
+ 142              		.loc 1 74 20 view .LVU30
+ 143              	.LBE4:
+  75:src/command.c ****         }
+  76:src/command.c ****     }
+  77:src/command.c ****     
+  78:src/command.c ****     /* 添加到命令表 */
+  79:src/command.c ****     s_cmd_handlers[s_cmd_count] = *desc;
+  80:src/command.c ****     s_cmd_count++;
+  81:src/command.c ****     
+ARM GAS  /tmp/ccsAsLMT.s 			page 5
+
+
+  82:src/command.c ****     return 0;
+  83:src/command.c **** }
+ 144              		.loc 1 83 1 view .LVU31
+ 145 0038 1846     		mov	r0, r3
+ 146              	.LVL8:
+ 147              		.loc 1 83 1 view .LVU32
+ 148 003a 70BC     		pop	{r4, r5, r6}
+ 149              		.cfi_remember_state
+ 150              		.cfi_restore 6
+ 151              		.cfi_restore 5
+ 152              		.cfi_restore 4
+ 153              		.cfi_def_cfa_offset 0
+ 154 003c 7047     		bx	lr
+ 155              	.LVL9:
+ 156              	.L8:
+ 157              		.cfi_restore_state
+  79:src/command.c ****     s_cmd_count++;
+ 158              		.loc 1 79 5 is_stmt 1 view .LVU33
+  79:src/command.c ****     s_cmd_count++;
+ 159              		.loc 1 79 33 is_stmt 0 view .LVU34
+ 160 003e 07C8     		ldm	r0, {r0, r1, r2}
+ 161              	.LVL10:
+  79:src/command.c ****     s_cmd_count++;
+ 162              		.loc 1 79 33 view .LVU35
+ 163 0040 04EB4403 		add	r3, r4, r4, lsl #1
+ 164 0044 05EB8305 		add	r5, r5, r3, lsl #2
+ 165 0048 85E80700 		stm	r5, {r0, r1, r2}
+  80:src/command.c ****     
+ 166              		.loc 1 80 5 is_stmt 1 view .LVU36
+  82:src/command.c **** }
+ 167              		.loc 1 82 5 view .LVU37
+  80:src/command.c ****     
+ 168              		.loc 1 80 16 is_stmt 0 view .LVU38
+ 169 004c 0134     		adds	r4, r4, #1
+ 170 004e 3470     		strb	r4, [r6]
+  82:src/command.c **** }
+ 171              		.loc 1 82 12 view .LVU39
+ 172 0050 0023     		movs	r3, #0
+ 173              	.L6:
+ 174              		.loc 1 83 1 view .LVU40
+ 175 0052 1846     		mov	r0, r3
+ 176 0054 70BC     		pop	{r4, r5, r6}
+ 177              		.cfi_remember_state
+ 178              		.cfi_restore 6
+ 179              		.cfi_restore 5
+ 180              		.cfi_restore 4
+ 181              		.cfi_def_cfa_offset 0
+ 182 0056 7047     		bx	lr
+ 183              	.LVL11:
+ 184              	.L11:
+ 185              		.cfi_restore_state
+  68:src/command.c ****     }
+ 186              		.loc 1 68 16 view .LVU41
+ 187 0058 6FF00103 		mvn	r3, #1
+ 188 005c F9E7     		b	.L6
+ 189              	.L10:
+ 190              		.cfi_def_cfa_offset 0
+ARM GAS  /tmp/ccsAsLMT.s 			page 6
+
+
+ 191              		.cfi_restore 4
+ 192              		.cfi_restore 5
+ 193              		.cfi_restore 6
+  64:src/command.c ****     }
+ 194              		.loc 1 64 16 view .LVU42
+ 195 005e 4FF0FF33 		mov	r3, #-1
+ 196              		.loc 1 83 1 view .LVU43
+ 197 0062 1846     		mov	r0, r3
+ 198              	.LVL12:
+ 199              		.loc 1 83 1 view .LVU44
+ 200 0064 7047     		bx	lr
+ 201              	.L23:
+ 202 0066 00BF     		.align	2
+ 203              	.L22:
+ 204 0068 00000000 		.word	.LANCHOR1
+ 205 006c 00000000 		.word	.LANCHOR0
+ 206              		.cfi_endproc
+ 207              	.LFE1:
+ 209              		.section	.text.command_process,"ax",%progbits
+ 210              		.align	1
+ 211              		.p2align 2,,3
+ 212              		.global	command_process
+ 213              		.syntax unified
+ 214              		.thumb
+ 215              		.thumb_func
+ 216              		.fpu fpv4-sp-d16
+ 218              	command_process:
+ 219              	.LVL13:
+ 220              	.LFB2:
+  84:src/command.c **** 
+  85:src/command.c **** /**
+  86:src/command.c ****  * @brief  处理接收到的命令
+  87:src/command.c ****  * @param  data 命令数据
+  88:src/command.c ****  * @param  len 数据长度
+  89:src/command.c ****  * @retval 0 成功，负数 失败
+  90:src/command.c ****  */
+  91:src/command.c **** int command_process(const uint8_t* data, size_t len)
+  92:src/command.c **** {
+ 221              		.loc 1 92 1 is_stmt 1 view -0
+ 222              		.cfi_startproc
+ 223              		@ args = 0, pretend = 0, frame = 8
+ 224              		@ frame_needed = 0, uses_anonymous_args = 0
+  93:src/command.c ****     cmd_id_t cmd_id;
+ 225              		.loc 1 93 5 view .LVU46
+  94:src/command.c ****     cmd_args_t args;
+ 226              		.loc 1 94 5 view .LVU47
+  95:src/command.c ****     
+  96:src/command.c ****     if (data == NULL || len == 0) {
+ 227              		.loc 1 96 5 view .LVU48
+ 228              		.loc 1 96 8 is_stmt 0 view .LVU49
+ 229 0000 40B3     		cbz	r0, .L29
+ 230              		.loc 1 96 22 discriminator 1 view .LVU50
+ 231 0002 39B3     		cbz	r1, .L29
+  97:src/command.c ****         return -1;
+  98:src/command.c ****     }
+  99:src/command.c ****     
+ 100:src/command.c ****     /* 提取命令 ID */
+ARM GAS  /tmp/ccsAsLMT.s 			page 7
+
+
+ 101:src/command.c ****     cmd_id = data[0];
+ 232              		.loc 1 101 5 is_stmt 1 view .LVU51
+  92:src/command.c ****     cmd_id_t cmd_id;
+ 233              		.loc 1 92 1 is_stmt 0 view .LVU52
+ 234 0004 00B5     		push	{lr}
+ 235              		.cfi_def_cfa_offset 4
+ 236              		.cfi_offset 14, -4
+ 237              		.loc 1 101 12 view .LVU53
+ 238 0006 0346     		mov	r3, r0
+ 239              	.LBB5:
+ 102:src/command.c ****     
+ 103:src/command.c ****     /* 设置参数 */
+ 104:src/command.c ****     args.data = data + 1;
+ 105:src/command.c ****     args.len = len - 1;
+ 106:src/command.c ****     
+ 107:src/command.c ****     /* 查找处理函数 */
+ 108:src/command.c ****     for (uint8_t i = 0; i < s_cmd_count; i++) {
+ 240              		.loc 1 108 27 view .LVU54
+ 241 0008 144A     		ldr	r2, .L39
+ 242              	.LBE5:
+ 101:src/command.c ****     
+ 243              		.loc 1 101 12 view .LVU55
+ 244 000a 13F8010B 		ldrb	r0, [r3], #1	@ zero_extendqisi2
+ 245              	.LVL14:
+ 104:src/command.c ****     args.len = len - 1;
+ 246              		.loc 1 104 5 is_stmt 1 view .LVU56
+ 247              	.LBB6:
+ 248              		.loc 1 108 27 is_stmt 0 view .LVU57
+ 249 000e 1278     		ldrb	r2, [r2]	@ zero_extendqisi2
+ 250              	.LBE6:
+  92:src/command.c ****     cmd_id_t cmd_id;
+ 251              		.loc 1 92 1 view .LVU58
+ 252 0010 83B0     		sub	sp, sp, #12
+ 253              		.cfi_def_cfa_offset 16
+ 105:src/command.c ****     
+ 254              		.loc 1 105 20 view .LVU59
+ 255 0012 0139     		subs	r1, r1, #1
+ 256              	.LVL15:
+ 105:src/command.c ****     
+ 257              		.loc 1 105 14 view .LVU60
+ 258 0014 CDE90031 		strd	r3, r1, [sp]
+ 259              		.loc 1 108 5 is_stmt 1 view .LVU61
+ 260              	.LBB7:
+ 261              		.loc 1 108 10 view .LVU62
+ 262              	.LVL16:
+ 263              		.loc 1 108 25 view .LVU63
+ 264              		.loc 1 108 5 is_stmt 0 view .LVU64
+ 265 0018 BAB1     		cbz	r2, .L30
+ 266 001a 114B     		ldr	r3, .L39+4
+ 267              	.LVL17:
+ 268              		.loc 1 108 5 view .LVU65
+ 269 001c 013A     		subs	r2, r2, #1
+ 270 001e D2B2     		uxtb	r2, r2
+ 271 0020 03F10C0C 		add	ip, r3, #12
+ 272 0024 0C21     		movs	r1, #12
+ 273              	.LVL18:
+ 274              		.loc 1 108 5 view .LVU66
+ARM GAS  /tmp/ccsAsLMT.s 			page 8
+
+
+ 275 0026 11FB02C1 		smlabb	r1, r1, r2, ip
+ 276 002a 02E0     		b	.L27
+ 277              	.LVL19:
+ 278              	.L26:
+ 279              		.loc 1 108 5 discriminator 2 view .LVU67
+ 280 002c 0C33     		adds	r3, r3, #12
+ 281              	.LVL20:
+ 282              		.loc 1 108 5 discriminator 2 view .LVU68
+ 283 002e 8B42     		cmp	r3, r1
+ 284 0030 0BD0     		beq	.L30
+ 285              	.LVL21:
+ 286              	.L27:
+ 109:src/command.c ****         if (s_cmd_handlers[i].id == cmd_id) {
+ 287              		.loc 1 109 9 is_stmt 1 view .LVU69
+ 108:src/command.c ****         if (s_cmd_handlers[i].id == cmd_id) {
+ 288              		.loc 1 108 42 view .LVU70
+ 108:src/command.c ****         if (s_cmd_handlers[i].id == cmd_id) {
+ 289              		.loc 1 108 25 view .LVU71
+ 290              		.loc 1 109 12 is_stmt 0 view .LVU72
+ 291 0032 1A78     		ldrb	r2, [r3]	@ zero_extendqisi2
+ 292 0034 8242     		cmp	r2, r0
+ 293 0036 F9D1     		bne	.L26
+ 110:src/command.c ****             if (s_cmd_handlers[i].handler != NULL) {
+ 294              		.loc 1 110 13 is_stmt 1 view .LVU73
+ 295              		.loc 1 110 34 is_stmt 0 view .LVU74
+ 296 0038 9A68     		ldr	r2, [r3, #8]
+ 297              		.loc 1 110 16 view .LVU75
+ 298 003a 002A     		cmp	r2, #0
+ 299 003c F6D0     		beq	.L26
+ 111:src/command.c ****                 s_cmd_handlers[i].handler(&args);
+ 300              		.loc 1 111 17 is_stmt 1 view .LVU76
+ 301 003e 6846     		mov	r0, sp
+ 302              	.LVL22:
+ 303              		.loc 1 111 17 is_stmt 0 view .LVU77
+ 304 0040 9047     		blx	r2
+ 305              	.LVL23:
+ 112:src/command.c ****                 return 0;
+ 306              		.loc 1 112 17 is_stmt 1 view .LVU78
+ 307              		.loc 1 112 24 is_stmt 0 view .LVU79
+ 308 0042 0020     		movs	r0, #0
+ 309              	.LBE7:
+ 113:src/command.c ****             }
+ 114:src/command.c ****         }
+ 115:src/command.c ****     }
+ 116:src/command.c ****     
+ 117:src/command.c ****     return -2;  /* 未找到处理函数 */
+ 118:src/command.c **** }
+ 310              		.loc 1 118 1 view .LVU80
+ 311 0044 03B0     		add	sp, sp, #12
+ 312              		.cfi_remember_state
+ 313              		.cfi_def_cfa_offset 4
+ 314              		@ sp needed
+ 315 0046 5DF804FB 		ldr	pc, [sp], #4
+ 316              	.LVL24:
+ 317              	.L30:
+ 318              		.cfi_restore_state
+ 117:src/command.c **** }
+ARM GAS  /tmp/ccsAsLMT.s 			page 9
+
+
+ 319              		.loc 1 117 12 view .LVU81
+ 320 004a 6FF00100 		mvn	r0, #1
+ 321              	.LVL25:
+ 322              		.loc 1 118 1 view .LVU82
+ 323 004e 03B0     		add	sp, sp, #12
+ 324              		.cfi_def_cfa_offset 4
+ 325              		@ sp needed
+ 326 0050 5DF804FB 		ldr	pc, [sp], #4
+ 327              	.LVL26:
+ 328              	.L29:
+ 329              		.cfi_def_cfa_offset 0
+ 330              		.cfi_restore 14
+  97:src/command.c ****     }
+ 331              		.loc 1 97 16 view .LVU83
+ 332 0054 4FF0FF30 		mov	r0, #-1
+ 333              	.LVL27:
+ 334              		.loc 1 118 1 view .LVU84
+ 335 0058 7047     		bx	lr
+ 336              	.L40:
+ 337 005a 00BF     		.align	2
+ 338              	.L39:
+ 339 005c 00000000 		.word	.LANCHOR1
+ 340 0060 00000000 		.word	.LANCHOR0
+ 341              		.cfi_endproc
+ 342              	.LFE2:
+ 344              		.section	.text.command_send_response,"ax",%progbits
+ 345              		.align	1
+ 346              		.p2align 2,,3
+ 347              		.global	command_send_response
+ 348              		.syntax unified
+ 349              		.thumb
+ 350              		.thumb_func
+ 351              		.fpu fpv4-sp-d16
+ 353              	command_send_response:
+ 354              	.LVL28:
+ 355              	.LFB3:
+ 119:src/command.c **** 
+ 120:src/command.c **** /**
+ 121:src/command.c ****  * @brief  发送响应数据
+ 122:src/command.c ****  * @param  data 响应数据
+ 123:src/command.c ****  * @param  len 数据长度
+ 124:src/command.c ****  * @retval 0 成功，负数 失败
+ 125:src/command.c ****  */
+ 126:src/command.c **** int command_send_response(const uint8_t* data, size_t len)
+ 127:src/command.c **** {
+ 356              		.loc 1 127 1 is_stmt 1 view -0
+ 357              		.cfi_startproc
+ 358              		@ args = 0, pretend = 0, frame = 0
+ 359              		@ frame_needed = 0, uses_anonymous_args = 0
+ 128:src/command.c ****     if (data == NULL || len == 0) {
+ 360              		.loc 1 128 5 view .LVU86
+ 361              		.loc 1 128 8 is_stmt 0 view .LVU87
+ 362 0000 70B1     		cbz	r0, .L43
+ 127:src/command.c ****     if (data == NULL || len == 0) {
+ 363              		.loc 1 127 1 discriminator 1 view .LVU88
+ 364 0002 08B5     		push	{r3, lr}
+ 365              		.cfi_def_cfa_offset 8
+ARM GAS  /tmp/ccsAsLMT.s 			page 10
+
+
+ 366              		.cfi_offset 3, -8
+ 367              		.cfi_offset 14, -4
+ 368              		.loc 1 128 22 discriminator 1 view .LVU89
+ 369 0004 49B1     		cbz	r1, .L44
+ 129:src/command.c ****         return -1;
+ 130:src/command.c ****     }
+ 131:src/command.c ****     
+ 132:src/command.c ****     if (len > CMD_TX_BUF_SIZE) {
+ 370              		.loc 1 132 5 is_stmt 1 view .LVU90
+ 371              		.loc 1 132 8 is_stmt 0 view .LVU91
+ 372 0006 B1F5807F 		cmp	r1, #256
+ 373 000a 03D8     		bhi	.L45
+ 133:src/command.c ****         return -2;
+ 134:src/command.c ****     }
+ 135:src/command.c ****     
+ 136:src/command.c ****     /* 发送数据 */
+ 137:src/command.c ****     serial_write(data, len);
+ 374              		.loc 1 137 5 is_stmt 1 view .LVU92
+ 375 000c FFF7FEFF 		bl	serial_write
+ 376              	.LVL29:
+ 138:src/command.c ****     
+ 139:src/command.c ****     return 0;
+ 377              		.loc 1 139 5 view .LVU93
+ 378              		.loc 1 139 12 is_stmt 0 view .LVU94
+ 379 0010 0020     		movs	r0, #0
+ 140:src/command.c **** }
+ 380              		.loc 1 140 1 view .LVU95
+ 381 0012 08BD     		pop	{r3, pc}
+ 382              	.LVL30:
+ 383              	.L45:
+ 133:src/command.c ****         return -2;
+ 384              		.loc 1 133 16 view .LVU96
+ 385 0014 6FF00100 		mvn	r0, #1
+ 386              	.LVL31:
+ 387              		.loc 1 140 1 view .LVU97
+ 388 0018 08BD     		pop	{r3, pc}
+ 389              	.LVL32:
+ 390              	.L44:
+ 129:src/command.c ****     }
+ 391              		.loc 1 129 16 view .LVU98
+ 392 001a 4FF0FF30 		mov	r0, #-1
+ 393              	.LVL33:
+ 394              		.loc 1 140 1 view .LVU99
+ 395 001e 08BD     		pop	{r3, pc}
+ 396              	.LVL34:
+ 397              	.L43:
+ 398              		.cfi_def_cfa_offset 0
+ 399              		.cfi_restore 3
+ 400              		.cfi_restore 14
+ 129:src/command.c ****     }
+ 401              		.loc 1 129 16 view .LVU100
+ 402 0020 4FF0FF30 		mov	r0, #-1
+ 403              	.LVL35:
+ 404              		.loc 1 140 1 view .LVU101
+ 405 0024 7047     		bx	lr
+ 406              		.cfi_endproc
+ 407              	.LFE3:
+ARM GAS  /tmp/ccsAsLMT.s 			page 11
+
+
+ 409 0026 00BF     		.section	.text.command_send_string,"ax",%progbits
+ 410              		.align	1
+ 411              		.p2align 2,,3
+ 412              		.global	command_send_string
+ 413              		.syntax unified
+ 414              		.thumb
+ 415              		.thumb_func
+ 416              		.fpu fpv4-sp-d16
+ 418              	command_send_string:
+ 419              	.LVL36:
+ 420              	.LFB4:
+ 141:src/command.c **** 
+ 142:src/command.c **** /**
+ 143:src/command.c ****  * @brief  发送字符串响应
+ 144:src/command.c ****  * @param  str 响应字符串
+ 145:src/command.c ****  * @retval 0 成功，负数 失败
+ 146:src/command.c ****  */
+ 147:src/command.c **** int command_send_string(const char* str)
+ 148:src/command.c **** {
+ 421              		.loc 1 148 1 is_stmt 1 view -0
+ 422              		.cfi_startproc
+ 423              		@ args = 0, pretend = 0, frame = 0
+ 424              		@ frame_needed = 0, uses_anonymous_args = 0
+ 149:src/command.c ****     if (str == NULL) {
+ 425              		.loc 1 149 5 view .LVU103
+ 426              		.loc 1 149 8 is_stmt 0 view .LVU104
+ 427 0000 98B1     		cbz	r0, .L52
+ 150:src/command.c ****         return -1;
+ 151:src/command.c ****     }
+ 152:src/command.c ****     
+ 153:src/command.c ****     return command_send_response((const uint8_t*)str, strlen(str));
+ 428              		.loc 1 153 5 is_stmt 1 view .LVU105
+ 148:src/command.c ****     if (str == NULL) {
+ 429              		.loc 1 148 1 is_stmt 0 view .LVU106
+ 430 0002 10B5     		push	{r4, lr}
+ 431              		.cfi_def_cfa_offset 8
+ 432              		.cfi_offset 4, -8
+ 433              		.cfi_offset 14, -4
+ 434 0004 0446     		mov	r4, r0
+ 435              		.loc 1 153 12 view .LVU107
+ 436 0006 FFF7FEFF 		bl	strlen
+ 437              	.LVL37:
+ 438              	.LBB10:
+ 439              	.LBI10:
+ 126:src/command.c **** {
+ 440              		.loc 1 126 5 is_stmt 1 view .LVU108
+ 441              	.LBB11:
+ 128:src/command.c ****         return -1;
+ 442              		.loc 1 128 5 view .LVU109
+ 128:src/command.c ****         return -1;
+ 443              		.loc 1 128 22 is_stmt 0 view .LVU110
+ 444 000a 0146     		mov	r1, r0
+ 445 000c 50B1     		cbz	r0, .L53
+ 132:src/command.c ****         return -2;
+ 446              		.loc 1 132 5 is_stmt 1 view .LVU111
+ 132:src/command.c ****         return -2;
+ 447              		.loc 1 132 8 is_stmt 0 view .LVU112
+ARM GAS  /tmp/ccsAsLMT.s 			page 12
+
+
+ 448 000e B0F5807F 		cmp	r0, #256
+ 449 0012 04D8     		bhi	.L54
+ 137:src/command.c ****     
+ 450              		.loc 1 137 5 is_stmt 1 view .LVU113
+ 451 0014 2046     		mov	r0, r4
+ 452              	.LVL38:
+ 137:src/command.c ****     
+ 453              		.loc 1 137 5 is_stmt 0 view .LVU114
+ 454 0016 FFF7FEFF 		bl	serial_write
+ 455              	.LVL39:
+ 139:src/command.c **** }
+ 456              		.loc 1 139 5 is_stmt 1 view .LVU115
+ 139:src/command.c **** }
+ 457              		.loc 1 139 12 is_stmt 0 view .LVU116
+ 458 001a 0020     		movs	r0, #0
+ 459              	.LBE11:
+ 460              	.LBE10:
+ 154:src/command.c **** }
+ 461              		.loc 1 154 1 view .LVU117
+ 462 001c 10BD     		pop	{r4, pc}
+ 463              	.LVL40:
+ 464              	.L54:
+ 465              	.LBB13:
+ 466              	.LBB12:
+ 133:src/command.c ****     }
+ 467              		.loc 1 133 16 view .LVU118
+ 468 001e 6FF00100 		mvn	r0, #1
+ 469              	.LVL41:
+ 133:src/command.c ****     }
+ 470              		.loc 1 133 16 view .LVU119
+ 471              	.LBE12:
+ 472              	.LBE13:
+ 473              		.loc 1 154 1 view .LVU120
+ 474 0022 10BD     		pop	{r4, pc}
+ 475              	.LVL42:
+ 476              	.L53:
+ 150:src/command.c ****     }
+ 477              		.loc 1 150 16 view .LVU121
+ 478 0024 4FF0FF30 		mov	r0, #-1
+ 479              	.LVL43:
+ 480              		.loc 1 154 1 view .LVU122
+ 481 0028 10BD     		pop	{r4, pc}
+ 482              	.LVL44:
+ 483              	.L52:
+ 484              		.cfi_def_cfa_offset 0
+ 485              		.cfi_restore 4
+ 486              		.cfi_restore 14
+ 150:src/command.c ****     }
+ 487              		.loc 1 150 16 view .LVU123
+ 488 002a 4FF0FF30 		mov	r0, #-1
+ 489              	.LVL45:
+ 490              		.loc 1 154 1 view .LVU124
+ 491 002e 7047     		bx	lr
+ 492              		.cfi_endproc
+ 493              	.LFE4:
+ 495              		.section	.text.cmd_decode_u8,"ax",%progbits
+ 496              		.align	1
+ARM GAS  /tmp/ccsAsLMT.s 			page 13
+
+
+ 497              		.p2align 2,,3
+ 498              		.global	cmd_decode_u8
+ 499              		.syntax unified
+ 500              		.thumb
+ 501              		.thumb_func
+ 502              		.fpu fpv4-sp-d16
+ 504              	cmd_decode_u8:
+ 505              	.LVL46:
+ 506              	.LFB5:
+ 155:src/command.c **** 
+ 156:src/command.c **** /* ========== 编码/解码工具实现 ========== */
+ 157:src/command.c **** 
+ 158:src/command.c **** /**
+ 159:src/command.c ****  * @brief  从参数中读取 uint8
+ 160:src/command.c ****  * @param  args 参数结构
+ 161:src/command.c ****  * @param  offset 偏移量
+ 162:src/command.c ****  * @retval 读取的值
+ 163:src/command.c ****  */
+ 164:src/command.c **** uint8_t cmd_decode_u8(const cmd_args_t* args, size_t offset)
+ 165:src/command.c **** {
+ 507              		.loc 1 165 1 is_stmt 1 view -0
+ 508              		.cfi_startproc
+ 509              		@ args = 0, pretend = 0, frame = 0
+ 510              		@ frame_needed = 0, uses_anonymous_args = 0
+ 511              		@ link register save eliminated.
+ 166:src/command.c ****     if (args == NULL || args->data == NULL) {
+ 512              		.loc 1 166 5 view .LVU126
+ 513              		.loc 1 166 8 is_stmt 0 view .LVU127
+ 514 0000 38B1     		cbz	r0, .L60
+ 515              		.loc 1 166 29 discriminator 1 view .LVU128
+ 516 0002 0368     		ldr	r3, [r0]
+ 517              		.loc 1 166 22 discriminator 1 view .LVU129
+ 518 0004 23B1     		cbz	r3, .L63
+ 167:src/command.c ****         return 0;
+ 168:src/command.c ****     }
+ 169:src/command.c ****     
+ 170:src/command.c ****     if (offset >= args->len) {
+ 519              		.loc 1 170 5 is_stmt 1 view .LVU130
+ 520              		.loc 1 170 8 is_stmt 0 view .LVU131
+ 521 0006 4268     		ldr	r2, [r0, #4]
+ 522 0008 8A42     		cmp	r2, r1
+ 523 000a 01D9     		bls	.L63
+ 171:src/command.c ****         return 0;
+ 172:src/command.c ****     }
+ 173:src/command.c ****     
+ 174:src/command.c ****     return args->data[offset];
+ 524              		.loc 1 174 5 is_stmt 1 view .LVU132
+ 525              		.loc 1 174 22 is_stmt 0 view .LVU133
+ 526 000c 585C     		ldrb	r0, [r3, r1]	@ zero_extendqisi2
+ 527              	.LVL47:
+ 528              		.loc 1 174 22 view .LVU134
+ 529 000e 7047     		bx	lr
+ 530              	.LVL48:
+ 531              	.L63:
+ 167:src/command.c ****         return 0;
+ 532              		.loc 1 167 16 view .LVU135
+ 533 0010 0020     		movs	r0, #0
+ARM GAS  /tmp/ccsAsLMT.s 			page 14
+
+
+ 534              	.LVL49:
+ 535              	.L60:
+ 175:src/command.c **** }
+ 536              		.loc 1 175 1 view .LVU136
+ 537 0012 7047     		bx	lr
+ 538              		.cfi_endproc
+ 539              	.LFE5:
+ 541              		.section	.text.cmd_decode_u16,"ax",%progbits
+ 542              		.align	1
+ 543              		.p2align 2,,3
+ 544              		.global	cmd_decode_u16
+ 545              		.syntax unified
+ 546              		.thumb
+ 547              		.thumb_func
+ 548              		.fpu fpv4-sp-d16
+ 550              	cmd_decode_u16:
+ 551              	.LVL50:
+ 552              	.LFB6:
+ 176:src/command.c **** 
+ 177:src/command.c **** /**
+ 178:src/command.c ****  * @brief  从参数中读取 uint16（小端序）
+ 179:src/command.c ****  * @param  args 参数结构
+ 180:src/command.c ****  * @param  offset 偏移量
+ 181:src/command.c ****  * @retval 读取的值
+ 182:src/command.c ****  */
+ 183:src/command.c **** uint16_t cmd_decode_u16(const cmd_args_t* args, size_t offset)
+ 184:src/command.c **** {
+ 553              		.loc 1 184 1 is_stmt 1 view -0
+ 554              		.cfi_startproc
+ 555              		@ args = 0, pretend = 0, frame = 0
+ 556              		@ frame_needed = 0, uses_anonymous_args = 0
+ 557              		@ link register save eliminated.
+ 185:src/command.c ****     if (args == NULL || args->data == NULL) {
+ 558              		.loc 1 185 5 view .LVU138
+ 559              		.loc 1 185 8 is_stmt 0 view .LVU139
+ 560 0000 58B1     		cbz	r0, .L65
+ 561              		.loc 1 185 29 discriminator 1 view .LVU140
+ 562 0002 0368     		ldr	r3, [r0]
+ 563              		.loc 1 185 22 discriminator 1 view .LVU141
+ 564 0004 43B1     		cbz	r3, .L68
+ 186:src/command.c ****         return 0;
+ 187:src/command.c ****     }
+ 188:src/command.c ****     
+ 189:src/command.c ****     if (offset + 1 >= args->len) {
+ 565              		.loc 1 189 5 is_stmt 1 view .LVU142
+ 566              		.loc 1 189 8 is_stmt 0 view .LVU143
+ 567 0006 4068     		ldr	r0, [r0, #4]
+ 568              	.LVL51:
+ 569              		.loc 1 189 16 view .LVU144
+ 570 0008 4A1C     		adds	r2, r1, #1
+ 571              		.loc 1 189 8 view .LVU145
+ 572 000a 8242     		cmp	r2, r0
+ 573 000c 04D2     		bcs	.L68
+ 190:src/command.c ****         return 0;
+ 191:src/command.c ****     }
+ 192:src/command.c ****     
+ 193:src/command.c ****     return (uint16_t)args->data[offset] |
+ARM GAS  /tmp/ccsAsLMT.s 			page 15
+
+
+ 574              		.loc 1 193 5 is_stmt 1 view .LVU146
+ 194:src/command.c ****            ((uint16_t)args->data[offset + 1] << 8);
+ 575              		.loc 1 194 13 is_stmt 0 view .LVU147
+ 576 000e 9A5C     		ldrb	r2, [r3, r2]	@ zero_extendqisi2
+ 193:src/command.c ****            ((uint16_t)args->data[offset + 1] << 8);
+ 577              		.loc 1 193 32 view .LVU148
+ 578 0010 585C     		ldrb	r0, [r3, r1]	@ zero_extendqisi2
+ 193:src/command.c ****            ((uint16_t)args->data[offset + 1] << 8);
+ 579              		.loc 1 193 41 view .LVU149
+ 580 0012 40EA0220 		orr	r0, r0, r2, lsl #8
+ 581 0016 7047     		bx	lr
+ 582              	.L68:
+ 186:src/command.c ****     }
+ 583              		.loc 1 186 16 view .LVU150
+ 584 0018 0020     		movs	r0, #0
+ 585              	.L65:
+ 195:src/command.c **** }
+ 586              		.loc 1 195 1 view .LVU151
+ 587 001a 7047     		bx	lr
+ 588              		.cfi_endproc
+ 589              	.LFE6:
+ 591              		.section	.text.cmd_decode_u32,"ax",%progbits
+ 592              		.align	1
+ 593              		.p2align 2,,3
+ 594              		.global	cmd_decode_u32
+ 595              		.syntax unified
+ 596              		.thumb
+ 597              		.thumb_func
+ 598              		.fpu fpv4-sp-d16
+ 600              	cmd_decode_u32:
+ 601              	.LVL52:
+ 602              	.LFB7:
+ 196:src/command.c **** 
+ 197:src/command.c **** /**
+ 198:src/command.c ****  * @brief  从参数中读取 uint32（小端序）
+ 199:src/command.c ****  * @param  args 参数结构
+ 200:src/command.c ****  * @param  offset 偏移量
+ 201:src/command.c ****  * @retval 读取的值
+ 202:src/command.c ****  */
+ 203:src/command.c **** uint32_t cmd_decode_u32(const cmd_args_t* args, size_t offset)
+ 204:src/command.c **** {
+ 603              		.loc 1 204 1 is_stmt 1 view -0
+ 604              		.cfi_startproc
+ 605              		@ args = 0, pretend = 0, frame = 0
+ 606              		@ frame_needed = 0, uses_anonymous_args = 0
+ 607              		@ link register save eliminated.
+ 205:src/command.c ****     if (args == NULL || args->data == NULL) {
+ 608              		.loc 1 205 5 view .LVU153
+ 609              		.loc 1 205 8 is_stmt 0 view .LVU154
+ 610 0000 A8B1     		cbz	r0, .L69
+ 611              		.loc 1 205 29 discriminator 1 view .LVU155
+ 612 0002 0368     		ldr	r3, [r0]
+ 613              		.loc 1 205 22 discriminator 1 view .LVU156
+ 614 0004 93B1     		cbz	r3, .L73
+ 206:src/command.c ****         return 0;
+ 207:src/command.c ****     }
+ 208:src/command.c ****     
+ARM GAS  /tmp/ccsAsLMT.s 			page 16
+
+
+ 209:src/command.c ****     if (offset + 3 >= args->len) {
+ 615              		.loc 1 209 5 is_stmt 1 view .LVU157
+ 616              		.loc 1 209 8 is_stmt 0 view .LVU158
+ 617 0006 4068     		ldr	r0, [r0, #4]
+ 618              	.LVL53:
+ 619              		.loc 1 209 16 view .LVU159
+ 620 0008 CA1C     		adds	r2, r1, #3
+ 621              		.loc 1 209 8 view .LVU160
+ 622 000a 8242     		cmp	r2, r0
+ 623 000c 0ED2     		bcs	.L73
+ 210:src/command.c ****         return 0;
+ 211:src/command.c ****     }
+ 212:src/command.c ****     
+ 213:src/command.c ****     return (uint32_t)args->data[offset] |
+ 624              		.loc 1 213 5 is_stmt 1 view .LVU161
+ 214:src/command.c ****            ((uint32_t)args->data[offset + 1] << 8) |
+ 625              		.loc 1 214 33 is_stmt 0 view .LVU162
+ 626 000e 03EB010C 		add	ip, r3, r1
+ 213:src/command.c ****            ((uint32_t)args->data[offset + 1] << 8) |
+ 627              		.loc 1 213 12 view .LVU163
+ 628 0012 595C     		ldrb	r1, [r3, r1]	@ zero_extendqisi2
+ 629              	.LVL54:
+ 215:src/command.c ****            ((uint32_t)args->data[offset + 2] << 16) |
+ 630              		.loc 1 215 13 view .LVU164
+ 631 0014 9CF80200 		ldrb	r0, [ip, #2]	@ zero_extendqisi2
+ 216:src/command.c ****            ((uint32_t)args->data[offset + 3] << 24);
+ 632              		.loc 1 216 13 view .LVU165
+ 633 0018 9B5C     		ldrb	r3, [r3, r2]	@ zero_extendqisi2
+ 214:src/command.c ****            ((uint32_t)args->data[offset + 2] << 16) |
+ 634              		.loc 1 214 13 view .LVU166
+ 635 001a 9CF80120 		ldrb	r2, [ip, #1]	@ zero_extendqisi2
+ 636              	.LVL55:
+ 215:src/command.c ****            ((uint32_t)args->data[offset + 2] << 16) |
+ 637              		.loc 1 215 46 view .LVU167
+ 638 001e 0004     		lsls	r0, r0, #16
+ 214:src/command.c ****            ((uint32_t)args->data[offset + 2] << 16) |
+ 639              		.loc 1 214 52 view .LVU168
+ 640 0020 40EA0220 		orr	r0, r0, r2, lsl #8
+ 641 0024 0843     		orrs	r0, r0, r1
+ 215:src/command.c ****            ((uint32_t)args->data[offset + 2] << 16) |
+ 642              		.loc 1 215 53 view .LVU169
+ 643 0026 40EA0360 		orr	r0, r0, r3, lsl #24
+ 644 002a 7047     		bx	lr
+ 645              	.LVL56:
+ 646              	.L73:
+ 206:src/command.c ****     }
+ 647              		.loc 1 206 16 view .LVU170
+ 648 002c 0020     		movs	r0, #0
+ 649              	.L69:
+ 217:src/command.c **** }
+ 650              		.loc 1 217 1 view .LVU171
+ 651 002e 7047     		bx	lr
+ 652              		.cfi_endproc
+ 653              	.LFE7:
+ 655              		.section	.text.cmd_decode_i32,"ax",%progbits
+ 656              		.align	1
+ 657              		.p2align 2,,3
+ARM GAS  /tmp/ccsAsLMT.s 			page 17
+
+
+ 658              		.global	cmd_decode_i32
+ 659              		.syntax unified
+ 660              		.thumb
+ 661              		.thumb_func
+ 662              		.fpu fpv4-sp-d16
+ 664              	cmd_decode_i32:
+ 665              	.LVL57:
+ 666              	.LFB8:
+ 218:src/command.c **** 
+ 219:src/command.c **** /**
+ 220:src/command.c ****  * @brief  从参数中读取 int32（小端序）
+ 221:src/command.c ****  * @param  args 参数结构
+ 222:src/command.c ****  * @param  offset 偏移量
+ 223:src/command.c ****  * @retval 读取的值
+ 224:src/command.c ****  */
+ 225:src/command.c **** int32_t cmd_decode_i32(const cmd_args_t* args, size_t offset)
+ 226:src/command.c **** {
+ 667              		.loc 1 226 1 is_stmt 1 view -0
+ 668              		.cfi_startproc
+ 669              		@ args = 0, pretend = 0, frame = 0
+ 670              		@ frame_needed = 0, uses_anonymous_args = 0
+ 671              		@ link register save eliminated.
+ 227:src/command.c ****     return (int32_t)cmd_decode_u32(args, offset);
+ 672              		.loc 1 227 5 view .LVU173
+ 673              	.LBB16:
+ 674              	.LBI16:
+ 203:src/command.c **** {
+ 675              		.loc 1 203 10 view .LVU174
+ 676              	.LBB17:
+ 205:src/command.c ****         return 0;
+ 677              		.loc 1 205 5 view .LVU175
+ 205:src/command.c ****         return 0;
+ 678              		.loc 1 205 8 is_stmt 0 view .LVU176
+ 679 0000 A8B1     		cbz	r0, .L74
+ 205:src/command.c ****         return 0;
+ 680              		.loc 1 205 29 view .LVU177
+ 681 0002 0368     		ldr	r3, [r0]
+ 205:src/command.c ****         return 0;
+ 682              		.loc 1 205 22 view .LVU178
+ 683 0004 93B1     		cbz	r3, .L78
+ 209:src/command.c ****         return 0;
+ 684              		.loc 1 209 5 is_stmt 1 view .LVU179
+ 209:src/command.c ****         return 0;
+ 685              		.loc 1 209 8 is_stmt 0 view .LVU180
+ 686 0006 4068     		ldr	r0, [r0, #4]
+ 687              	.LVL58:
+ 209:src/command.c ****         return 0;
+ 688              		.loc 1 209 16 view .LVU181
+ 689 0008 CA1C     		adds	r2, r1, #3
+ 209:src/command.c ****         return 0;
+ 690              		.loc 1 209 8 view .LVU182
+ 691 000a 8242     		cmp	r2, r0
+ 692 000c 0ED2     		bcs	.L78
+ 213:src/command.c ****            ((uint32_t)args->data[offset + 1] << 8) |
+ 693              		.loc 1 213 5 is_stmt 1 view .LVU183
+ 214:src/command.c ****            ((uint32_t)args->data[offset + 2] << 16) |
+ 694              		.loc 1 214 33 is_stmt 0 view .LVU184
+ARM GAS  /tmp/ccsAsLMT.s 			page 18
+
+
+ 695 000e 03EB010C 		add	ip, r3, r1
+ 213:src/command.c ****            ((uint32_t)args->data[offset + 1] << 8) |
+ 696              		.loc 1 213 12 view .LVU185
+ 697 0012 595C     		ldrb	r1, [r3, r1]	@ zero_extendqisi2
+ 698              	.LVL59:
+ 215:src/command.c ****            ((uint32_t)args->data[offset + 3] << 24);
+ 699              		.loc 1 215 13 view .LVU186
+ 700 0014 9CF80200 		ldrb	r0, [ip, #2]	@ zero_extendqisi2
+ 216:src/command.c **** }
+ 701              		.loc 1 216 13 view .LVU187
+ 702 0018 9B5C     		ldrb	r3, [r3, r2]	@ zero_extendqisi2
+ 214:src/command.c ****            ((uint32_t)args->data[offset + 2] << 16) |
+ 703              		.loc 1 214 13 view .LVU188
+ 704 001a 9CF80120 		ldrb	r2, [ip, #1]	@ zero_extendqisi2
+ 705              	.LVL60:
+ 215:src/command.c ****            ((uint32_t)args->data[offset + 3] << 24);
+ 706              		.loc 1 215 46 view .LVU189
+ 707 001e 0004     		lsls	r0, r0, #16
+ 214:src/command.c ****            ((uint32_t)args->data[offset + 2] << 16) |
+ 708              		.loc 1 214 52 view .LVU190
+ 709 0020 40EA0220 		orr	r0, r0, r2, lsl #8
+ 710 0024 0843     		orrs	r0, r0, r1
+ 215:src/command.c ****            ((uint32_t)args->data[offset + 3] << 24);
+ 711              		.loc 1 215 53 view .LVU191
+ 712 0026 40EA0360 		orr	r0, r0, r3, lsl #24
+ 713 002a 7047     		bx	lr
+ 714              	.LVL61:
+ 715              	.L78:
+ 215:src/command.c ****            ((uint32_t)args->data[offset + 3] << 24);
+ 716              		.loc 1 215 53 view .LVU192
+ 717 002c 0020     		movs	r0, #0
+ 718              	.LVL62:
+ 719              	.L74:
+ 215:src/command.c ****            ((uint32_t)args->data[offset + 3] << 24);
+ 720              		.loc 1 215 53 view .LVU193
+ 721              	.LBE17:
+ 722              	.LBE16:
+ 228:src/command.c **** }
+ 723              		.loc 1 228 1 view .LVU194
+ 724 002e 7047     		bx	lr
+ 725              		.cfi_endproc
+ 726              	.LFE8:
+ 728              		.section	.text.cmd_encode_u8,"ax",%progbits
+ 729              		.align	1
+ 730              		.p2align 2,,3
+ 731              		.global	cmd_encode_u8
+ 732              		.syntax unified
+ 733              		.thumb
+ 734              		.thumb_func
+ 735              		.fpu fpv4-sp-d16
+ 737              	cmd_encode_u8:
+ 738              	.LVL63:
+ 739              	.LFB9:
+ 229:src/command.c **** 
+ 230:src/command.c **** /**
+ 231:src/command.c ****  * @brief  编码 uint8 到缓冲区
+ 232:src/command.c ****  * @param  buf 缓冲区
+ARM GAS  /tmp/ccsAsLMT.s 			page 19
+
+
+ 233:src/command.c ****  * @param  value 值
+ 234:src/command.c ****  * @retval 写入的字节数
+ 235:src/command.c ****  */
+ 236:src/command.c **** size_t cmd_encode_u8(uint8_t* buf, uint8_t value)
+ 237:src/command.c **** {
+ 740              		.loc 1 237 1 is_stmt 1 view -0
+ 741              		.cfi_startproc
+ 742              		@ args = 0, pretend = 0, frame = 0
+ 743              		@ frame_needed = 0, uses_anonymous_args = 0
+ 744              		@ link register save eliminated.
+ 238:src/command.c ****     if (buf == NULL) {
+ 745              		.loc 1 238 5 view .LVU196
+ 746              		.loc 1 238 8 is_stmt 0 view .LVU197
+ 747 0000 08B1     		cbz	r0, .L79
+ 239:src/command.c ****         return 0;
+ 240:src/command.c ****     }
+ 241:src/command.c ****     
+ 242:src/command.c ****     buf[0] = value;
+ 748              		.loc 1 242 5 is_stmt 1 view .LVU198
+ 749              		.loc 1 242 12 is_stmt 0 view .LVU199
+ 750 0002 0170     		strb	r1, [r0]
+ 243:src/command.c ****     return 1;
+ 751              		.loc 1 243 5 is_stmt 1 view .LVU200
+ 752              		.loc 1 243 12 is_stmt 0 view .LVU201
+ 753 0004 0120     		movs	r0, #1
+ 754              	.LVL64:
+ 755              	.L79:
+ 244:src/command.c **** }
+ 756              		.loc 1 244 1 view .LVU202
+ 757 0006 7047     		bx	lr
+ 758              		.cfi_endproc
+ 759              	.LFE9:
+ 761              		.section	.text.cmd_encode_u16,"ax",%progbits
+ 762              		.align	1
+ 763              		.p2align 2,,3
+ 764              		.global	cmd_encode_u16
+ 765              		.syntax unified
+ 766              		.thumb
+ 767              		.thumb_func
+ 768              		.fpu fpv4-sp-d16
+ 770              	cmd_encode_u16:
+ 771              	.LVL65:
+ 772              	.LFB10:
+ 245:src/command.c **** 
+ 246:src/command.c **** /**
+ 247:src/command.c ****  * @brief  编码 uint16 到缓冲区（小端序）
+ 248:src/command.c ****  * @param  buf 缓冲区
+ 249:src/command.c ****  * @param  value 值
+ 250:src/command.c ****  * @retval 写入的字节数
+ 251:src/command.c ****  */
+ 252:src/command.c **** size_t cmd_encode_u16(uint8_t* buf, uint16_t value)
+ 253:src/command.c **** {
+ 773              		.loc 1 253 1 is_stmt 1 view -0
+ 774              		.cfi_startproc
+ 775              		@ args = 0, pretend = 0, frame = 0
+ 776              		@ frame_needed = 0, uses_anonymous_args = 0
+ 777              		@ link register save eliminated.
+ARM GAS  /tmp/ccsAsLMT.s 			page 20
+
+
+ 254:src/command.c ****     if (buf == NULL) {
+ 778              		.loc 1 254 5 view .LVU204
+ 779              		.loc 1 254 8 is_stmt 0 view .LVU205
+ 780 0000 18B1     		cbz	r0, .L82
+ 255:src/command.c ****         return 0;
+ 256:src/command.c ****     }
+ 257:src/command.c ****     
+ 258:src/command.c ****     buf[0] = (uint8_t)(value & 0xFF);
+ 781              		.loc 1 258 5 is_stmt 1 view .LVU206
+ 259:src/command.c ****     buf[1] = (uint8_t)((value >> 8) & 0xFF);
+ 782              		.loc 1 259 14 is_stmt 0 view .LVU207
+ 783 0002 0B0A     		lsrs	r3, r1, #8
+ 258:src/command.c ****     buf[1] = (uint8_t)((value >> 8) & 0xFF);
+ 784              		.loc 1 258 14 view .LVU208
+ 785 0004 0170     		strb	r1, [r0]
+ 786              		.loc 1 259 5 is_stmt 1 view .LVU209
+ 787              		.loc 1 259 14 is_stmt 0 view .LVU210
+ 788 0006 4370     		strb	r3, [r0, #1]
+ 260:src/command.c ****     return 2;
+ 789              		.loc 1 260 5 is_stmt 1 view .LVU211
+ 790              		.loc 1 260 12 is_stmt 0 view .LVU212
+ 791 0008 0220     		movs	r0, #2
+ 792              	.LVL66:
+ 793              	.L82:
+ 261:src/command.c **** }
+ 794              		.loc 1 261 1 view .LVU213
+ 795 000a 7047     		bx	lr
+ 796              		.cfi_endproc
+ 797              	.LFE10:
+ 799              		.section	.text.cmd_encode_u32,"ax",%progbits
+ 800              		.align	1
+ 801              		.p2align 2,,3
+ 802              		.global	cmd_encode_u32
+ 803              		.syntax unified
+ 804              		.thumb
+ 805              		.thumb_func
+ 806              		.fpu fpv4-sp-d16
+ 808              	cmd_encode_u32:
+ 809              	.LVL67:
+ 810              	.LFB11:
+ 262:src/command.c **** 
+ 263:src/command.c **** /**
+ 264:src/command.c ****  * @brief  编码 uint32 到缓冲区（小端序）
+ 265:src/command.c ****  * @param  buf 缓冲区
+ 266:src/command.c ****  * @param  value 值
+ 267:src/command.c ****  * @retval 写入的字节数
+ 268:src/command.c ****  */
+ 269:src/command.c **** size_t cmd_encode_u32(uint8_t* buf, uint32_t value)
+ 270:src/command.c **** {
+ 811              		.loc 1 270 1 is_stmt 1 view -0
+ 812              		.cfi_startproc
+ 813              		@ args = 0, pretend = 0, frame = 0
+ 814              		@ frame_needed = 0, uses_anonymous_args = 0
+ 815              		@ link register save eliminated.
+ 271:src/command.c ****     if (buf == NULL) {
+ 816              		.loc 1 271 5 view .LVU215
+ 817              		.loc 1 271 8 is_stmt 0 view .LVU216
+ARM GAS  /tmp/ccsAsLMT.s 			page 21
+
+
+ 818 0000 48B1     		cbz	r0, .L85
+ 272:src/command.c ****         return 0;
+ 273:src/command.c ****     }
+ 274:src/command.c ****     
+ 275:src/command.c ****     buf[0] = (uint8_t)(value & 0xFF);
+ 819              		.loc 1 275 5 is_stmt 1 view .LVU217
+ 276:src/command.c ****     buf[1] = (uint8_t)((value >> 8) & 0xFF);
+ 820              		.loc 1 276 31 is_stmt 0 view .LVU218
+ 821 0002 4FEA112C 		lsr	ip, r1, #8
+ 277:src/command.c ****     buf[2] = (uint8_t)((value >> 16) & 0xFF);
+ 822              		.loc 1 277 31 view .LVU219
+ 823 0006 0A0C     		lsrs	r2, r1, #16
+ 278:src/command.c ****     buf[3] = (uint8_t)((value >> 24) & 0xFF);
+ 824              		.loc 1 278 31 view .LVU220
+ 825 0008 0B0E     		lsrs	r3, r1, #24
+ 275:src/command.c ****     buf[1] = (uint8_t)((value >> 8) & 0xFF);
+ 826              		.loc 1 275 14 view .LVU221
+ 827 000a 0170     		strb	r1, [r0]
+ 276:src/command.c ****     buf[2] = (uint8_t)((value >> 16) & 0xFF);
+ 828              		.loc 1 276 5 is_stmt 1 view .LVU222
+ 276:src/command.c ****     buf[2] = (uint8_t)((value >> 16) & 0xFF);
+ 829              		.loc 1 276 14 is_stmt 0 view .LVU223
+ 830 000c 80F801C0 		strb	ip, [r0, #1]
+ 277:src/command.c ****     buf[3] = (uint8_t)((value >> 24) & 0xFF);
+ 831              		.loc 1 277 5 is_stmt 1 view .LVU224
+ 277:src/command.c ****     buf[3] = (uint8_t)((value >> 24) & 0xFF);
+ 832              		.loc 1 277 14 is_stmt 0 view .LVU225
+ 833 0010 8270     		strb	r2, [r0, #2]
+ 834              		.loc 1 278 5 is_stmt 1 view .LVU226
+ 835              		.loc 1 278 14 is_stmt 0 view .LVU227
+ 836 0012 C370     		strb	r3, [r0, #3]
+ 279:src/command.c ****     return 4;
+ 837              		.loc 1 279 5 is_stmt 1 view .LVU228
+ 838              		.loc 1 279 12 is_stmt 0 view .LVU229
+ 839 0014 0420     		movs	r0, #4
+ 840              	.LVL68:
+ 841              	.L85:
+ 280:src/command.c **** }
+ 842              		.loc 1 280 1 view .LVU230
+ 843 0016 7047     		bx	lr
+ 844              		.cfi_endproc
+ 845              	.LFE11:
+ 847              		.section	.text.cmd_encode_i32,"ax",%progbits
+ 848              		.align	1
+ 849              		.p2align 2,,3
+ 850              		.global	cmd_encode_i32
+ 851              		.syntax unified
+ 852              		.thumb
+ 853              		.thumb_func
+ 854              		.fpu fpv4-sp-d16
+ 856              	cmd_encode_i32:
+ 857              	.LVL69:
+ 858              	.LFB12:
+ 281:src/command.c **** 
+ 282:src/command.c **** /**
+ 283:src/command.c ****  * @brief  编码 int32 到缓冲区（小端序）
+ 284:src/command.c ****  * @param  buf 缓冲区
+ARM GAS  /tmp/ccsAsLMT.s 			page 22
+
+
+ 285:src/command.c ****  * @param  value 值
+ 286:src/command.c ****  * @retval 写入的字节数
+ 287:src/command.c ****  */
+ 288:src/command.c **** size_t cmd_encode_i32(uint8_t* buf, int32_t value)
+ 289:src/command.c **** {
+ 859              		.loc 1 289 1 is_stmt 1 view -0
+ 860              		.cfi_startproc
+ 861              		@ args = 0, pretend = 0, frame = 0
+ 862              		@ frame_needed = 0, uses_anonymous_args = 0
+ 863              		@ link register save eliminated.
+ 290:src/command.c ****     return cmd_encode_u32(buf, (uint32_t)value);
+ 864              		.loc 1 290 5 view .LVU232
+ 865              	.LBB18:
+ 866              	.LBI18:
+ 269:src/command.c **** {
+ 867              		.loc 1 269 8 view .LVU233
+ 868              	.LBB19:
+ 271:src/command.c ****         return 0;
+ 869              		.loc 1 271 5 view .LVU234
+ 271:src/command.c ****         return 0;
+ 870              		.loc 1 271 8 is_stmt 0 view .LVU235
+ 871 0000 48B1     		cbz	r0, .L88
+ 275:src/command.c ****     buf[1] = (uint8_t)((value >> 8) & 0xFF);
+ 872              		.loc 1 275 5 is_stmt 1 view .LVU236
+ 276:src/command.c ****     buf[2] = (uint8_t)((value >> 16) & 0xFF);
+ 873              		.loc 1 276 31 is_stmt 0 view .LVU237
+ 874 0002 4FEA112C 		lsr	ip, r1, #8
+ 277:src/command.c ****     buf[3] = (uint8_t)((value >> 24) & 0xFF);
+ 875              		.loc 1 277 31 view .LVU238
+ 876 0006 0A0C     		lsrs	r2, r1, #16
+ 278:src/command.c ****     return 4;
+ 877              		.loc 1 278 31 view .LVU239
+ 878 0008 0B0E     		lsrs	r3, r1, #24
+ 275:src/command.c ****     buf[1] = (uint8_t)((value >> 8) & 0xFF);
+ 879              		.loc 1 275 14 view .LVU240
+ 880 000a 0170     		strb	r1, [r0]
+ 276:src/command.c ****     buf[2] = (uint8_t)((value >> 16) & 0xFF);
+ 881              		.loc 1 276 5 is_stmt 1 view .LVU241
+ 276:src/command.c ****     buf[2] = (uint8_t)((value >> 16) & 0xFF);
+ 882              		.loc 1 276 14 is_stmt 0 view .LVU242
+ 883 000c 80F801C0 		strb	ip, [r0, #1]
+ 277:src/command.c ****     buf[3] = (uint8_t)((value >> 24) & 0xFF);
+ 884              		.loc 1 277 5 is_stmt 1 view .LVU243
+ 277:src/command.c ****     buf[3] = (uint8_t)((value >> 24) & 0xFF);
+ 885              		.loc 1 277 14 is_stmt 0 view .LVU244
+ 886 0010 8270     		strb	r2, [r0, #2]
+ 278:src/command.c ****     return 4;
+ 887              		.loc 1 278 5 is_stmt 1 view .LVU245
+ 278:src/command.c ****     return 4;
+ 888              		.loc 1 278 14 is_stmt 0 view .LVU246
+ 889 0012 C370     		strb	r3, [r0, #3]
+ 279:src/command.c **** }
+ 890              		.loc 1 279 5 is_stmt 1 view .LVU247
+ 279:src/command.c **** }
+ 891              		.loc 1 279 12 is_stmt 0 view .LVU248
+ 892 0014 0420     		movs	r0, #4
+ 893              	.LVL70:
+ARM GAS  /tmp/ccsAsLMT.s 			page 23
+
+
+ 894              	.L88:
+ 279:src/command.c **** }
+ 895              		.loc 1 279 12 view .LVU249
+ 896              	.LBE19:
+ 897              	.LBE18:
+ 291:src/command.c **** }
+ 898              		.loc 1 291 1 view .LVU250
+ 899 0016 7047     		bx	lr
+ 900              		.cfi_endproc
+ 901              	.LFE12:
+ 903              		.section	.text.command_debug,"ax",%progbits
+ 904              		.align	1
+ 905              		.p2align 2,,3
+ 906              		.global	command_debug
+ 907              		.syntax unified
+ 908              		.thumb
+ 909              		.thumb_func
+ 910              		.fpu fpv4-sp-d16
+ 912              	command_debug:
+ 913              	.LVL71:
+ 914              	.LFB13:
+ 292:src/command.c **** 
+ 293:src/command.c **** /* ========== 调试输出实现 ========== */
+ 294:src/command.c **** 
+ 295:src/command.c **** /**
+ 296:src/command.c ****  * @brief  输出调试信息
+ 297:src/command.c ****  * @param  fmt 格式字符串
+ 298:src/command.c ****  * @param  ... 可变参数
+ 299:src/command.c ****  */
+ 300:src/command.c **** void command_debug(const char* fmt, ...)
+ 301:src/command.c **** {
+ 915              		.loc 1 301 1 is_stmt 1 view -0
+ 916              		.cfi_startproc
+ 917              		@ args = 4, pretend = 16, frame = 136
+ 918              		@ frame_needed = 0, uses_anonymous_args = 1
+ 302:src/command.c ****     char buf[128];
+ 919              		.loc 1 302 5 view .LVU252
+ 303:src/command.c ****     va_list args;
+ 920              		.loc 1 303 5 view .LVU253
+ 304:src/command.c ****     int len;
+ 921              		.loc 1 304 5 view .LVU254
+ 305:src/command.c ****     
+ 306:src/command.c ****     if (fmt == NULL) {
+ 922              		.loc 1 306 5 view .LVU255
+ 301:src/command.c ****     char buf[128];
+ 923              		.loc 1 301 1 is_stmt 0 view .LVU256
+ 924 0000 0FB4     		push	{r0, r1, r2, r3}
+ 925              		.cfi_def_cfa_offset 16
+ 926              		.cfi_offset 0, -16
+ 927              		.cfi_offset 1, -12
+ 928              		.cfi_offset 2, -8
+ 929              		.cfi_offset 3, -4
+ 930 0002 00B5     		push	{lr}
+ 931              		.cfi_def_cfa_offset 20
+ 932              		.cfi_offset 14, -20
+ 933 0004 A3B0     		sub	sp, sp, #140
+ 934              		.cfi_def_cfa_offset 160
+ARM GAS  /tmp/ccsAsLMT.s 			page 24
+
+
+ 301:src/command.c ****     char buf[128];
+ 935              		.loc 1 301 1 view .LVU257
+ 936 0006 249A     		ldr	r2, [sp, #144]
+ 937              		.loc 1 306 8 view .LVU258
+ 938 0008 3AB1     		cbz	r2, .L91
+ 307:src/command.c ****         return;
+ 308:src/command.c ****     }
+ 309:src/command.c ****     
+ 310:src/command.c ****     va_start(args, fmt);
+ 939              		.loc 1 310 5 is_stmt 1 view .LVU259
+ 940 000a 25AB     		add	r3, sp, #148
+ 311:src/command.c ****     
+ 312:src/command.c ****     /* 格式化字符串 */
+ 313:src/command.c ****     /* 注意：嵌入式环境可能需要使用简化版的 vsnprintf */
+ 314:src/command.c ****     extern int vsnprintf(char* str, size_t size, const char* format, va_list ap);
+ 315:src/command.c ****     len = vsnprintf(buf, sizeof(buf), fmt, args);
+ 941              		.loc 1 315 11 is_stmt 0 view .LVU260
+ 942 000c 8021     		movs	r1, #128
+ 943 000e 02A8     		add	r0, sp, #8
+ 310:src/command.c ****     
+ 944              		.loc 1 310 5 view .LVU261
+ 945 0010 0193     		str	r3, [sp, #4]
+ 314:src/command.c ****     len = vsnprintf(buf, sizeof(buf), fmt, args);
+ 946              		.loc 1 314 5 is_stmt 1 view .LVU262
+ 947              		.loc 1 315 5 view .LVU263
+ 948              		.loc 1 315 11 is_stmt 0 view .LVU264
+ 949 0012 FFF7FEFF 		bl	vsnprintf
+ 950              	.LVL72:
+ 316:src/command.c ****     
+ 317:src/command.c ****     va_end(args);
+ 951              		.loc 1 317 5 is_stmt 1 view .LVU265
+ 318:src/command.c ****     
+ 319:src/command.c ****     if (len > 0) {
+ 952              		.loc 1 319 5 view .LVU266
+ 953              		.loc 1 319 8 is_stmt 0 view .LVU267
+ 954 0016 0028     		cmp	r0, #0
+ 955 0018 04DC     		bgt	.L98
+ 956              	.LVL73:
+ 957              	.L91:
+ 320:src/command.c ****         command_send_string(buf);
+ 321:src/command.c ****     }
+ 322:src/command.c **** }
+ 958              		.loc 1 322 1 view .LVU268
+ 959 001a 23B0     		add	sp, sp, #140
+ 960              		.cfi_remember_state
+ 961              		.cfi_def_cfa_offset 20
+ 962              		@ sp needed
+ 963 001c 5DF804EB 		ldr	lr, [sp], #4
+ 964              		.cfi_restore 14
+ 965              		.cfi_def_cfa_offset 16
+ 966 0020 04B0     		add	sp, sp, #16
+ 967              		.cfi_restore 3
+ 968              		.cfi_restore 2
+ 969              		.cfi_restore 1
+ 970              		.cfi_restore 0
+ 971              		.cfi_def_cfa_offset 0
+ 972 0022 7047     		bx	lr
+ARM GAS  /tmp/ccsAsLMT.s 			page 25
+
+
+ 973              	.LVL74:
+ 974              	.L98:
+ 975              		.cfi_restore_state
+ 320:src/command.c ****         command_send_string(buf);
+ 976              		.loc 1 320 9 is_stmt 1 view .LVU269
+ 977              	.LBB24:
+ 978              	.LBI24:
+ 147:src/command.c **** {
+ 979              		.loc 1 147 5 view .LVU270
+ 980              	.LBB25:
+ 149:src/command.c ****         return -1;
+ 981              		.loc 1 149 5 view .LVU271
+ 153:src/command.c **** }
+ 982              		.loc 1 153 5 view .LVU272
+ 153:src/command.c **** }
+ 983              		.loc 1 153 12 is_stmt 0 view .LVU273
+ 984 0024 02A8     		add	r0, sp, #8
+ 985 0026 FFF7FEFF 		bl	strlen
+ 986              	.LVL75:
+ 987              	.LBB26:
+ 988              	.LBI26:
+ 126:src/command.c **** {
+ 989              		.loc 1 126 5 is_stmt 1 view .LVU274
+ 990              	.LBB27:
+ 128:src/command.c ****         return -1;
+ 991              		.loc 1 128 5 view .LVU275
+ 128:src/command.c ****         return -1;
+ 992              		.loc 1 128 22 is_stmt 0 view .LVU276
+ 993 002a 0146     		mov	r1, r0
+ 994 002c 0028     		cmp	r0, #0
+ 995 002e F4D0     		beq	.L91
+ 132:src/command.c ****         return -2;
+ 996              		.loc 1 132 5 is_stmt 1 view .LVU277
+ 137:src/command.c ****     
+ 997              		.loc 1 137 5 view .LVU278
+ 998 0030 02A8     		add	r0, sp, #8
+ 999 0032 FFF7FEFF 		bl	serial_write
+ 1000              	.LVL76:
+ 139:src/command.c **** }
+ 1001              		.loc 1 139 5 view .LVU279
+ 1002              	.LBE27:
+ 1003              	.LBE26:
+ 1004              	.LBE25:
+ 1005              	.LBE24:
+ 1006              		.loc 1 322 1 is_stmt 0 view .LVU280
+ 1007 0036 23B0     		add	sp, sp, #140
+ 1008              		.cfi_def_cfa_offset 20
+ 1009              		@ sp needed
+ 1010 0038 5DF804EB 		ldr	lr, [sp], #4
+ 1011              		.cfi_restore 14
+ 1012              		.cfi_def_cfa_offset 16
+ 1013 003c 04B0     		add	sp, sp, #16
+ 1014              		.cfi_restore 3
+ 1015              		.cfi_restore 2
+ 1016              		.cfi_restore 1
+ 1017              		.cfi_restore 0
+ 1018              		.cfi_def_cfa_offset 0
+ARM GAS  /tmp/ccsAsLMT.s 			page 26
+
+
+ 1019 003e 7047     		bx	lr
+ 1020              		.cfi_endproc
+ 1021              	.LFE13:
+ 1023              		.section	.bss.s_cmd_count,"aw",%nobits
+ 1024              		.set	.LANCHOR1,. + 0
+ 1027              	s_cmd_count:
+ 1028 0000 00       		.space	1
+ 1029              		.section	.bss.s_cmd_handlers,"aw",%nobits
+ 1030              		.align	2
+ 1031              		.set	.LANCHOR0,. + 0
+ 1034              	s_cmd_handlers:
+ 1035 0000 00000000 		.space	384
+ 1035      00000000 
+ 1035      00000000 
+ 1035      00000000 
+ 1035      00000000 
+ 1036              		.section	.bss.s_tx_buf,"aw",%nobits
+ 1037              		.align	2
+ 1038              		.set	.LANCHOR2,. + 0
+ 1041              	s_tx_buf:
+ 1042 0000 00000000 		.space	256
+ 1042      00000000 
+ 1042      00000000 
+ 1042      00000000 
+ 1042      00000000 
+ 1043              		.text
+ 1044              	.Letext0:
+ 1045              		.file 2 "/usr/lib/gcc/arm-none-eabi/10.3.1/include/stdint.h"
+ 1046              		.file 3 "/usr/lib/gcc/arm-none-eabi/10.3.1/include/stddef.h"
+ 1047              		.file 4 "src/command.h"
+ 1048              		.file 5 "/usr/lib/gcc/arm-none-eabi/10.3.1/include/stdarg.h"
+ 1049              		.file 6 "/usr/include/newlib/string.h"
+ 1050              		.file 7 "<built-in>"
+ARM GAS  /tmp/ccsAsLMT.s 			page 27
+
+
+DEFINED SYMBOLS
+                            *ABS*:0000000000000000 command.c
+     /tmp/ccsAsLMT.s:18     .text.command_init:0000000000000000 $t
+     /tmp/ccsAsLMT.s:27     .text.command_init:0000000000000000 command_init
+     /tmp/ccsAsLMT.s:67     .text.command_init:0000000000000024 $d
+     /tmp/ccsAsLMT.s:74     .text.command_register:0000000000000000 $t
+     /tmp/ccsAsLMT.s:82     .text.command_register:0000000000000000 command_register
+     /tmp/ccsAsLMT.s:204    .text.command_register:0000000000000068 $d
+     /tmp/ccsAsLMT.s:210    .text.command_process:0000000000000000 $t
+     /tmp/ccsAsLMT.s:218    .text.command_process:0000000000000000 command_process
+     /tmp/ccsAsLMT.s:339    .text.command_process:000000000000005c $d
+     /tmp/ccsAsLMT.s:345    .text.command_send_response:0000000000000000 $t
+     /tmp/ccsAsLMT.s:353    .text.command_send_response:0000000000000000 command_send_response
+     /tmp/ccsAsLMT.s:410    .text.command_send_string:0000000000000000 $t
+     /tmp/ccsAsLMT.s:418    .text.command_send_string:0000000000000000 command_send_string
+     /tmp/ccsAsLMT.s:496    .text.cmd_decode_u8:0000000000000000 $t
+     /tmp/ccsAsLMT.s:504    .text.cmd_decode_u8:0000000000000000 cmd_decode_u8
+     /tmp/ccsAsLMT.s:542    .text.cmd_decode_u16:0000000000000000 $t
+     /tmp/ccsAsLMT.s:550    .text.cmd_decode_u16:0000000000000000 cmd_decode_u16
+     /tmp/ccsAsLMT.s:592    .text.cmd_decode_u32:0000000000000000 $t
+     /tmp/ccsAsLMT.s:600    .text.cmd_decode_u32:0000000000000000 cmd_decode_u32
+     /tmp/ccsAsLMT.s:656    .text.cmd_decode_i32:0000000000000000 $t
+     /tmp/ccsAsLMT.s:664    .text.cmd_decode_i32:0000000000000000 cmd_decode_i32
+     /tmp/ccsAsLMT.s:729    .text.cmd_encode_u8:0000000000000000 $t
+     /tmp/ccsAsLMT.s:737    .text.cmd_encode_u8:0000000000000000 cmd_encode_u8
+     /tmp/ccsAsLMT.s:762    .text.cmd_encode_u16:0000000000000000 $t
+     /tmp/ccsAsLMT.s:770    .text.cmd_encode_u16:0000000000000000 cmd_encode_u16
+     /tmp/ccsAsLMT.s:800    .text.cmd_encode_u32:0000000000000000 $t
+     /tmp/ccsAsLMT.s:808    .text.cmd_encode_u32:0000000000000000 cmd_encode_u32
+     /tmp/ccsAsLMT.s:848    .text.cmd_encode_i32:0000000000000000 $t
+     /tmp/ccsAsLMT.s:856    .text.cmd_encode_i32:0000000000000000 cmd_encode_i32
+     /tmp/ccsAsLMT.s:904    .text.command_debug:0000000000000000 $t
+     /tmp/ccsAsLMT.s:912    .text.command_debug:0000000000000000 command_debug
+     /tmp/ccsAsLMT.s:1027   .bss.s_cmd_count:0000000000000000 s_cmd_count
+     /tmp/ccsAsLMT.s:1028   .bss.s_cmd_count:0000000000000000 $d
+     /tmp/ccsAsLMT.s:1030   .bss.s_cmd_handlers:0000000000000000 $d
+     /tmp/ccsAsLMT.s:1034   .bss.s_cmd_handlers:0000000000000000 s_cmd_handlers
+     /tmp/ccsAsLMT.s:1037   .bss.s_tx_buf:0000000000000000 $d
+     /tmp/ccsAsLMT.s:1041   .bss.s_tx_buf:0000000000000000 s_tx_buf
+
+UNDEFINED SYMBOLS
+memset
+serial_write
+strlen
+vsnprintf

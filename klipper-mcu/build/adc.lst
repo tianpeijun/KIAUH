@@ -1,0 +1,1584 @@
+ARM GAS  /tmp/ccE8pxhc.s 			page 1
+
+
+   1              		.cpu cortex-m4
+   2              		.eabi_attribute 27, 1
+   3              		.eabi_attribute 28, 1
+   4              		.eabi_attribute 20, 1
+   5              		.eabi_attribute 21, 1
+   6              		.eabi_attribute 23, 3
+   7              		.eabi_attribute 24, 1
+   8              		.eabi_attribute 25, 1
+   9              		.eabi_attribute 26, 1
+  10              		.eabi_attribute 30, 2
+  11              		.eabi_attribute 34, 1
+  12              		.eabi_attribute 18, 4
+  13              		.file	"adc.c"
+  14              		.text
+  15              	.Ltext0:
+  16              		.cfi_sections	.debug_frame
+  17              		.section	.text.adc_init.part.0,"ax",%progbits
+  18              		.align	1
+  19              		.p2align 2,,3
+  20              		.arch armv7e-m
+  21              		.syntax unified
+  22              		.thumb
+  23              		.thumb_func
+  24              		.fpu fpv4-sp-d16
+  26              	adc_init.part.0:
+  27              	.LFB16:
+  28              		.file 1 "src/stm32/adc.c"
+   1:src/stm32/adc.c **** /**
+   2:src/stm32/adc.c ****  * @file    adc.c
+   3:src/stm32/adc.c ****  * @brief   STM32F407 ADC driver implementation
+   4:src/stm32/adc.c ****  * 
+   5:src/stm32/adc.c ****  * ADC configuration and reading for STM32F407.
+   6:src/stm32/adc.c ****  * Supports ADC1 with single conversion mode for temperature reading.
+   7:src/stm32/adc.c ****  * Follows Klipper coding style (C99, snake_case).
+   8:src/stm32/adc.c ****  */
+   9:src/stm32/adc.c **** 
+  10:src/stm32/adc.c **** #include "adc.h"
+  11:src/stm32/adc.c **** #include "gpio.h"
+  12:src/stm32/adc.c **** #include "internal.h"
+  13:src/stm32/adc.c **** #include "board/irq.h"
+  14:src/stm32/adc.c **** 
+  15:src/stm32/adc.c **** /* ========== ADC Register Definitions ========== */
+  16:src/stm32/adc.c **** 
+  17:src/stm32/adc.c **** #define ADC1_BASE               0x40012000
+  18:src/stm32/adc.c **** #define ADC_COMMON_BASE         0x40012300
+  19:src/stm32/adc.c **** 
+  20:src/stm32/adc.c **** /* ADC1 registers */
+  21:src/stm32/adc.c **** #define ADC1_SR                 (*(volatile uint32_t *)(ADC1_BASE + 0x00))
+  22:src/stm32/adc.c **** #define ADC1_CR1                (*(volatile uint32_t *)(ADC1_BASE + 0x04))
+  23:src/stm32/adc.c **** #define ADC1_CR2                (*(volatile uint32_t *)(ADC1_BASE + 0x08))
+  24:src/stm32/adc.c **** #define ADC1_SMPR1              (*(volatile uint32_t *)(ADC1_BASE + 0x0C))
+  25:src/stm32/adc.c **** #define ADC1_SMPR2              (*(volatile uint32_t *)(ADC1_BASE + 0x10))
+  26:src/stm32/adc.c **** #define ADC1_JOFR1              (*(volatile uint32_t *)(ADC1_BASE + 0x14))
+  27:src/stm32/adc.c **** #define ADC1_JOFR2              (*(volatile uint32_t *)(ADC1_BASE + 0x18))
+  28:src/stm32/adc.c **** #define ADC1_JOFR3              (*(volatile uint32_t *)(ADC1_BASE + 0x1C))
+  29:src/stm32/adc.c **** #define ADC1_JOFR4              (*(volatile uint32_t *)(ADC1_BASE + 0x20))
+  30:src/stm32/adc.c **** #define ADC1_HTR                (*(volatile uint32_t *)(ADC1_BASE + 0x24))
+ARM GAS  /tmp/ccE8pxhc.s 			page 2
+
+
+  31:src/stm32/adc.c **** #define ADC1_LTR                (*(volatile uint32_t *)(ADC1_BASE + 0x28))
+  32:src/stm32/adc.c **** #define ADC1_SQR1               (*(volatile uint32_t *)(ADC1_BASE + 0x2C))
+  33:src/stm32/adc.c **** #define ADC1_SQR2               (*(volatile uint32_t *)(ADC1_BASE + 0x30))
+  34:src/stm32/adc.c **** #define ADC1_SQR3               (*(volatile uint32_t *)(ADC1_BASE + 0x34))
+  35:src/stm32/adc.c **** #define ADC1_JSQR               (*(volatile uint32_t *)(ADC1_BASE + 0x38))
+  36:src/stm32/adc.c **** #define ADC1_JDR1               (*(volatile uint32_t *)(ADC1_BASE + 0x3C))
+  37:src/stm32/adc.c **** #define ADC1_JDR2               (*(volatile uint32_t *)(ADC1_BASE + 0x40))
+  38:src/stm32/adc.c **** #define ADC1_JDR3               (*(volatile uint32_t *)(ADC1_BASE + 0x44))
+  39:src/stm32/adc.c **** #define ADC1_JDR4               (*(volatile uint32_t *)(ADC1_BASE + 0x48))
+  40:src/stm32/adc.c **** #define ADC1_DR                 (*(volatile uint32_t *)(ADC1_BASE + 0x4C))
+  41:src/stm32/adc.c **** 
+  42:src/stm32/adc.c **** /* ADC common registers */
+  43:src/stm32/adc.c **** #define ADC_CCR                 (*(volatile uint32_t *)(ADC_COMMON_BASE + 0x04))
+  44:src/stm32/adc.c **** 
+  45:src/stm32/adc.c **** /* RCC register for ADC clock enable */
+  46:src/stm32/adc.c **** #define RCC_BASE                0x40023800
+  47:src/stm32/adc.c **** #define RCC_APB2ENR             (*(volatile uint32_t *)(RCC_BASE + 0x44))
+  48:src/stm32/adc.c **** 
+  49:src/stm32/adc.c **** /* ========== ADC Status Register (SR) Bits ========== */
+  50:src/stm32/adc.c **** 
+  51:src/stm32/adc.c **** #define ADC_SR_AWD              (1 << 0)    /* Analog watchdog flag */
+  52:src/stm32/adc.c **** #define ADC_SR_EOC              (1 << 1)    /* End of conversion */
+  53:src/stm32/adc.c **** #define ADC_SR_JEOC             (1 << 2)    /* Injected channel end of conversion */
+  54:src/stm32/adc.c **** #define ADC_SR_JSTRT            (1 << 3)    /* Injected channel start flag */
+  55:src/stm32/adc.c **** #define ADC_SR_STRT             (1 << 4)    /* Regular channel start flag */
+  56:src/stm32/adc.c **** #define ADC_SR_OVR              (1 << 5)    /* Overrun */
+  57:src/stm32/adc.c **** 
+  58:src/stm32/adc.c **** /* ========== ADC Control Register 1 (CR1) Bits ========== */
+  59:src/stm32/adc.c **** 
+  60:src/stm32/adc.c **** #define ADC_CR1_AWDCH_MASK      (0x1F << 0) /* Analog watchdog channel select */
+  61:src/stm32/adc.c **** #define ADC_CR1_EOCIE           (1 << 5)    /* EOC interrupt enable */
+  62:src/stm32/adc.c **** #define ADC_CR1_AWDIE           (1 << 6)    /* Analog watchdog interrupt enable */
+  63:src/stm32/adc.c **** #define ADC_CR1_JEOCIE          (1 << 7)    /* Injected EOC interrupt enable */
+  64:src/stm32/adc.c **** #define ADC_CR1_SCAN            (1 << 8)    /* Scan mode */
+  65:src/stm32/adc.c **** #define ADC_CR1_AWDSGL          (1 << 9)    /* Watchdog on single channel */
+  66:src/stm32/adc.c **** #define ADC_CR1_JAUTO           (1 << 10)   /* Automatic injected conversion */
+  67:src/stm32/adc.c **** #define ADC_CR1_DISCEN          (1 << 11)   /* Discontinuous mode on regular */
+  68:src/stm32/adc.c **** #define ADC_CR1_JDISCEN         (1 << 12)   /* Discontinuous mode on injected */
+  69:src/stm32/adc.c **** #define ADC_CR1_DISCNUM_MASK    (0x07 << 13) /* Discontinuous mode channel count */
+  70:src/stm32/adc.c **** #define ADC_CR1_JAWDEN          (1 << 22)   /* Analog watchdog on injected */
+  71:src/stm32/adc.c **** #define ADC_CR1_AWDEN           (1 << 23)   /* Analog watchdog on regular */
+  72:src/stm32/adc.c **** #define ADC_CR1_RES_12BIT       (0 << 24)   /* 12-bit resolution */
+  73:src/stm32/adc.c **** #define ADC_CR1_RES_10BIT       (1 << 24)   /* 10-bit resolution */
+  74:src/stm32/adc.c **** #define ADC_CR1_RES_8BIT        (2 << 24)   /* 8-bit resolution */
+  75:src/stm32/adc.c **** #define ADC_CR1_RES_6BIT        (3 << 24)   /* 6-bit resolution */
+  76:src/stm32/adc.c **** #define ADC_CR1_OVRIE           (1 << 26)   /* Overrun interrupt enable */
+  77:src/stm32/adc.c **** 
+  78:src/stm32/adc.c **** /* ========== ADC Control Register 2 (CR2) Bits ========== */
+  79:src/stm32/adc.c **** 
+  80:src/stm32/adc.c **** #define ADC_CR2_ADON            (1 << 0)    /* ADC on/off */
+  81:src/stm32/adc.c **** #define ADC_CR2_CONT            (1 << 1)    /* Continuous conversion */
+  82:src/stm32/adc.c **** #define ADC_CR2_DMA             (1 << 8)    /* DMA mode */
+  83:src/stm32/adc.c **** #define ADC_CR2_DDS             (1 << 9)    /* DMA disable selection */
+  84:src/stm32/adc.c **** #define ADC_CR2_EOCS            (1 << 10)   /* End of conversion selection */
+  85:src/stm32/adc.c **** #define ADC_CR2_ALIGN           (1 << 11)   /* Data alignment (0=right, 1=left) */
+  86:src/stm32/adc.c **** #define ADC_CR2_JEXTSEL_MASK    (0x0F << 16) /* External event for injected */
+  87:src/stm32/adc.c **** #define ADC_CR2_JEXTEN_MASK     (0x03 << 20) /* Injected external trigger enable */
+ARM GAS  /tmp/ccE8pxhc.s 			page 3
+
+
+  88:src/stm32/adc.c **** #define ADC_CR2_JSWSTART        (1 << 22)   /* Start injected conversion */
+  89:src/stm32/adc.c **** #define ADC_CR2_EXTSEL_MASK     (0x0F << 24) /* External event for regular */
+  90:src/stm32/adc.c **** #define ADC_CR2_EXTEN_MASK      (0x03 << 28) /* Regular external trigger enable */
+  91:src/stm32/adc.c **** #define ADC_CR2_SWSTART         (1 << 30)   /* Start regular conversion */
+  92:src/stm32/adc.c **** 
+  93:src/stm32/adc.c **** /* ========== ADC Common Control Register (CCR) Bits ========== */
+  94:src/stm32/adc.c **** 
+  95:src/stm32/adc.c **** #define ADC_CCR_ADCPRE_DIV2     (0 << 16)   /* PCLK2 / 2 */
+  96:src/stm32/adc.c **** #define ADC_CCR_ADCPRE_DIV4     (1 << 16)   /* PCLK2 / 4 */
+  97:src/stm32/adc.c **** #define ADC_CCR_ADCPRE_DIV6     (2 << 16)   /* PCLK2 / 6 */
+  98:src/stm32/adc.c **** #define ADC_CCR_ADCPRE_DIV8     (3 << 16)   /* PCLK2 / 8 */
+  99:src/stm32/adc.c **** #define ADC_CCR_VBATE           (1 << 22)   /* VBAT enable */
+ 100:src/stm32/adc.c **** #define ADC_CCR_TSVREFE         (1 << 23)   /* Temperature sensor and VREFINT enable */
+ 101:src/stm32/adc.c **** 
+ 102:src/stm32/adc.c **** /* ========== Private Variables ========== */
+ 103:src/stm32/adc.c **** 
+ 104:src/stm32/adc.c **** /* ADC initialization flag */
+ 105:src/stm32/adc.c **** static uint8_t s_adc_initialized = 0;
+ 106:src/stm32/adc.c **** 
+ 107:src/stm32/adc.c **** /* Channel configuration tracking */
+ 108:src/stm32/adc.c **** static uint8_t s_channel_configured[ADC_CHANNEL_MAX] = {0};
+ 109:src/stm32/adc.c **** 
+ 110:src/stm32/adc.c **** /* ========== Private Functions ========== */
+ 111:src/stm32/adc.c **** 
+ 112:src/stm32/adc.c **** /**
+ 113:src/stm32/adc.c ****  * @brief   Get ADC channel number from GPIO pin
+ 114:src/stm32/adc.c ****  * @param   gpio    GPIO pin
+ 115:src/stm32/adc.c ****  * @return  ADC channel number or -1 if invalid
+ 116:src/stm32/adc.c ****  */
+ 117:src/stm32/adc.c **** static int
+ 118:src/stm32/adc.c **** get_adc_channel_from_gpio(uint8_t gpio)
+ 119:src/stm32/adc.c **** {
+ 120:src/stm32/adc.c ****     uint8_t port = GPIO_PORT(gpio);
+ 121:src/stm32/adc.c ****     uint8_t pin = GPIO_PIN(gpio);
+ 122:src/stm32/adc.c ****     
+ 123:src/stm32/adc.c ****     /* Port A: PA0-PA7 -> Channel 0-7 */
+ 124:src/stm32/adc.c ****     if (port == GPIO_PORT_A && pin <= 7) {
+ 125:src/stm32/adc.c ****         return pin;
+ 126:src/stm32/adc.c ****     }
+ 127:src/stm32/adc.c ****     
+ 128:src/stm32/adc.c ****     /* Port B: PB0-PB1 -> Channel 8-9 */
+ 129:src/stm32/adc.c ****     if (port == GPIO_PORT_B && pin <= 1) {
+ 130:src/stm32/adc.c ****         return 8 + pin;
+ 131:src/stm32/adc.c ****     }
+ 132:src/stm32/adc.c ****     
+ 133:src/stm32/adc.c ****     /* Port C: PC0-PC5 -> Channel 10-15 */
+ 134:src/stm32/adc.c ****     if (port == GPIO_PORT_C && pin <= 5) {
+ 135:src/stm32/adc.c ****         return 10 + pin;
+ 136:src/stm32/adc.c ****     }
+ 137:src/stm32/adc.c ****     
+ 138:src/stm32/adc.c ****     /* Invalid GPIO for ADC */
+ 139:src/stm32/adc.c ****     return -1;
+ 140:src/stm32/adc.c **** }
+ 141:src/stm32/adc.c **** 
+ 142:src/stm32/adc.c **** /**
+ 143:src/stm32/adc.c ****  * @brief   Set sample time for a channel
+ 144:src/stm32/adc.c ****  * @param   channel     ADC channel (0-17)
+ARM GAS  /tmp/ccE8pxhc.s 			page 4
+
+
+ 145:src/stm32/adc.c ****  * @param   sample_time Sample time setting
+ 146:src/stm32/adc.c ****  */
+ 147:src/stm32/adc.c **** static void
+ 148:src/stm32/adc.c **** set_channel_sample_time(uint8_t channel, adc_sampletime_t sample_time)
+ 149:src/stm32/adc.c **** {
+ 150:src/stm32/adc.c ****     if (channel <= 9) {
+ 151:src/stm32/adc.c ****         /* Channels 0-9 in SMPR2 */
+ 152:src/stm32/adc.c ****         uint32_t shift = channel * 3;
+ 153:src/stm32/adc.c ****         uint32_t mask = 0x07 << shift;
+ 154:src/stm32/adc.c ****         ADC1_SMPR2 = (ADC1_SMPR2 & ~mask) | ((uint32_t)sample_time << shift);
+ 155:src/stm32/adc.c ****     } else {
+ 156:src/stm32/adc.c ****         /* Channels 10-17 in SMPR1 */
+ 157:src/stm32/adc.c ****         uint32_t shift = (channel - 10) * 3;
+ 158:src/stm32/adc.c ****         uint32_t mask = 0x07 << shift;
+ 159:src/stm32/adc.c ****         ADC1_SMPR1 = (ADC1_SMPR1 & ~mask) | ((uint32_t)sample_time << shift);
+ 160:src/stm32/adc.c ****     }
+ 161:src/stm32/adc.c **** }
+ 162:src/stm32/adc.c **** 
+ 163:src/stm32/adc.c **** /**
+ 164:src/stm32/adc.c ****  * @brief   Wait for ADC conversion to complete
+ 165:src/stm32/adc.c ****  * @param   timeout_us  Timeout in microseconds
+ 166:src/stm32/adc.c ****  * @return  0 on success, -1 on timeout
+ 167:src/stm32/adc.c ****  */
+ 168:src/stm32/adc.c **** static int
+ 169:src/stm32/adc.c **** wait_for_conversion(uint32_t timeout_us)
+ 170:src/stm32/adc.c **** {
+ 171:src/stm32/adc.c ****     uint32_t timeout = timeout_us;
+ 172:src/stm32/adc.c ****     
+ 173:src/stm32/adc.c ****     while (!(ADC1_SR & ADC_SR_EOC)) {
+ 174:src/stm32/adc.c ****         if (timeout == 0) {
+ 175:src/stm32/adc.c ****             return -1;
+ 176:src/stm32/adc.c ****         }
+ 177:src/stm32/adc.c ****         timeout--;
+ 178:src/stm32/adc.c ****         /* Small delay - approximately 1us at 168MHz */
+ 179:src/stm32/adc.c ****         for (volatile int i = 0; i < 42; i++) {
+ 180:src/stm32/adc.c ****             __asm__ __volatile__("nop");
+ 181:src/stm32/adc.c ****         }
+ 182:src/stm32/adc.c ****     }
+ 183:src/stm32/adc.c ****     
+ 184:src/stm32/adc.c ****     return 0;
+ 185:src/stm32/adc.c **** }
+ 186:src/stm32/adc.c **** 
+ 187:src/stm32/adc.c **** /* ========== Public Functions ========== */
+ 188:src/stm32/adc.c **** 
+ 189:src/stm32/adc.c **** /**
+ 190:src/stm32/adc.c ****  * @brief   Initialize ADC subsystem
+ 191:src/stm32/adc.c ****  */
+ 192:src/stm32/adc.c **** void
+ 193:src/stm32/adc.c **** adc_init(void)
+  29              		.loc 1 193 1 view -0
+  30              		.cfi_startproc
+  31              		@ args = 0, pretend = 0, frame = 8
+  32              		@ frame_needed = 0, uses_anonymous_args = 0
+  33              		@ link register save eliminated.
+ 194:src/stm32/adc.c **** {
+ 195:src/stm32/adc.c ****     if (s_adc_initialized) {
+ 196:src/stm32/adc.c ****         return;
+ARM GAS  /tmp/ccE8pxhc.s 			page 5
+
+
+ 197:src/stm32/adc.c ****     }
+ 198:src/stm32/adc.c ****     
+ 199:src/stm32/adc.c ****     /* Enable ADC1 clock */
+ 200:src/stm32/adc.c ****     RCC_APB2ENR |= (1 << 8);    /* ADC1EN */
+  34              		.loc 1 200 5 view .LVU1
+ 193:src/stm32/adc.c **** {
+  35              		.loc 1 193 1 is_stmt 0 view .LVU2
+  36 0000 10B4     		push	{r4}
+  37              		.cfi_def_cfa_offset 4
+  38              		.cfi_offset 4, -4
+  39              		.loc 1 200 17 view .LVU3
+  40 0002 1F4A     		ldr	r2, .L10
+  41 0004 D2F84438 		ldr	r3, [r2, #2116]
+ 193:src/stm32/adc.c **** {
+  42              		.loc 1 193 1 view .LVU4
+  43 0008 83B0     		sub	sp, sp, #12
+  44              		.cfi_def_cfa_offset 16
+  45              		.loc 1 200 17 view .LVU5
+  46 000a 43F48073 		orr	r3, r3, #256
+  47              	.LBB15:
+ 201:src/stm32/adc.c ****     
+ 202:src/stm32/adc.c ****     /* Small delay for clock to stabilize */
+ 203:src/stm32/adc.c ****     for (volatile int i = 0; i < 100; i++) {
+  48              		.loc 1 203 23 view .LVU6
+  49 000e 0021     		movs	r1, #0
+  50              	.LBE15:
+ 200:src/stm32/adc.c ****     
+  51              		.loc 1 200 17 view .LVU7
+  52 0010 C2F84438 		str	r3, [r2, #2116]
+  53              		.loc 1 203 5 is_stmt 1 view .LVU8
+  54              	.LBB16:
+  55              		.loc 1 203 10 view .LVU9
+  56              		.loc 1 203 23 is_stmt 0 view .LVU10
+  57 0014 0091     		str	r1, [sp]
+  58              		.loc 1 203 30 is_stmt 1 view .LVU11
+  59              		.loc 1 203 32 is_stmt 0 view .LVU12
+  60 0016 009B     		ldr	r3, [sp]
+  61              		.loc 1 203 5 view .LVU13
+  62 0018 632B     		cmp	r3, #99
+  63 001a 06DC     		bgt	.L2
+  64              	.L3:
+ 204:src/stm32/adc.c ****         __asm__ __volatile__("nop");
+  65              		.loc 1 204 9 is_stmt 1 view .LVU14
+  66              		.syntax unified
+  67              	@ 204 "src/stm32/adc.c" 1
+  68 001c 00BF     		nop
+  69              	@ 0 "" 2
+ 203:src/stm32/adc.c ****         __asm__ __volatile__("nop");
+  70              		.loc 1 203 39 view .LVU15
+ 203:src/stm32/adc.c ****         __asm__ __volatile__("nop");
+  71              		.loc 1 203 40 is_stmt 0 view .LVU16
+  72              		.thumb
+  73              		.syntax unified
+  74 001e 009B     		ldr	r3, [sp]
+  75 0020 0133     		adds	r3, r3, #1
+  76 0022 0093     		str	r3, [sp]
+ 203:src/stm32/adc.c ****         __asm__ __volatile__("nop");
+ARM GAS  /tmp/ccE8pxhc.s 			page 6
+
+
+  77              		.loc 1 203 30 is_stmt 1 view .LVU17
+ 203:src/stm32/adc.c ****         __asm__ __volatile__("nop");
+  78              		.loc 1 203 32 is_stmt 0 view .LVU18
+  79 0024 009B     		ldr	r3, [sp]
+ 203:src/stm32/adc.c ****         __asm__ __volatile__("nop");
+  80              		.loc 1 203 5 view .LVU19
+  81 0026 632B     		cmp	r3, #99
+  82 0028 F8DD     		ble	.L3
+  83              	.L2:
+  84              	.LBE16:
+ 205:src/stm32/adc.c ****     }
+ 206:src/stm32/adc.c ****     
+ 207:src/stm32/adc.c ****     /* Configure ADC prescaler (PCLK2 / 4 = 84MHz / 4 = 21MHz) */
+ 208:src/stm32/adc.c ****     /* ADC clock must be <= 36MHz for STM32F407 */
+ 209:src/stm32/adc.c ****     ADC_CCR = ADC_CCR_ADCPRE_DIV4;
+  85              		.loc 1 209 5 is_stmt 1 view .LVU20
+  86              		.loc 1 209 13 is_stmt 0 view .LVU21
+  87 002a 164B     		ldr	r3, .L10+4
+ 210:src/stm32/adc.c ****     
+ 211:src/stm32/adc.c ****     /* Configure ADC1 */
+ 212:src/stm32/adc.c ****     /* 12-bit resolution, right-aligned data, single conversion mode */
+ 213:src/stm32/adc.c ****     ADC1_CR1 = ADC_CR1_RES_12BIT;
+  88              		.loc 1 213 14 view .LVU22
+  89 002c 0022     		movs	r2, #0
+ 214:src/stm32/adc.c ****     
+ 215:src/stm32/adc.c ****     /* Single conversion mode, software trigger */
+ 216:src/stm32/adc.c ****     ADC1_CR2 = ADC_CR2_EOCS;    /* EOC flag at end of each conversion */
+  90              		.loc 1 216 14 view .LVU23
+  91 002e 4FF48061 		mov	r1, #1024
+ 209:src/stm32/adc.c ****     
+  92              		.loc 1 209 13 view .LVU24
+  93 0032 4FF48034 		mov	r4, #65536
+  94 0036 C3F80443 		str	r4, [r3, #772]
+ 213:src/stm32/adc.c ****     
+  95              		.loc 1 213 5 is_stmt 1 view .LVU25
+ 217:src/stm32/adc.c ****     
+ 218:src/stm32/adc.c ****     /* Set default sample time for all channels (112 cycles for stability) */
+ 219:src/stm32/adc.c ****     ADC1_SMPR1 = 0x00FFFFFF;    /* All channels 10-17: 480 cycles */
+  96              		.loc 1 219 16 is_stmt 0 view .LVU26
+  97 003a 6FF07F40 		mvn	r0, #-16777216
+ 213:src/stm32/adc.c ****     
+  98              		.loc 1 213 14 view .LVU27
+  99 003e 5A60     		str	r2, [r3, #4]
+ 216:src/stm32/adc.c ****     
+ 100              		.loc 1 216 5 is_stmt 1 view .LVU28
+ 216:src/stm32/adc.c ****     
+ 101              		.loc 1 216 14 is_stmt 0 view .LVU29
+ 102 0040 9960     		str	r1, [r3, #8]
+ 103              		.loc 1 219 5 is_stmt 1 view .LVU30
+ 220:src/stm32/adc.c ****     ADC1_SMPR2 = 0x3FFFFFFF;    /* All channels 0-9: 480 cycles */
+ 104              		.loc 1 220 16 is_stmt 0 view .LVU31
+ 105 0042 6FF04041 		mvn	r1, #-1073741824
+ 219:src/stm32/adc.c ****     ADC1_SMPR2 = 0x3FFFFFFF;    /* All channels 0-9: 480 cycles */
+ 106              		.loc 1 219 16 view .LVU32
+ 107 0046 D860     		str	r0, [r3, #12]
+ 108              		.loc 1 220 5 is_stmt 1 view .LVU33
+ 109              		.loc 1 220 16 is_stmt 0 view .LVU34
+ARM GAS  /tmp/ccE8pxhc.s 			page 7
+
+
+ 110 0048 1961     		str	r1, [r3, #16]
+ 221:src/stm32/adc.c ****     
+ 222:src/stm32/adc.c ****     /* Configure sequence: 1 conversion */
+ 223:src/stm32/adc.c ****     ADC1_SQR1 = 0;              /* L[3:0] = 0 -> 1 conversion */
+ 111              		.loc 1 223 5 is_stmt 1 view .LVU35
+ 112              		.loc 1 223 15 is_stmt 0 view .LVU36
+ 113 004a DA62     		str	r2, [r3, #44]
+ 224:src/stm32/adc.c ****     ADC1_SQR2 = 0;
+ 114              		.loc 1 224 5 is_stmt 1 view .LVU37
+ 115              		.loc 1 224 15 is_stmt 0 view .LVU38
+ 116 004c 1A63     		str	r2, [r3, #48]
+ 225:src/stm32/adc.c ****     ADC1_SQR3 = 0;              /* First conversion channel (will be set per read) */
+ 117              		.loc 1 225 5 is_stmt 1 view .LVU39
+ 118              		.loc 1 225 15 is_stmt 0 view .LVU40
+ 119 004e 5A63     		str	r2, [r3, #52]
+ 226:src/stm32/adc.c ****     
+ 227:src/stm32/adc.c ****     /* Enable ADC */
+ 228:src/stm32/adc.c ****     ADC1_CR2 |= ADC_CR2_ADON;
+ 120              		.loc 1 228 5 is_stmt 1 view .LVU41
+ 121              		.loc 1 228 14 is_stmt 0 view .LVU42
+ 122 0050 9968     		ldr	r1, [r3, #8]
+ 123 0052 41F00101 		orr	r1, r1, #1
+ 124 0056 9960     		str	r1, [r3, #8]
+ 229:src/stm32/adc.c ****     
+ 230:src/stm32/adc.c ****     /* Wait for ADC to stabilize (tSTAB = 3us max) */
+ 231:src/stm32/adc.c ****     for (volatile int i = 0; i < 1000; i++) {
+ 125              		.loc 1 231 5 is_stmt 1 view .LVU43
+ 126              	.LBB17:
+ 127              		.loc 1 231 10 view .LVU44
+ 128              		.loc 1 231 23 is_stmt 0 view .LVU45
+ 129 0058 0192     		str	r2, [sp, #4]
+ 130              		.loc 1 231 30 is_stmt 1 view .LVU46
+ 131              		.loc 1 231 32 is_stmt 0 view .LVU47
+ 132 005a 019B     		ldr	r3, [sp, #4]
+ 133              		.loc 1 231 5 view .LVU48
+ 134 005c B3F57A7F 		cmp	r3, #1000
+ 135 0060 07DA     		bge	.L4
+ 136              	.L5:
+ 232:src/stm32/adc.c ****         __asm__ __volatile__("nop");
+ 137              		.loc 1 232 9 is_stmt 1 view .LVU49
+ 138              		.syntax unified
+ 139              	@ 232 "src/stm32/adc.c" 1
+ 140 0062 00BF     		nop
+ 141              	@ 0 "" 2
+ 231:src/stm32/adc.c ****         __asm__ __volatile__("nop");
+ 142              		.loc 1 231 40 view .LVU50
+ 231:src/stm32/adc.c ****         __asm__ __volatile__("nop");
+ 143              		.loc 1 231 41 is_stmt 0 view .LVU51
+ 144              		.thumb
+ 145              		.syntax unified
+ 146 0064 019B     		ldr	r3, [sp, #4]
+ 147 0066 0133     		adds	r3, r3, #1
+ 148 0068 0193     		str	r3, [sp, #4]
+ 231:src/stm32/adc.c ****         __asm__ __volatile__("nop");
+ 149              		.loc 1 231 30 is_stmt 1 view .LVU52
+ 231:src/stm32/adc.c ****         __asm__ __volatile__("nop");
+ 150              		.loc 1 231 32 is_stmt 0 view .LVU53
+ARM GAS  /tmp/ccE8pxhc.s 			page 8
+
+
+ 151 006a 019B     		ldr	r3, [sp, #4]
+ 231:src/stm32/adc.c ****         __asm__ __volatile__("nop");
+ 152              		.loc 1 231 5 view .LVU54
+ 153 006c B3F57A7F 		cmp	r3, #1000
+ 154 0070 F7DB     		blt	.L5
+ 155              	.L4:
+ 156              	.LBE17:
+ 233:src/stm32/adc.c ****     }
+ 234:src/stm32/adc.c ****     
+ 235:src/stm32/adc.c ****     s_adc_initialized = 1;
+ 157              		.loc 1 235 5 is_stmt 1 view .LVU55
+ 158              		.loc 1 235 23 is_stmt 0 view .LVU56
+ 159 0072 054B     		ldr	r3, .L10+8
+ 160 0074 0122     		movs	r2, #1
+ 161 0076 1A70     		strb	r2, [r3]
+ 236:src/stm32/adc.c **** }
+ 162              		.loc 1 236 1 view .LVU57
+ 163 0078 03B0     		add	sp, sp, #12
+ 164              		.cfi_def_cfa_offset 4
+ 165              		@ sp needed
+ 166 007a 5DF8044B 		ldr	r4, [sp], #4
+ 167              		.cfi_restore 4
+ 168              		.cfi_def_cfa_offset 0
+ 169 007e 7047     		bx	lr
+ 170              	.L11:
+ 171              		.align	2
+ 172              	.L10:
+ 173 0080 00300240 		.word	1073885184
+ 174 0084 00200140 		.word	1073815552
+ 175 0088 00000000 		.word	.LANCHOR0
+ 176              		.cfi_endproc
+ 177              	.LFE16:
+ 179              		.section	.text.adc_init,"ax",%progbits
+ 180              		.align	1
+ 181              		.p2align 2,,3
+ 182              		.global	adc_init
+ 183              		.syntax unified
+ 184              		.thumb
+ 185              		.thumb_func
+ 186              		.fpu fpv4-sp-d16
+ 188              	adc_init:
+ 189              	.LFB10:
+ 194:src/stm32/adc.c ****     if (s_adc_initialized) {
+ 190              		.loc 1 194 1 is_stmt 1 view -0
+ 191              		.cfi_startproc
+ 192              		@ args = 0, pretend = 0, frame = 0
+ 193              		@ frame_needed = 0, uses_anonymous_args = 0
+ 194              		@ link register save eliminated.
+ 195:src/stm32/adc.c ****         return;
+ 195              		.loc 1 195 5 view .LVU59
+ 195:src/stm32/adc.c ****         return;
+ 196              		.loc 1 195 9 is_stmt 0 view .LVU60
+ 197 0000 024B     		ldr	r3, .L14
+ 195:src/stm32/adc.c ****         return;
+ 198              		.loc 1 195 8 view .LVU61
+ 199 0002 1B78     		ldrb	r3, [r3]	@ zero_extendqisi2
+ 200 0004 0BB9     		cbnz	r3, .L12
+ARM GAS  /tmp/ccE8pxhc.s 			page 9
+
+
+ 201 0006 FFF7FEBF 		b	adc_init.part.0
+ 202              	.LVL0:
+ 203              	.L12:
+ 204              		.loc 1 236 1 view .LVU62
+ 205 000a 7047     		bx	lr
+ 206              	.L15:
+ 207              		.align	2
+ 208              	.L14:
+ 209 000c 00000000 		.word	.LANCHOR0
+ 210              		.cfi_endproc
+ 211              	.LFE10:
+ 213              		.section	.text.adc_setup,"ax",%progbits
+ 214              		.align	1
+ 215              		.p2align 2,,3
+ 216              		.global	adc_setup
+ 217              		.syntax unified
+ 218              		.thumb
+ 219              		.thumb_func
+ 220              		.fpu fpv4-sp-d16
+ 222              	adc_setup:
+ 223              	.LVL1:
+ 224              	.LFB11:
+ 237:src/stm32/adc.c **** 
+ 238:src/stm32/adc.c **** /**
+ 239:src/stm32/adc.c ****  * @brief   Configure an ADC channel
+ 240:src/stm32/adc.c ****  */
+ 241:src/stm32/adc.c **** int
+ 242:src/stm32/adc.c **** adc_setup(uint8_t gpio, adc_sampletime_t sample_time)
+ 243:src/stm32/adc.c **** {
+ 225              		.loc 1 243 1 is_stmt 1 view -0
+ 226              		.cfi_startproc
+ 227              		@ args = 0, pretend = 0, frame = 8
+ 228              		@ frame_needed = 0, uses_anonymous_args = 0
+ 244:src/stm32/adc.c ****     /* Initialize ADC if not already done */
+ 245:src/stm32/adc.c ****     if (!s_adc_initialized) {
+ 229              		.loc 1 245 5 view .LVU64
+ 243:src/stm32/adc.c ****     /* Initialize ADC if not already done */
+ 230              		.loc 1 243 1 is_stmt 0 view .LVU65
+ 231 0000 30B5     		push	{r4, r5, lr}
+ 232              		.cfi_def_cfa_offset 12
+ 233              		.cfi_offset 4, -12
+ 234              		.cfi_offset 5, -8
+ 235              		.cfi_offset 14, -4
+ 236              		.loc 1 245 9 view .LVU66
+ 237 0002 224B     		ldr	r3, .L30
+ 238              		.loc 1 245 8 view .LVU67
+ 239 0004 1B78     		ldrb	r3, [r3]	@ zero_extendqisi2
+ 243:src/stm32/adc.c ****     /* Initialize ADC if not already done */
+ 240              		.loc 1 243 1 view .LVU68
+ 241 0006 83B0     		sub	sp, sp, #12
+ 242              		.cfi_def_cfa_offset 24
+ 243:src/stm32/adc.c ****     /* Initialize ADC if not already done */
+ 243              		.loc 1 243 1 view .LVU69
+ 244 0008 0D46     		mov	r5, r1
+ 245              		.loc 1 245 8 view .LVU70
+ 246 000a 002B     		cmp	r3, #0
+ 247 000c 39D0     		beq	.L29
+ARM GAS  /tmp/ccE8pxhc.s 			page 10
+
+
+ 248              	.LVL2:
+ 249              	.L17:
+ 246:src/stm32/adc.c ****         adc_init();
+ 247:src/stm32/adc.c ****     }
+ 248:src/stm32/adc.c ****     
+ 249:src/stm32/adc.c ****     /* Get channel number from GPIO */
+ 250:src/stm32/adc.c ****     int channel = get_adc_channel_from_gpio(gpio);
+ 250              		.loc 1 250 5 is_stmt 1 view .LVU71
+ 251              	.LBB26:
+ 252              	.LBI26:
+ 118:src/stm32/adc.c **** {
+ 253              		.loc 1 118 1 view .LVU72
+ 254              	.LBB27:
+ 120:src/stm32/adc.c ****     uint8_t pin = GPIO_PIN(gpio);
+ 255              		.loc 1 120 5 view .LVU73
+ 121:src/stm32/adc.c ****     
+ 256              		.loc 1 121 5 view .LVU74
+ 124:src/stm32/adc.c ****         return pin;
+ 257              		.loc 1 124 8 is_stmt 0 view .LVU75
+ 258 000e 0309     		lsrs	r3, r0, #4
+ 121:src/stm32/adc.c ****     
+ 259              		.loc 1 121 13 view .LVU76
+ 260 0010 00F00F04 		and	r4, r0, #15
+ 261              	.LVL3:
+ 124:src/stm32/adc.c ****         return pin;
+ 262              		.loc 1 124 5 is_stmt 1 view .LVU77
+ 124:src/stm32/adc.c ****         return pin;
+ 263              		.loc 1 124 8 is_stmt 0 view .LVU78
+ 264 0014 05D1     		bne	.L18
+ 124:src/stm32/adc.c ****         return pin;
+ 265              		.loc 1 124 29 view .LVU79
+ 266 0016 0307     		lsls	r3, r0, #28
+ 267 0018 09D5     		bpl	.L20
+ 268              	.L27:
+ 269              	.LBE27:
+ 270              	.LBE26:
+ 251:src/stm32/adc.c ****     if (channel < 0) {
+ 252:src/stm32/adc.c ****         return -1;  /* Invalid GPIO for ADC */
+ 271              		.loc 1 252 16 view .LVU80
+ 272 001a 4FF0FF30 		mov	r0, #-1
+ 273              	.LVL4:
+ 253:src/stm32/adc.c ****     }
+ 254:src/stm32/adc.c ****     
+ 255:src/stm32/adc.c ****     /* Configure GPIO for analog mode */
+ 256:src/stm32/adc.c ****     gpio_analog_setup(gpio);
+ 257:src/stm32/adc.c ****     
+ 258:src/stm32/adc.c ****     /* Set sample time for this channel */
+ 259:src/stm32/adc.c ****     set_channel_sample_time((uint8_t)channel, sample_time);
+ 260:src/stm32/adc.c ****     
+ 261:src/stm32/adc.c ****     /* Mark channel as configured */
+ 262:src/stm32/adc.c ****     if (channel < ADC_CHANNEL_MAX) {
+ 263:src/stm32/adc.c ****         s_channel_configured[channel] = 1;
+ 264:src/stm32/adc.c ****     }
+ 265:src/stm32/adc.c ****     
+ 266:src/stm32/adc.c ****     return 0;
+ 267:src/stm32/adc.c **** }
+ 274              		.loc 1 267 1 view .LVU81
+ARM GAS  /tmp/ccE8pxhc.s 			page 11
+
+
+ 275 001e 03B0     		add	sp, sp, #12
+ 276              		.cfi_remember_state
+ 277              		.cfi_def_cfa_offset 12
+ 278              		@ sp needed
+ 279 0020 30BD     		pop	{r4, r5, pc}
+ 280              	.LVL5:
+ 281              	.L18:
+ 282              		.cfi_restore_state
+ 283              	.LBB30:
+ 284              	.LBB28:
+ 129:src/stm32/adc.c ****         return 8 + pin;
+ 285              		.loc 1 129 5 is_stmt 1 view .LVU82
+ 129:src/stm32/adc.c ****         return 8 + pin;
+ 286              		.loc 1 129 8 is_stmt 0 view .LVU83
+ 287 0022 012B     		cmp	r3, #1
+ 288 0024 16D1     		bne	.L21
+ 129:src/stm32/adc.c ****         return 8 + pin;
+ 289              		.loc 1 129 29 view .LVU84
+ 290 0026 10F00E0F 		tst	r0, #14
+ 291 002a F6D1     		bne	.L27
+ 130:src/stm32/adc.c ****     }
+ 292              		.loc 1 130 9 is_stmt 1 view .LVU85
+ 130:src/stm32/adc.c ****     }
+ 293              		.loc 1 130 18 is_stmt 0 view .LVU86
+ 294 002c 0834     		adds	r4, r4, #8
+ 295              	.LVL6:
+ 296              	.L20:
+ 130:src/stm32/adc.c ****     }
+ 297              		.loc 1 130 18 view .LVU87
+ 298              	.LBE28:
+ 299              	.LBE30:
+ 251:src/stm32/adc.c ****         return -1;  /* Invalid GPIO for ADC */
+ 300              		.loc 1 251 5 is_stmt 1 view .LVU88
+ 256:src/stm32/adc.c ****     
+ 301              		.loc 1 256 5 view .LVU89
+ 302 002e FFF7FEFF 		bl	gpio_analog_setup
+ 303              	.LVL7:
+ 259:src/stm32/adc.c ****     
+ 304              		.loc 1 259 5 view .LVU90
+ 305              	.LBB31:
+ 306              	.LBI31:
+ 148:src/stm32/adc.c **** {
+ 307              		.loc 1 148 1 view .LVU91
+ 308              	.LBB32:
+ 150:src/stm32/adc.c ****         /* Channels 0-9 in SMPR2 */
+ 309              		.loc 1 150 5 view .LVU92
+ 150:src/stm32/adc.c ****         /* Channels 0-9 in SMPR2 */
+ 310              		.loc 1 150 8 is_stmt 0 view .LVU93
+ 311 0032 092C     		cmp	r4, #9
+ 312 0034 15DC     		bgt	.L22
+ 313              	.LBB33:
+ 152:src/stm32/adc.c ****         uint32_t mask = 0x07 << shift;
+ 314              		.loc 1 152 9 is_stmt 1 view .LVU94
+ 154:src/stm32/adc.c ****     } else {
+ 315              		.loc 1 154 23 is_stmt 0 view .LVU95
+ 316 0036 164A     		ldr	r2, .L30+4
+ 152:src/stm32/adc.c ****         uint32_t mask = 0x07 << shift;
+ARM GAS  /tmp/ccE8pxhc.s 			page 12
+
+
+ 317              		.loc 1 152 34 view .LVU96
+ 318 0038 04EB4404 		add	r4, r4, r4, lsl #1
+ 319              	.LVL8:
+ 153:src/stm32/adc.c ****         ADC1_SMPR2 = (ADC1_SMPR2 & ~mask) | ((uint32_t)sample_time << shift);
+ 320              		.loc 1 153 9 is_stmt 1 view .LVU97
+ 154:src/stm32/adc.c ****     } else {
+ 321              		.loc 1 154 9 view .LVU98
+ 154:src/stm32/adc.c ****     } else {
+ 322              		.loc 1 154 23 is_stmt 0 view .LVU99
+ 323 003c 1169     		ldr	r1, [r2, #16]
+ 153:src/stm32/adc.c ****         ADC1_SMPR2 = (ADC1_SMPR2 & ~mask) | ((uint32_t)sample_time << shift);
+ 324              		.loc 1 153 30 view .LVU100
+ 325 003e 0723     		movs	r3, #7
+ 326 0040 A340     		lsls	r3, r3, r4
+ 327              	.LVL9:
+ 154:src/stm32/adc.c ****     } else {
+ 328              		.loc 1 154 34 view .LVU101
+ 329 0042 21EA0301 		bic	r1, r1, r3
+ 154:src/stm32/adc.c ****     } else {
+ 330              		.loc 1 154 68 view .LVU102
+ 331 0046 05FA04F4 		lsl	r4, r5, r4
+ 332              	.LVL10:
+ 154:src/stm32/adc.c ****     } else {
+ 333              		.loc 1 154 43 view .LVU103
+ 334 004a 0C43     		orrs	r4, r4, r1
+ 335              	.LBE33:
+ 336              	.LBE32:
+ 337              	.LBE31:
+ 266:src/stm32/adc.c **** }
+ 338              		.loc 1 266 12 view .LVU104
+ 339 004c 0020     		movs	r0, #0
+ 340              	.LBB40:
+ 341              	.LBB37:
+ 342              	.LBB34:
+ 154:src/stm32/adc.c ****     } else {
+ 343              		.loc 1 154 20 view .LVU105
+ 344 004e 1461     		str	r4, [r2, #16]
+ 345              	.LBE34:
+ 346              	.LBE37:
+ 347              	.LBE40:
+ 348              		.loc 1 267 1 view .LVU106
+ 349 0050 03B0     		add	sp, sp, #12
+ 350              		.cfi_remember_state
+ 351              		.cfi_def_cfa_offset 12
+ 352              		@ sp needed
+ 353 0052 30BD     		pop	{r4, r5, pc}
+ 354              	.LVL11:
+ 355              	.L21:
+ 356              		.cfi_restore_state
+ 357              	.LBB41:
+ 358              	.LBB29:
+ 134:src/stm32/adc.c ****         return 10 + pin;
+ 359              		.loc 1 134 5 is_stmt 1 view .LVU107
+ 134:src/stm32/adc.c ****         return 10 + pin;
+ 360              		.loc 1 134 8 is_stmt 0 view .LVU108
+ 361 0054 022B     		cmp	r3, #2
+ 362 0056 E0D1     		bne	.L27
+ARM GAS  /tmp/ccE8pxhc.s 			page 13
+
+
+ 134:src/stm32/adc.c ****         return 10 + pin;
+ 363              		.loc 1 134 29 view .LVU109
+ 364 0058 052C     		cmp	r4, #5
+ 365 005a DED8     		bhi	.L27
+ 135:src/stm32/adc.c ****     }
+ 366              		.loc 1 135 9 is_stmt 1 view .LVU110
+ 135:src/stm32/adc.c ****     }
+ 367              		.loc 1 135 19 is_stmt 0 view .LVU111
+ 368 005c 0A34     		adds	r4, r4, #10
+ 369              	.LVL12:
+ 135:src/stm32/adc.c ****     }
+ 370              		.loc 1 135 19 view .LVU112
+ 371              	.LBE29:
+ 372              	.LBE41:
+ 251:src/stm32/adc.c ****         return -1;  /* Invalid GPIO for ADC */
+ 373              		.loc 1 251 5 is_stmt 1 view .LVU113
+ 256:src/stm32/adc.c ****     
+ 374              		.loc 1 256 5 view .LVU114
+ 375 005e FFF7FEFF 		bl	gpio_analog_setup
+ 376              	.LVL13:
+ 259:src/stm32/adc.c ****     
+ 377              		.loc 1 259 5 view .LVU115
+ 378              	.LBB42:
+ 148:src/stm32/adc.c **** {
+ 379              		.loc 1 148 1 view .LVU116
+ 380              	.LBB38:
+ 150:src/stm32/adc.c ****         /* Channels 0-9 in SMPR2 */
+ 381              		.loc 1 150 5 view .LVU117
+ 382              	.L22:
+ 383              	.LBB35:
+ 157:src/stm32/adc.c ****         uint32_t mask = 0x07 << shift;
+ 384              		.loc 1 157 9 view .LVU118
+ 159:src/stm32/adc.c ****     }
+ 385              		.loc 1 159 23 is_stmt 0 view .LVU119
+ 386 0062 0B4A     		ldr	r2, .L30+4
+ 157:src/stm32/adc.c ****         uint32_t mask = 0x07 << shift;
+ 387              		.loc 1 157 35 view .LVU120
+ 388 0064 0A3C     		subs	r4, r4, #10
+ 389              	.LVL14:
+ 159:src/stm32/adc.c ****     }
+ 390              		.loc 1 159 23 view .LVU121
+ 391 0066 D168     		ldr	r1, [r2, #12]
+ 157:src/stm32/adc.c ****         uint32_t mask = 0x07 << shift;
+ 392              		.loc 1 157 41 view .LVU122
+ 393 0068 04EB4404 		add	r4, r4, r4, lsl #1
+ 394              	.LVL15:
+ 158:src/stm32/adc.c ****         ADC1_SMPR1 = (ADC1_SMPR1 & ~mask) | ((uint32_t)sample_time << shift);
+ 395              		.loc 1 158 9 is_stmt 1 view .LVU123
+ 159:src/stm32/adc.c ****     }
+ 396              		.loc 1 159 9 view .LVU124
+ 158:src/stm32/adc.c ****         ADC1_SMPR1 = (ADC1_SMPR1 & ~mask) | ((uint32_t)sample_time << shift);
+ 397              		.loc 1 158 30 is_stmt 0 view .LVU125
+ 398 006c 0723     		movs	r3, #7
+ 399 006e A340     		lsls	r3, r3, r4
+ 400              	.LVL16:
+ 159:src/stm32/adc.c ****     }
+ 401              		.loc 1 159 34 view .LVU126
+ARM GAS  /tmp/ccE8pxhc.s 			page 14
+
+
+ 402 0070 21EA0301 		bic	r1, r1, r3
+ 159:src/stm32/adc.c ****     }
+ 403              		.loc 1 159 68 view .LVU127
+ 404 0074 05FA04F4 		lsl	r4, r5, r4
+ 405              	.LVL17:
+ 159:src/stm32/adc.c ****     }
+ 406              		.loc 1 159 43 view .LVU128
+ 407 0078 0C43     		orrs	r4, r4, r1
+ 408              	.LBE35:
+ 409              	.LBE38:
+ 410              	.LBE42:
+ 266:src/stm32/adc.c **** }
+ 411              		.loc 1 266 12 view .LVU129
+ 412 007a 0020     		movs	r0, #0
+ 413              	.LBB43:
+ 414              	.LBB39:
+ 415              	.LBB36:
+ 159:src/stm32/adc.c ****     }
+ 416              		.loc 1 159 20 view .LVU130
+ 417 007c D460     		str	r4, [r2, #12]
+ 418              	.LBE36:
+ 419              	.LBE39:
+ 420              	.LBE43:
+ 421              		.loc 1 267 1 view .LVU131
+ 422 007e 03B0     		add	sp, sp, #12
+ 423              		.cfi_remember_state
+ 424              		.cfi_def_cfa_offset 12
+ 425              		@ sp needed
+ 426 0080 30BD     		pop	{r4, r5, pc}
+ 427              	.LVL18:
+ 428              	.L29:
+ 429              		.cfi_restore_state
+ 430              		.loc 1 267 1 view .LVU132
+ 431 0082 0190     		str	r0, [sp, #4]
+ 246:src/stm32/adc.c ****     }
+ 432              		.loc 1 246 9 is_stmt 1 view .LVU133
+ 433              	.LBB44:
+ 434              	.LBI44:
+ 193:src/stm32/adc.c **** {
+ 435              		.loc 1 193 1 view .LVU134
+ 436              	.LBB45:
+ 195:src/stm32/adc.c ****         return;
+ 437              		.loc 1 195 5 view .LVU135
+ 438 0084 FFF7FEFF 		bl	adc_init.part.0
+ 439              	.LVL19:
+ 195:src/stm32/adc.c ****         return;
+ 440              		.loc 1 195 5 is_stmt 0 view .LVU136
+ 441 0088 0198     		ldr	r0, [sp, #4]
+ 442 008a C0E7     		b	.L17
+ 443              	.L31:
+ 444              		.align	2
+ 445              	.L30:
+ 446 008c 00000000 		.word	.LANCHOR0
+ 447 0090 00200140 		.word	1073815552
+ 448              	.LBE45:
+ 449              	.LBE44:
+ 450              		.cfi_endproc
+ARM GAS  /tmp/ccE8pxhc.s 			page 15
+
+
+ 451              	.LFE11:
+ 453              		.section	.text.adc_read_channel,"ax",%progbits
+ 454              		.align	1
+ 455              		.p2align 2,,3
+ 456              		.global	adc_read_channel
+ 457              		.syntax unified
+ 458              		.thumb
+ 459              		.thumb_func
+ 460              		.fpu fpv4-sp-d16
+ 462              	adc_read_channel:
+ 463              	.LVL20:
+ 464              	.LFB13:
+ 268:src/stm32/adc.c **** 
+ 269:src/stm32/adc.c **** /**
+ 270:src/stm32/adc.c ****  * @brief   Read ADC value from a GPIO pin
+ 271:src/stm32/adc.c ****  */
+ 272:src/stm32/adc.c **** int32_t
+ 273:src/stm32/adc.c **** adc_read(uint8_t gpio)
+ 274:src/stm32/adc.c **** {
+ 275:src/stm32/adc.c ****     /* Get channel number from GPIO */
+ 276:src/stm32/adc.c ****     int channel = get_adc_channel_from_gpio(gpio);
+ 277:src/stm32/adc.c ****     if (channel < 0) {
+ 278:src/stm32/adc.c ****         return -1;  /* Invalid GPIO for ADC */
+ 279:src/stm32/adc.c ****     }
+ 280:src/stm32/adc.c ****     
+ 281:src/stm32/adc.c ****     return adc_read_channel((uint8_t)channel);
+ 282:src/stm32/adc.c **** }
+ 283:src/stm32/adc.c **** 
+ 284:src/stm32/adc.c **** /**
+ 285:src/stm32/adc.c ****  * @brief   Read ADC value by channel number
+ 286:src/stm32/adc.c ****  */
+ 287:src/stm32/adc.c **** int32_t
+ 288:src/stm32/adc.c **** adc_read_channel(uint8_t channel)
+ 289:src/stm32/adc.c **** {
+ 465              		.loc 1 289 1 is_stmt 1 view -0
+ 466              		.cfi_startproc
+ 467              		@ args = 0, pretend = 0, frame = 8
+ 468              		@ frame_needed = 0, uses_anonymous_args = 0
+ 290:src/stm32/adc.c ****     if (channel > 18) {
+ 469              		.loc 1 290 5 view .LVU138
+ 470              		.loc 1 290 8 is_stmt 0 view .LVU139
+ 471 0000 1228     		cmp	r0, #18
+ 472 0002 37D8     		bhi	.L41
+ 291:src/stm32/adc.c ****         return -1;  /* Invalid channel */
+ 292:src/stm32/adc.c ****     }
+ 293:src/stm32/adc.c ****     
+ 294:src/stm32/adc.c ****     /* Initialize ADC if not already done */
+ 295:src/stm32/adc.c ****     if (!s_adc_initialized) {
+ 473              		.loc 1 295 5 is_stmt 1 view .LVU140
+ 289:src/stm32/adc.c ****     if (channel > 18) {
+ 474              		.loc 1 289 1 is_stmt 0 view .LVU141
+ 475 0004 10B5     		push	{r4, lr}
+ 476              		.cfi_def_cfa_offset 8
+ 477              		.cfi_offset 4, -8
+ 478              		.cfi_offset 14, -4
+ 479              		.loc 1 295 9 view .LVU142
+ 480 0006 1D4B     		ldr	r3, .L49
+ARM GAS  /tmp/ccE8pxhc.s 			page 16
+
+
+ 481              		.loc 1 295 8 view .LVU143
+ 482 0008 1B78     		ldrb	r3, [r3]	@ zero_extendqisi2
+ 289:src/stm32/adc.c ****     if (channel > 18) {
+ 483              		.loc 1 289 1 view .LVU144
+ 484 000a 82B0     		sub	sp, sp, #8
+ 485              		.cfi_def_cfa_offset 16
+ 486 000c 0446     		mov	r4, r0
+ 487              		.loc 1 295 8 view .LVU145
+ 488 000e 002B     		cmp	r3, #0
+ 489 0010 2DD0     		beq	.L48
+ 490              	.LVL21:
+ 491              	.L34:
+ 296:src/stm32/adc.c ****         adc_init();
+ 297:src/stm32/adc.c ****     }
+ 298:src/stm32/adc.c ****     
+ 299:src/stm32/adc.c ****     uint32_t irqflag = irq_disable();
+ 492              		.loc 1 299 5 is_stmt 1 view .LVU146
+ 493              	.LBB57:
+ 494              	.LBI57:
+ 495              		.file 2 "./board/irq.h"
+   1:./board/irq.h **** /**
+   2:./board/irq.h ****  * @file    irq.h
+   3:./board/irq.h ****  * @brief   Interrupt management interface
+   4:./board/irq.h ****  * 
+   5:./board/irq.h ****  * Provides interrupt enable/disable functions and critical section
+   6:./board/irq.h ****  * management for STM32F407.
+   7:./board/irq.h ****  */
+   8:./board/irq.h **** 
+   9:./board/irq.h **** #ifndef BOARD_IRQ_H
+  10:./board/irq.h **** #define BOARD_IRQ_H
+  11:./board/irq.h **** 
+  12:./board/irq.h **** #include <stdint.h>
+  13:./board/irq.h **** 
+  14:./board/irq.h **** /* ========== Interrupt Control ========== */
+  15:./board/irq.h **** 
+  16:./board/irq.h **** /**
+  17:./board/irq.h ****  * @brief   Disable all interrupts
+  18:./board/irq.h ****  * @return  Previous interrupt state (for restore)
+  19:./board/irq.h ****  */
+  20:./board/irq.h **** static inline uint32_t irq_disable(void)
+ 496              		.loc 2 20 24 view .LVU147
+ 497              	.LBB58:
+  21:./board/irq.h **** {
+  22:./board/irq.h ****     uint32_t primask;
+ 498              		.loc 2 22 5 view .LVU148
+  23:./board/irq.h ****     __asm__ __volatile__(
+ 499              		.loc 2 23 5 view .LVU149
+ 500              		.syntax unified
+ 501              	@ 23 "./board/irq.h" 1
+ 502 0012 EFF3108C 		mrs ip, primask
+ 503 0016 72B6     	cpsid i
+ 504              	
+ 505              	@ 0 "" 2
+ 506              	.LVL22:
+  24:./board/irq.h ****         "mrs %0, primask\n"
+  25:./board/irq.h ****         "cpsid i\n"
+  26:./board/irq.h ****         : "=r" (primask)
+ARM GAS  /tmp/ccE8pxhc.s 			page 17
+
+
+  27:./board/irq.h ****         :
+  28:./board/irq.h ****         : "memory"
+  29:./board/irq.h ****     );
+  30:./board/irq.h ****     return primask;
+ 507              		.loc 2 30 5 view .LVU150
+ 508              		.loc 2 30 5 is_stmt 0 view .LVU151
+ 509              		.thumb
+ 510              		.syntax unified
+ 511              	.LBE58:
+ 512              	.LBE57:
+ 300:src/stm32/adc.c ****     
+ 301:src/stm32/adc.c ****     /* Clear status flags */
+ 302:src/stm32/adc.c ****     ADC1_SR = 0;
+ 513              		.loc 1 302 5 is_stmt 1 view .LVU152
+ 514              		.loc 1 302 13 is_stmt 0 view .LVU153
+ 515 0018 1949     		ldr	r1, .L49+4
+ 516 001a 0023     		movs	r3, #0
+ 517 001c 0B60     		str	r3, [r1]
+ 303:src/stm32/adc.c ****     
+ 304:src/stm32/adc.c ****     /* Set channel in sequence register */
+ 305:src/stm32/adc.c ****     ADC1_SQR3 = channel;
+ 518              		.loc 1 305 5 is_stmt 1 view .LVU154
+ 519              		.loc 1 305 15 is_stmt 0 view .LVU155
+ 520 001e 4C63     		str	r4, [r1, #52]
+ 306:src/stm32/adc.c ****     
+ 307:src/stm32/adc.c ****     /* Start conversion */
+ 308:src/stm32/adc.c ****     ADC1_CR2 |= ADC_CR2_SWSTART;
+ 521              		.loc 1 308 5 is_stmt 1 view .LVU156
+ 522              		.loc 1 308 14 is_stmt 0 view .LVU157
+ 523 0020 8B68     		ldr	r3, [r1, #8]
+ 524 0022 43F08043 		orr	r3, r3, #1073741824
+ 525 0026 8B60     		str	r3, [r1, #8]
+ 309:src/stm32/adc.c ****     
+ 310:src/stm32/adc.c ****     /* Wait for conversion to complete (timeout ~100us) */
+ 311:src/stm32/adc.c ****     int result = wait_for_conversion(100);
+ 526              		.loc 1 311 5 is_stmt 1 view .LVU158
+ 527              	.LBB59:
+ 528              	.LBI59:
+ 169:src/stm32/adc.c **** {
+ 529              		.loc 1 169 1 view .LVU159
+ 530              	.LVL23:
+ 531              	.LBB60:
+ 173:src/stm32/adc.c ****         if (timeout == 0) {
+ 532              		.loc 1 173 11 view .LVU160
+ 173:src/stm32/adc.c ****         if (timeout == 0) {
+ 533              		.loc 1 173 14 is_stmt 0 view .LVU161
+ 534 0028 0868     		ldr	r0, [r1]
+ 173:src/stm32/adc.c ****         if (timeout == 0) {
+ 535              		.loc 1 173 11 view .LVU162
+ 536 002a 10F00200 		ands	r0, r0, #2
+ 537 002e 08BF     		it	eq
+ 538 0030 6422     		moveq	r2, #100
+ 539 0032 14D1     		bne	.L36
+ 540              	.LVL24:
+ 541              	.L35:
+ 177:src/stm32/adc.c ****         /* Small delay - approximately 1us at 168MHz */
+ 542              		.loc 1 177 9 is_stmt 1 view .LVU163
+ARM GAS  /tmp/ccE8pxhc.s 			page 18
+
+
+ 179:src/stm32/adc.c ****             __asm__ __volatile__("nop");
+ 543              		.loc 1 179 9 view .LVU164
+ 544              	.LBB61:
+ 179:src/stm32/adc.c ****             __asm__ __volatile__("nop");
+ 545              		.loc 1 179 14 view .LVU165
+ 179:src/stm32/adc.c ****             __asm__ __volatile__("nop");
+ 546              		.loc 1 179 27 is_stmt 0 view .LVU166
+ 547 0034 0190     		str	r0, [sp, #4]
+ 179:src/stm32/adc.c ****             __asm__ __volatile__("nop");
+ 548              		.loc 1 179 34 is_stmt 1 view .LVU167
+ 179:src/stm32/adc.c ****             __asm__ __volatile__("nop");
+ 549              		.loc 1 179 36 is_stmt 0 view .LVU168
+ 550 0036 019B     		ldr	r3, [sp, #4]
+ 179:src/stm32/adc.c ****             __asm__ __volatile__("nop");
+ 551              		.loc 1 179 9 view .LVU169
+ 552 0038 292B     		cmp	r3, #41
+ 553 003a 06DC     		bgt	.L38
+ 554              	.L39:
+ 180:src/stm32/adc.c ****         }
+ 555              		.loc 1 180 13 is_stmt 1 view .LVU170
+ 556              		.syntax unified
+ 557              	@ 180 "src/stm32/adc.c" 1
+ 558 003c 00BF     		nop
+ 559              	@ 0 "" 2
+ 179:src/stm32/adc.c ****             __asm__ __volatile__("nop");
+ 560              		.loc 1 179 42 view .LVU171
+ 179:src/stm32/adc.c ****             __asm__ __volatile__("nop");
+ 561              		.loc 1 179 43 is_stmt 0 view .LVU172
+ 562              		.thumb
+ 563              		.syntax unified
+ 564 003e 019B     		ldr	r3, [sp, #4]
+ 565 0040 0133     		adds	r3, r3, #1
+ 566 0042 0193     		str	r3, [sp, #4]
+ 179:src/stm32/adc.c ****             __asm__ __volatile__("nop");
+ 567              		.loc 1 179 34 is_stmt 1 view .LVU173
+ 179:src/stm32/adc.c ****             __asm__ __volatile__("nop");
+ 568              		.loc 1 179 36 is_stmt 0 view .LVU174
+ 569 0044 019B     		ldr	r3, [sp, #4]
+ 179:src/stm32/adc.c ****             __asm__ __volatile__("nop");
+ 570              		.loc 1 179 9 view .LVU175
+ 571 0046 292B     		cmp	r3, #41
+ 572 0048 F8DD     		ble	.L39
+ 573              	.L38:
+ 179:src/stm32/adc.c ****             __asm__ __volatile__("nop");
+ 574              		.loc 1 179 9 view .LVU176
+ 575              	.LBE61:
+ 173:src/stm32/adc.c ****         if (timeout == 0) {
+ 576              		.loc 1 173 11 is_stmt 1 view .LVU177
+ 173:src/stm32/adc.c ****         if (timeout == 0) {
+ 577              		.loc 1 173 14 is_stmt 0 view .LVU178
+ 578 004a 0B68     		ldr	r3, [r1]
+ 173:src/stm32/adc.c ****         if (timeout == 0) {
+ 579              		.loc 1 173 11 view .LVU179
+ 580 004c 9B07     		lsls	r3, r3, #30
+ 581 004e 06D4     		bmi	.L36
+ 174:src/stm32/adc.c ****             return -1;
+ 582              		.loc 1 174 9 is_stmt 1 view .LVU180
+ARM GAS  /tmp/ccE8pxhc.s 			page 19
+
+
+ 174:src/stm32/adc.c ****             return -1;
+ 583              		.loc 1 174 12 is_stmt 0 view .LVU181
+ 584 0050 013A     		subs	r2, r2, #1
+ 585              	.LVL25:
+ 174:src/stm32/adc.c ****             return -1;
+ 586              		.loc 1 174 12 view .LVU182
+ 587 0052 EFD1     		bne	.L35
+ 588              	.LVL26:
+ 174:src/stm32/adc.c ****             return -1;
+ 589              		.loc 1 174 12 view .LVU183
+ 590              	.LBE60:
+ 591              	.LBE59:
+ 312:src/stm32/adc.c ****     
+ 313:src/stm32/adc.c ****     if (result < 0) {
+ 592              		.loc 1 313 5 is_stmt 1 view .LVU184
+ 314:src/stm32/adc.c ****         irq_restore(irqflag);
+ 593              		.loc 1 314 9 view .LVU185
+ 594              	.LBB62:
+ 595              	.LBI62:
+  31:./board/irq.h **** }
+  32:./board/irq.h **** 
+  33:./board/irq.h **** /**
+  34:./board/irq.h ****  * @brief   Enable all interrupts
+  35:./board/irq.h ****  */
+  36:./board/irq.h **** static inline void irq_enable(void)
+  37:./board/irq.h **** {
+  38:./board/irq.h ****     __asm__ __volatile__("cpsie i" ::: "memory");
+  39:./board/irq.h **** }
+  40:./board/irq.h **** 
+  41:./board/irq.h **** /**
+  42:./board/irq.h ****  * @brief   Restore interrupt state
+  43:./board/irq.h ****  * @param   flag    Previous interrupt state from irq_disable()
+  44:./board/irq.h ****  */
+  45:./board/irq.h **** static inline void irq_restore(uint32_t flag)
+ 596              		.loc 2 45 20 view .LVU186
+ 597              	.LBB63:
+  46:./board/irq.h **** {
+  47:./board/irq.h ****     __asm__ __volatile__(
+ 598              		.loc 2 47 5 view .LVU187
+ 599              		.syntax unified
+ 600              	@ 47 "./board/irq.h" 1
+ 601 0054 8CF31088 		msr primask, ip
+ 602              	
+ 603              	@ 0 "" 2
+ 604              	.LVL27:
+ 605              		.loc 2 47 5 is_stmt 0 view .LVU188
+ 606              		.thumb
+ 607              		.syntax unified
+ 608              	.LBE63:
+ 609              	.LBE62:
+ 315:src/stm32/adc.c ****         return -2;  /* Timeout */
+ 610              		.loc 1 315 9 is_stmt 1 view .LVU189
+ 611              		.loc 1 315 16 is_stmt 0 view .LVU190
+ 612 0058 6FF00100 		mvn	r0, #1
+ 613 005c 05E0     		b	.L32
+ 614              	.LVL28:
+ 615              	.L36:
+ARM GAS  /tmp/ccE8pxhc.s 			page 20
+
+
+ 313:src/stm32/adc.c ****         irq_restore(irqflag);
+ 616              		.loc 1 313 5 is_stmt 1 view .LVU191
+ 316:src/stm32/adc.c ****     }
+ 317:src/stm32/adc.c ****     
+ 318:src/stm32/adc.c ****     /* Read result */
+ 319:src/stm32/adc.c ****     uint32_t value = ADC1_DR & 0x0FFF;
+ 617              		.loc 1 319 5 view .LVU192
+ 618              		.loc 1 319 22 is_stmt 0 view .LVU193
+ 619 005e 084B     		ldr	r3, .L49+4
+ 620 0060 D86C     		ldr	r0, [r3, #76]
+ 621              	.LVL29:
+ 320:src/stm32/adc.c ****     
+ 321:src/stm32/adc.c ****     irq_restore(irqflag);
+ 622              		.loc 1 321 5 is_stmt 1 view .LVU194
+ 623              	.LBB64:
+ 624              	.LBI64:
+  45:./board/irq.h **** {
+ 625              		.loc 2 45 20 view .LVU195
+ 626              	.LBB65:
+ 627              		.loc 2 47 5 view .LVU196
+ 628              		.syntax unified
+ 629              	@ 47 "./board/irq.h" 1
+ 630 0062 8CF31088 		msr primask, ip
+ 631              	
+ 632              	@ 0 "" 2
+ 633              	.LVL30:
+ 634              		.loc 2 47 5 is_stmt 0 view .LVU197
+ 635              		.thumb
+ 636              		.syntax unified
+ 637              	.LBE65:
+ 638              	.LBE64:
+ 322:src/stm32/adc.c ****     
+ 323:src/stm32/adc.c ****     return (int32_t)value;
+ 639              		.loc 1 323 5 is_stmt 1 view .LVU198
+ 319:src/stm32/adc.c ****     
+ 640              		.loc 1 319 14 is_stmt 0 view .LVU199
+ 641 0066 C0F30B00 		ubfx	r0, r0, #0, #12
+ 642              	.LVL31:
+ 643              	.L32:
+ 324:src/stm32/adc.c **** }
+ 644              		.loc 1 324 1 view .LVU200
+ 645 006a 02B0     		add	sp, sp, #8
+ 646              		.cfi_remember_state
+ 647              		.cfi_def_cfa_offset 8
+ 648              		@ sp needed
+ 649 006c 10BD     		pop	{r4, pc}
+ 650              	.LVL32:
+ 651              	.L48:
+ 652              		.cfi_restore_state
+ 296:src/stm32/adc.c ****     }
+ 653              		.loc 1 296 9 is_stmt 1 view .LVU201
+ 654              	.LBB66:
+ 655              	.LBI66:
+ 193:src/stm32/adc.c **** {
+ 656              		.loc 1 193 1 view .LVU202
+ 657              	.LBB67:
+ 195:src/stm32/adc.c ****         return;
+ARM GAS  /tmp/ccE8pxhc.s 			page 21
+
+
+ 658              		.loc 1 195 5 view .LVU203
+ 659 006e FFF7FEFF 		bl	adc_init.part.0
+ 660              	.LVL33:
+ 195:src/stm32/adc.c ****         return;
+ 661              		.loc 1 195 5 is_stmt 0 view .LVU204
+ 662 0072 CEE7     		b	.L34
+ 663              	.LVL34:
+ 664              	.L41:
+ 665              		.cfi_def_cfa_offset 0
+ 666              		.cfi_restore 4
+ 667              		.cfi_restore 14
+ 195:src/stm32/adc.c ****         return;
+ 668              		.loc 1 195 5 view .LVU205
+ 669              	.LBE67:
+ 670              	.LBE66:
+ 291:src/stm32/adc.c ****     }
+ 671              		.loc 1 291 16 view .LVU206
+ 672 0074 4FF0FF30 		mov	r0, #-1
+ 673              	.LVL35:
+ 674              		.loc 1 324 1 view .LVU207
+ 675 0078 7047     		bx	lr
+ 676              	.L50:
+ 677 007a 00BF     		.align	2
+ 678              	.L49:
+ 679 007c 00000000 		.word	.LANCHOR0
+ 680 0080 00200140 		.word	1073815552
+ 681              		.cfi_endproc
+ 682              	.LFE13:
+ 684              		.section	.text.adc_read,"ax",%progbits
+ 685              		.align	1
+ 686              		.p2align 2,,3
+ 687              		.global	adc_read
+ 688              		.syntax unified
+ 689              		.thumb
+ 690              		.thumb_func
+ 691              		.fpu fpv4-sp-d16
+ 693              	adc_read:
+ 694              	.LVL36:
+ 695              	.LFB12:
+ 274:src/stm32/adc.c ****     /* Get channel number from GPIO */
+ 696              		.loc 1 274 1 is_stmt 1 view -0
+ 697              		.cfi_startproc
+ 698              		@ args = 0, pretend = 0, frame = 0
+ 699              		@ frame_needed = 0, uses_anonymous_args = 0
+ 700              		@ link register save eliminated.
+ 276:src/stm32/adc.c ****     if (channel < 0) {
+ 701              		.loc 1 276 5 view .LVU209
+ 702              	.LBB70:
+ 703              	.LBI70:
+ 118:src/stm32/adc.c **** {
+ 704              		.loc 1 118 1 view .LVU210
+ 705              	.LBB71:
+ 120:src/stm32/adc.c ****     uint8_t pin = GPIO_PIN(gpio);
+ 706              		.loc 1 120 5 view .LVU211
+ 121:src/stm32/adc.c ****     
+ 707              		.loc 1 121 5 view .LVU212
+ 124:src/stm32/adc.c ****         return pin;
+ARM GAS  /tmp/ccE8pxhc.s 			page 22
+
+
+ 708              		.loc 1 124 8 is_stmt 0 view .LVU213
+ 709 0000 0209     		lsrs	r2, r0, #4
+ 121:src/stm32/adc.c ****     
+ 710              		.loc 1 121 13 view .LVU214
+ 711 0002 00F00F03 		and	r3, r0, #15
+ 712              	.LVL37:
+ 124:src/stm32/adc.c ****         return pin;
+ 713              		.loc 1 124 5 is_stmt 1 view .LVU215
+ 124:src/stm32/adc.c ****         return pin;
+ 714              		.loc 1 124 8 is_stmt 0 view .LVU216
+ 715 0006 04D1     		bne	.L52
+ 124:src/stm32/adc.c ****         return pin;
+ 716              		.loc 1 124 29 view .LVU217
+ 717 0008 0207     		lsls	r2, r0, #28
+ 718 000a 0AD5     		bpl	.L53
+ 719              	.L51:
+ 720              	.LBE71:
+ 721              	.LBE70:
+ 282:src/stm32/adc.c **** 
+ 722              		.loc 1 282 1 view .LVU218
+ 723 000c 4FF0FF30 		mov	r0, #-1
+ 724              	.LVL38:
+ 282:src/stm32/adc.c **** 
+ 725              		.loc 1 282 1 view .LVU219
+ 726 0010 7047     		bx	lr
+ 727              	.LVL39:
+ 728              	.L52:
+ 729              	.LBB74:
+ 730              	.LBB72:
+ 129:src/stm32/adc.c ****         return 8 + pin;
+ 731              		.loc 1 129 5 is_stmt 1 view .LVU220
+ 129:src/stm32/adc.c ****         return 8 + pin;
+ 732              		.loc 1 129 8 is_stmt 0 view .LVU221
+ 733 0012 012A     		cmp	r2, #1
+ 734 0014 08D0     		beq	.L62
+ 134:src/stm32/adc.c ****         return 10 + pin;
+ 735              		.loc 1 134 5 is_stmt 1 view .LVU222
+ 134:src/stm32/adc.c ****         return 10 + pin;
+ 736              		.loc 1 134 8 is_stmt 0 view .LVU223
+ 737 0016 022A     		cmp	r2, #2
+ 738 0018 F8D1     		bne	.L51
+ 134:src/stm32/adc.c ****         return 10 + pin;
+ 739              		.loc 1 134 29 view .LVU224
+ 740 001a 052B     		cmp	r3, #5
+ 741 001c F6D8     		bhi	.L51
+ 135:src/stm32/adc.c ****     }
+ 742              		.loc 1 135 9 is_stmt 1 view .LVU225
+ 743 001e 0A33     		adds	r3, r3, #10
+ 744              	.LVL40:
+ 135:src/stm32/adc.c ****     }
+ 745              		.loc 1 135 9 is_stmt 0 view .LVU226
+ 746 0020 DBB2     		uxtb	r3, r3
+ 747              	.LVL41:
+ 748              	.L53:
+ 135:src/stm32/adc.c ****     }
+ 749              		.loc 1 135 9 view .LVU227
+ 750              	.LBE72:
+ARM GAS  /tmp/ccE8pxhc.s 			page 23
+
+
+ 751              	.LBE74:
+ 277:src/stm32/adc.c ****         return -1;  /* Invalid GPIO for ADC */
+ 752              		.loc 1 277 5 is_stmt 1 view .LVU228
+ 281:src/stm32/adc.c **** }
+ 753              		.loc 1 281 5 view .LVU229
+ 281:src/stm32/adc.c **** }
+ 754              		.loc 1 281 12 is_stmt 0 view .LVU230
+ 755 0022 1846     		mov	r0, r3
+ 756              	.LVL42:
+ 281:src/stm32/adc.c **** }
+ 757              		.loc 1 281 12 view .LVU231
+ 758 0024 FFF7FEBF 		b	adc_read_channel
+ 759              	.LVL43:
+ 760              	.L62:
+ 761              	.LBB75:
+ 762              	.LBB73:
+ 129:src/stm32/adc.c ****         return 8 + pin;
+ 763              		.loc 1 129 29 view .LVU232
+ 764 0028 10F00E0F 		tst	r0, #14
+ 765 002c EED1     		bne	.L51
+ 130:src/stm32/adc.c ****     }
+ 766              		.loc 1 130 9 is_stmt 1 view .LVU233
+ 767 002e 0833     		adds	r3, r3, #8
+ 768              	.LVL44:
+ 130:src/stm32/adc.c ****     }
+ 769              		.loc 1 130 9 is_stmt 0 view .LVU234
+ 770 0030 DBB2     		uxtb	r3, r3
+ 771              	.LVL45:
+ 130:src/stm32/adc.c ****     }
+ 772              		.loc 1 130 18 view .LVU235
+ 773 0032 F6E7     		b	.L53
+ 774              	.LBE73:
+ 775              	.LBE75:
+ 776              		.cfi_endproc
+ 777              	.LFE12:
+ 779              		.section	.text.adc_get_channel,"ax",%progbits
+ 780              		.align	1
+ 781              		.p2align 2,,3
+ 782              		.global	adc_get_channel
+ 783              		.syntax unified
+ 784              		.thumb
+ 785              		.thumb_func
+ 786              		.fpu fpv4-sp-d16
+ 788              	adc_get_channel:
+ 789              	.LVL46:
+ 790              	.LFB14:
+ 325:src/stm32/adc.c **** 
+ 326:src/stm32/adc.c **** /**
+ 327:src/stm32/adc.c ****  * @brief   Get ADC channel number from GPIO pin
+ 328:src/stm32/adc.c ****  */
+ 329:src/stm32/adc.c **** int
+ 330:src/stm32/adc.c **** adc_get_channel(uint8_t gpio)
+ 331:src/stm32/adc.c **** {
+ 791              		.loc 1 331 1 is_stmt 1 view -0
+ 792              		.cfi_startproc
+ 793              		@ args = 0, pretend = 0, frame = 0
+ 794              		@ frame_needed = 0, uses_anonymous_args = 0
+ARM GAS  /tmp/ccE8pxhc.s 			page 24
+
+
+ 795              		@ link register save eliminated.
+ 332:src/stm32/adc.c ****     return get_adc_channel_from_gpio(gpio);
+ 796              		.loc 1 332 5 view .LVU237
+ 797              	.LBB78:
+ 798              	.LBI78:
+ 118:src/stm32/adc.c **** {
+ 799              		.loc 1 118 1 view .LVU238
+ 800              	.LBB79:
+ 120:src/stm32/adc.c ****     uint8_t pin = GPIO_PIN(gpio);
+ 801              		.loc 1 120 5 view .LVU239
+ 121:src/stm32/adc.c ****     
+ 802              		.loc 1 121 5 view .LVU240
+ 124:src/stm32/adc.c ****         return pin;
+ 803              		.loc 1 124 8 is_stmt 0 view .LVU241
+ 804 0000 0209     		lsrs	r2, r0, #4
+ 121:src/stm32/adc.c ****     
+ 805              		.loc 1 121 13 view .LVU242
+ 806 0002 00F00F03 		and	r3, r0, #15
+ 807              	.LVL47:
+ 124:src/stm32/adc.c ****         return pin;
+ 808              		.loc 1 124 5 is_stmt 1 view .LVU243
+ 124:src/stm32/adc.c ****         return pin;
+ 809              		.loc 1 124 8 is_stmt 0 view .LVU244
+ 810 0006 06D1     		bne	.L64
+ 125:src/stm32/adc.c ****     }
+ 811              		.loc 1 125 16 view .LVU245
+ 812 0008 10F0080F 		tst	r0, #8
+ 813 000c 0CBF     		ite	eq
+ 814 000e 1846     		moveq	r0, r3
+ 815              	.LVL48:
+ 125:src/stm32/adc.c ****     }
+ 816              		.loc 1 125 16 view .LVU246
+ 817 0010 4FF0FF30 		movne	r0, #-1
+ 818 0014 7047     		bx	lr
+ 819              	.LVL49:
+ 820              	.L64:
+ 129:src/stm32/adc.c ****         return 8 + pin;
+ 821              		.loc 1 129 5 is_stmt 1 view .LVU247
+ 129:src/stm32/adc.c ****         return 8 + pin;
+ 822              		.loc 1 129 8 is_stmt 0 view .LVU248
+ 823 0016 012A     		cmp	r2, #1
+ 824 0018 05D1     		bne	.L66
+ 129:src/stm32/adc.c ****         return 8 + pin;
+ 825              		.loc 1 129 29 view .LVU249
+ 826 001a 10F00E0F 		tst	r0, #14
+ 827 001e 09D0     		beq	.L71
+ 828              	.L70:
+ 139:src/stm32/adc.c **** }
+ 829              		.loc 1 139 12 view .LVU250
+ 830 0020 4FF0FF30 		mov	r0, #-1
+ 831              	.LVL50:
+ 139:src/stm32/adc.c **** }
+ 832              		.loc 1 139 12 view .LVU251
+ 833              	.LBE79:
+ 834              	.LBE78:
+ 333:src/stm32/adc.c **** }
+ 835              		.loc 1 333 1 view .LVU252
+ARM GAS  /tmp/ccE8pxhc.s 			page 25
+
+
+ 836 0024 7047     		bx	lr
+ 837              	.LVL51:
+ 838              	.L66:
+ 839              	.LBB81:
+ 840              	.LBB80:
+ 134:src/stm32/adc.c ****         return 10 + pin;
+ 841              		.loc 1 134 5 is_stmt 1 view .LVU253
+ 134:src/stm32/adc.c ****         return 10 + pin;
+ 842              		.loc 1 134 8 is_stmt 0 view .LVU254
+ 843 0026 022A     		cmp	r2, #2
+ 844 0028 FAD1     		bne	.L70
+ 134:src/stm32/adc.c ****         return 10 + pin;
+ 845              		.loc 1 134 29 view .LVU255
+ 846 002a 052B     		cmp	r3, #5
+ 847 002c F8D8     		bhi	.L70
+ 135:src/stm32/adc.c ****     }
+ 848              		.loc 1 135 9 is_stmt 1 view .LVU256
+ 135:src/stm32/adc.c ****     }
+ 849              		.loc 1 135 19 is_stmt 0 view .LVU257
+ 850 002e 03F10A00 		add	r0, r3, #10
+ 851              	.LVL52:
+ 135:src/stm32/adc.c ****     }
+ 852              		.loc 1 135 19 view .LVU258
+ 853 0032 7047     		bx	lr
+ 854              	.LVL53:
+ 855              	.L71:
+ 130:src/stm32/adc.c ****     }
+ 856              		.loc 1 130 9 is_stmt 1 view .LVU259
+ 130:src/stm32/adc.c ****     }
+ 857              		.loc 1 130 18 is_stmt 0 view .LVU260
+ 858 0034 03F10800 		add	r0, r3, #8
+ 859              	.LVL54:
+ 130:src/stm32/adc.c ****     }
+ 860              		.loc 1 130 18 view .LVU261
+ 861 0038 7047     		bx	lr
+ 862              	.LBE80:
+ 863              	.LBE81:
+ 864              		.cfi_endproc
+ 865              	.LFE14:
+ 867 003a 00BF     		.section	.text.adc_is_ready,"ax",%progbits
+ 868              		.align	1
+ 869              		.p2align 2,,3
+ 870              		.global	adc_is_ready
+ 871              		.syntax unified
+ 872              		.thumb
+ 873              		.thumb_func
+ 874              		.fpu fpv4-sp-d16
+ 876              	adc_is_ready:
+ 877              	.LFB15:
+ 334:src/stm32/adc.c **** 
+ 335:src/stm32/adc.c **** /**
+ 336:src/stm32/adc.c ****  * @brief   Check if ADC is ready for conversion
+ 337:src/stm32/adc.c ****  */
+ 338:src/stm32/adc.c **** int
+ 339:src/stm32/adc.c **** adc_is_ready(void)
+ 340:src/stm32/adc.c **** {
+ 878              		.loc 1 340 1 is_stmt 1 view -0
+ARM GAS  /tmp/ccE8pxhc.s 			page 26
+
+
+ 879              		.cfi_startproc
+ 880              		@ args = 0, pretend = 0, frame = 0
+ 881              		@ frame_needed = 0, uses_anonymous_args = 0
+ 882              		@ link register save eliminated.
+ 341:src/stm32/adc.c ****     if (!s_adc_initialized) {
+ 883              		.loc 1 341 5 view .LVU263
+ 884              		.loc 1 341 9 is_stmt 0 view .LVU264
+ 885 0000 064B     		ldr	r3, .L76
+ 886              		.loc 1 341 8 view .LVU265
+ 887 0002 1878     		ldrb	r0, [r3]	@ zero_extendqisi2
+ 888 0004 48B1     		cbz	r0, .L72
+ 342:src/stm32/adc.c ****         return 0;
+ 343:src/stm32/adc.c ****     }
+ 344:src/stm32/adc.c ****     
+ 345:src/stm32/adc.c ****     /* Check if ADC is enabled and not currently converting */
+ 346:src/stm32/adc.c ****     if ((ADC1_CR2 & ADC_CR2_ADON) && !(ADC1_SR & ADC_SR_STRT)) {
+ 889              		.loc 1 346 5 is_stmt 1 view .LVU266
+ 890              		.loc 1 346 10 is_stmt 0 view .LVU267
+ 891 0006 064B     		ldr	r3, .L76+4
+ 892 0008 9868     		ldr	r0, [r3, #8]
+ 893              		.loc 1 346 8 view .LVU268
+ 894 000a 10F00100 		ands	r0, r0, #1
+ 895 000e 04D0     		beq	.L72
+ 896              		.loc 1 346 40 discriminator 1 view .LVU269
+ 897 0010 1868     		ldr	r0, [r3]
+ 898              		.loc 1 346 35 discriminator 1 view .LVU270
+ 899 0012 80F01000 		eor	r0, r0, #16
+ 900 0016 C0F30010 		ubfx	r0, r0, #4, #1
+ 901              	.L72:
+ 347:src/stm32/adc.c ****         return 1;
+ 348:src/stm32/adc.c ****     }
+ 349:src/stm32/adc.c ****     
+ 350:src/stm32/adc.c ****     return 0;
+ 351:src/stm32/adc.c **** }
+ 902              		.loc 1 351 1 view .LVU271
+ 903 001a 7047     		bx	lr
+ 904              	.L77:
+ 905              		.align	2
+ 906              	.L76:
+ 907 001c 00000000 		.word	.LANCHOR0
+ 908 0020 00200140 		.word	1073815552
+ 909              		.cfi_endproc
+ 910              	.LFE15:
+ 912              		.section	.bss.s_adc_initialized,"aw",%nobits
+ 913              		.set	.LANCHOR0,. + 0
+ 916              	s_adc_initialized:
+ 917 0000 00       		.space	1
+ 918              		.text
+ 919              	.Letext0:
+ 920              		.file 3 "/usr/lib/gcc/arm-none-eabi/10.3.1/include/stdint.h"
+ 921              		.file 4 "src/stm32/adc.h"
+ 922              		.file 5 "src/stm32/gpio.h"
+ARM GAS  /tmp/ccE8pxhc.s 			page 27
+
+
+DEFINED SYMBOLS
+                            *ABS*:0000000000000000 adc.c
+     /tmp/ccE8pxhc.s:18     .text.adc_init.part.0:0000000000000000 $t
+     /tmp/ccE8pxhc.s:26     .text.adc_init.part.0:0000000000000000 adc_init.part.0
+     /tmp/ccE8pxhc.s:173    .text.adc_init.part.0:0000000000000080 $d
+     /tmp/ccE8pxhc.s:180    .text.adc_init:0000000000000000 $t
+     /tmp/ccE8pxhc.s:188    .text.adc_init:0000000000000000 adc_init
+     /tmp/ccE8pxhc.s:209    .text.adc_init:000000000000000c $d
+     /tmp/ccE8pxhc.s:214    .text.adc_setup:0000000000000000 $t
+     /tmp/ccE8pxhc.s:222    .text.adc_setup:0000000000000000 adc_setup
+     /tmp/ccE8pxhc.s:446    .text.adc_setup:000000000000008c $d
+     /tmp/ccE8pxhc.s:454    .text.adc_read_channel:0000000000000000 $t
+     /tmp/ccE8pxhc.s:462    .text.adc_read_channel:0000000000000000 adc_read_channel
+     /tmp/ccE8pxhc.s:679    .text.adc_read_channel:000000000000007c $d
+     /tmp/ccE8pxhc.s:685    .text.adc_read:0000000000000000 $t
+     /tmp/ccE8pxhc.s:693    .text.adc_read:0000000000000000 adc_read
+     /tmp/ccE8pxhc.s:780    .text.adc_get_channel:0000000000000000 $t
+     /tmp/ccE8pxhc.s:788    .text.adc_get_channel:0000000000000000 adc_get_channel
+     /tmp/ccE8pxhc.s:868    .text.adc_is_ready:0000000000000000 $t
+     /tmp/ccE8pxhc.s:876    .text.adc_is_ready:0000000000000000 adc_is_ready
+     /tmp/ccE8pxhc.s:907    .text.adc_is_ready:000000000000001c $d
+     /tmp/ccE8pxhc.s:916    .bss.s_adc_initialized:0000000000000000 s_adc_initialized
+     /tmp/ccE8pxhc.s:917    .bss.s_adc_initialized:0000000000000000 $d
+
+UNDEFINED SYMBOLS
+gpio_analog_setup

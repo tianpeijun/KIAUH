@@ -1,0 +1,2968 @@
+ARM GAS  /tmp/ccEIhprR.s 			page 1
+
+
+   1              		.cpu cortex-m4
+   2              		.eabi_attribute 27, 1
+   3              		.eabi_attribute 28, 1
+   4              		.eabi_attribute 20, 1
+   5              		.eabi_attribute 21, 1
+   6              		.eabi_attribute 23, 3
+   7              		.eabi_attribute 24, 1
+   8              		.eabi_attribute 25, 1
+   9              		.eabi_attribute 26, 1
+  10              		.eabi_attribute 30, 2
+  11              		.eabi_attribute 34, 1
+  12              		.eabi_attribute 18, 4
+  13              		.file	"trapq.c"
+  14              		.text
+  15              	.Ltext0:
+  16              		.cfi_sections	.debug_frame
+  17              		.section	.text.trapq_pool_init,"ax",%progbits
+  18              		.align	1
+  19              		.p2align 2,,3
+  20              		.global	trapq_pool_init
+  21              		.arch armv7e-m
+  22              		.syntax unified
+  23              		.thumb
+  24              		.thumb_func
+  25              		.fpu fpv4-sp-d16
+  27              	trapq_pool_init:
+  28              	.LFB6:
+  29              		.file 1 "chelper/trapq.c"
+   1:chelper/trapq.c **** /**
+   2:chelper/trapq.c ****  * @file    trapq.c
+   3:chelper/trapq.c ****  * @brief   Trapezoidal motion queue implementation
+   4:chelper/trapq.c ****  * 
+   5:chelper/trapq.c ****  * Adapted from Klipper klippy/chelper/trapq.c for MCU use.
+   6:chelper/trapq.c ****  * 
+   7:chelper/trapq.c ****  * Key adaptations:
+   8:chelper/trapq.c ****  * - Static memory pools instead of malloc/free
+   9:chelper/trapq.c ****  * - Removed Python FFI markers (__visible)
+  10:chelper/trapq.c ****  * - C99 compatible
+  11:chelper/trapq.c ****  */
+  12:chelper/trapq.c **** 
+  13:chelper/trapq.c **** #include "trapq.h"
+  14:chelper/trapq.c **** #include <stdint.h>
+  15:chelper/trapq.c **** #include <string.h>
+  16:chelper/trapq.c **** 
+  17:chelper/trapq.c **** /* ========== Static Memory Pools ========== */
+  18:chelper/trapq.c **** 
+  19:chelper/trapq.c **** /**
+  20:chelper/trapq.c ****  * Move pool - pre-allocated array of moves
+  21:chelper/trapq.c ****  */
+  22:chelper/trapq.c **** static struct move move_pool[TRAPQ_MAX_MOVES];
+  23:chelper/trapq.c **** static uint8_t move_pool_used[TRAPQ_MAX_MOVES];
+  24:chelper/trapq.c **** 
+  25:chelper/trapq.c **** /**
+  26:chelper/trapq.c ****  * Trapq pool - typically only need 1-2 trapqs
+  27:chelper/trapq.c ****  */
+  28:chelper/trapq.c **** #define TRAPQ_POOL_SIZE     2
+  29:chelper/trapq.c **** static struct trapq trapq_pool[TRAPQ_POOL_SIZE];
+ARM GAS  /tmp/ccEIhprR.s 			page 2
+
+
+  30:chelper/trapq.c **** static uint8_t trapq_pool_used[TRAPQ_POOL_SIZE];
+  31:chelper/trapq.c **** 
+  32:chelper/trapq.c **** /* ========== Memory Pool Functions ========== */
+  33:chelper/trapq.c **** 
+  34:chelper/trapq.c **** void
+  35:chelper/trapq.c **** trapq_pool_init(void)
+  36:chelper/trapq.c **** {
+  30              		.loc 1 36 1 view -0
+  31              		.cfi_startproc
+  32              		@ args = 0, pretend = 0, frame = 0
+  33              		@ frame_needed = 0, uses_anonymous_args = 0
+  37:chelper/trapq.c ****     memset(move_pool_used, 0, sizeof(move_pool_used));
+  34              		.loc 1 37 5 view .LVU1
+  36:chelper/trapq.c ****     memset(move_pool_used, 0, sizeof(move_pool_used));
+  35              		.loc 1 36 1 is_stmt 0 view .LVU2
+  36 0000 08B5     		push	{r3, lr}
+  37              		.cfi_def_cfa_offset 8
+  38              		.cfi_offset 3, -8
+  39              		.cfi_offset 14, -4
+  40              		.loc 1 37 5 view .LVU3
+  41 0002 2022     		movs	r2, #32
+  42 0004 0348     		ldr	r0, .L4
+  43 0006 0021     		movs	r1, #0
+  44 0008 FFF7FEFF 		bl	memset
+  45              	.LVL0:
+  38:chelper/trapq.c ****     memset(trapq_pool_used, 0, sizeof(trapq_pool_used));
+  46              		.loc 1 38 5 is_stmt 1 view .LVU4
+  47 000c 024B     		ldr	r3, .L4+4
+  48 000e 0022     		movs	r2, #0
+  49 0010 1A80     		strh	r2, [r3]	@ movhi
+  39:chelper/trapq.c **** }
+  50              		.loc 1 39 1 is_stmt 0 view .LVU5
+  51 0012 08BD     		pop	{r3, pc}
+  52              	.L5:
+  53              		.align	2
+  54              	.L4:
+  55 0014 00000000 		.word	.LANCHOR0
+  56 0018 00000000 		.word	.LANCHOR1
+  57              		.cfi_endproc
+  58              	.LFE6:
+  60              		.section	.text.trapq_alloc,"ax",%progbits
+  61              		.align	1
+  62              		.p2align 2,,3
+  63              		.global	trapq_alloc
+  64              		.syntax unified
+  65              		.thumb
+  66              		.thumb_func
+  67              		.fpu fpv4-sp-d16
+  69              	trapq_alloc:
+  70              	.LFB7:
+  40:chelper/trapq.c **** 
+  41:chelper/trapq.c **** struct trapq *
+  42:chelper/trapq.c **** trapq_alloc(void)
+  43:chelper/trapq.c **** {
+  71              		.loc 1 43 1 is_stmt 1 view -0
+  72              		.cfi_startproc
+  73              		@ args = 0, pretend = 0, frame = 0
+ARM GAS  /tmp/ccEIhprR.s 			page 3
+
+
+  74              		@ frame_needed = 0, uses_anonymous_args = 0
+  75              		@ link register save eliminated.
+  44:chelper/trapq.c ****     for (int i = 0; i < TRAPQ_POOL_SIZE; i++) {
+  76              		.loc 1 44 5 view .LVU7
+  77              	.LBB40:
+  78              		.loc 1 44 10 view .LVU8
+  79              	.LVL1:
+  80              		.loc 1 44 21 view .LVU9
+  45:chelper/trapq.c ****         if (!trapq_pool_used[i]) {
+  81              		.loc 1 45 9 view .LVU10
+  82              	.LBE40:
+  43:chelper/trapq.c ****     for (int i = 0; i < TRAPQ_POOL_SIZE; i++) {
+  83              		.loc 1 43 1 is_stmt 0 view .LVU11
+  84 0000 10B4     		push	{r4}
+  85              		.cfi_def_cfa_offset 4
+  86              		.cfi_offset 4, -4
+  87              	.LBB52:
+  88              		.loc 1 45 29 view .LVU12
+  89 0002 0F4B     		ldr	r3, .L13
+  90              		.loc 1 45 12 view .LVU13
+  91 0004 1A78     		ldrb	r2, [r3]	@ zero_extendqisi2
+  92 0006 2AB1     		cbz	r2, .L9
+  44:chelper/trapq.c ****     for (int i = 0; i < TRAPQ_POOL_SIZE; i++) {
+  93              		.loc 1 44 42 is_stmt 1 view .LVU14
+  94              	.LVL2:
+  44:chelper/trapq.c ****     for (int i = 0; i < TRAPQ_POOL_SIZE; i++) {
+  95              		.loc 1 44 21 view .LVU15
+  96              		.loc 1 45 9 view .LVU16
+  97              		.loc 1 45 12 is_stmt 0 view .LVU17
+  98 0008 5A78     		ldrb	r2, [r3, #1]	@ zero_extendqisi2
+  99              	.LBE52:
+  46:chelper/trapq.c ****             trapq_pool_used[i] = 1;
+  47:chelper/trapq.c ****             struct trapq *tq = &trapq_pool[i];
+  48:chelper/trapq.c ****             list_init(&tq->moves);
+  49:chelper/trapq.c ****             list_init(&tq->history);
+  50:chelper/trapq.c ****             return tq;
+  51:chelper/trapq.c ****         }
+  52:chelper/trapq.c ****     }
+  53:chelper/trapq.c ****     return NULL;  /* Pool exhausted */
+ 100              		.loc 1 53 12 view .LVU18
+ 101 000a 0020     		movs	r0, #0
+ 102              	.LBB53:
+  45:chelper/trapq.c ****             trapq_pool_used[i] = 1;
+ 103              		.loc 1 45 12 view .LVU19
+ 104 000c 8AB1     		cbz	r2, .L12
+ 105              	.LVL3:
+ 106              	.L6:
+  45:chelper/trapq.c ****             trapq_pool_used[i] = 1;
+ 107              		.loc 1 45 12 view .LVU20
+ 108              	.LBE53:
+  54:chelper/trapq.c **** }
+ 109              		.loc 1 54 1 view .LVU21
+ 110 000e 5DF8044B 		ldr	r4, [sp], #4
+ 111              		.cfi_remember_state
+ 112              		.cfi_restore 4
+ 113              		.cfi_def_cfa_offset 0
+ 114 0012 7047     		bx	lr
+ARM GAS  /tmp/ccEIhprR.s 			page 4
+
+
+ 115              	.LVL4:
+ 116              	.L9:
+ 117              		.cfi_restore_state
+ 118              	.LBB54:
+  45:chelper/trapq.c ****             trapq_pool_used[i] = 1;
+ 119              		.loc 1 45 12 view .LVU22
+ 120 0014 0B4C     		ldr	r4, .L13+4
+ 121 0016 0821     		movs	r1, #8
+ 122 0018 2046     		mov	r0, r4
+ 123              	.LVL5:
+ 124              	.L7:
+ 125              	.LBB41:
+  46:chelper/trapq.c ****             trapq_pool_used[i] = 1;
+ 126              		.loc 1 46 13 is_stmt 1 view .LVU23
+ 127              	.LBB42:
+ 128              	.LBB43:
+ 129              		.file 2 "chelper/list.h"
+   1:chelper/list.h **** /**
+   2:chelper/list.h ****  * @file    list.h
+   3:chelper/list.h ****  * @brief   Linked list utilities for Klipper MCU
+   4:chelper/list.h ****  * 
+   5:chelper/list.h ****  * Adapted from Klipper klippy/chelper/list.h for MCU use.
+   6:chelper/list.h ****  * Provides doubly-linked list macros and inline functions.
+   7:chelper/list.h ****  * 
+   8:chelper/list.h ****  * Key adaptations:
+   9:chelper/list.h ****  * - C99 compatible (no typeof extension)
+  10:chelper/list.h ****  * - Uses explicit type parameters in macros
+  11:chelper/list.h ****  */
+  12:chelper/list.h **** 
+  13:chelper/list.h **** #ifndef CHELPER_LIST_H
+  14:chelper/list.h **** #define CHELPER_LIST_H
+  15:chelper/list.h **** 
+  16:chelper/list.h **** #include <stddef.h>
+  17:chelper/list.h **** 
+  18:chelper/list.h **** #ifdef __cplusplus
+  19:chelper/list.h **** extern "C" {
+  20:chelper/list.h **** #endif
+  21:chelper/list.h **** 
+  22:chelper/list.h **** /**
+  23:chelper/list.h ****  * @brief List node structure for doubly-linked lists
+  24:chelper/list.h ****  */
+  25:chelper/list.h **** struct list_node {
+  26:chelper/list.h ****     struct list_node *next;
+  27:chelper/list.h ****     struct list_node *prev;
+  28:chelper/list.h **** };
+  29:chelper/list.h **** 
+  30:chelper/list.h **** /**
+  31:chelper/list.h ****  * @brief List head structure (sentinel node)
+  32:chelper/list.h ****  */
+  33:chelper/list.h **** struct list_head {
+  34:chelper/list.h ****     struct list_node root;
+  35:chelper/list.h **** };
+  36:chelper/list.h **** 
+  37:chelper/list.h **** /**
+  38:chelper/list.h ****  * @brief Get the struct containing this list node
+  39:chelper/list.h ****  * @param ptr    Pointer to the list_node member
+  40:chelper/list.h ****  * @param type   Type of the containing struct
+ARM GAS  /tmp/ccEIhprR.s 			page 5
+
+
+  41:chelper/list.h ****  * @param member Name of the list_node member in the struct
+  42:chelper/list.h ****  */
+  43:chelper/list.h **** #define container_of(ptr, type, member) \
+  44:chelper/list.h ****     ((type *)((char *)(ptr) - offsetof(type, member)))
+  45:chelper/list.h **** 
+  46:chelper/list.h **** /**
+  47:chelper/list.h ****  * @brief Get the struct containing this list node
+  48:chelper/list.h ****  */
+  49:chelper/list.h **** #define list_entry(ptr, type, member) \
+  50:chelper/list.h ****     container_of(ptr, type, member)
+  51:chelper/list.h **** 
+  52:chelper/list.h **** /**
+  53:chelper/list.h ****  * @brief Initialize a list head statically
+  54:chelper/list.h ****  */
+  55:chelper/list.h **** #define LIST_HEAD_INIT(name) { { &(name).root, &(name).root } }
+  56:chelper/list.h **** 
+  57:chelper/list.h **** /**
+  58:chelper/list.h ****  * @brief Declare and initialize a list head
+  59:chelper/list.h ****  */
+  60:chelper/list.h **** #define LIST_HEAD(name) \
+  61:chelper/list.h ****     struct list_head name = LIST_HEAD_INIT(name)
+  62:chelper/list.h **** 
+  63:chelper/list.h **** /**
+  64:chelper/list.h ****  * @brief Initialize a list head at runtime
+  65:chelper/list.h ****  */
+  66:chelper/list.h **** static inline void
+  67:chelper/list.h **** list_init(struct list_head *head)
+  68:chelper/list.h **** {
+  69:chelper/list.h ****     head->root.next = &head->root;
+ 130              		.loc 2 69 21 is_stmt 0 view .LVU24
+ 131 001a 04EB021C 		add	ip, r4, r2, lsl #4
+ 132              	.LBE43:
+ 133              	.LBE42:
+ 134              	.LBB46:
+ 135              	.LBB47:
+ 136              		.loc 2 69 23 view .LVU25
+ 137 001e 2144     		add	r1, r1, r4
+ 138              		.loc 2 69 21 view .LVU26
+ 139 0020 CCE90101 		strd	r0, r1, [ip, #4]
+  70:chelper/list.h ****     head->root.prev = &head->root;
+ 140              		.loc 2 70 21 view .LVU27
+ 141 0024 CCF80C10 		str	r1, [ip, #12]
+ 142              	.LBE47:
+ 143              	.LBE46:
+ 144              	.LBB49:
+ 145              	.LBB44:
+  69:chelper/list.h ****     head->root.prev = &head->root;
+ 146              		.loc 2 69 21 view .LVU28
+ 147 0028 1101     		lsls	r1, r2, #4
+ 148 002a 6050     		str	r0, [r4, r1]
+ 149              	.LBE44:
+ 150              	.LBE49:
+  46:chelper/trapq.c ****             struct trapq *tq = &trapq_pool[i];
+ 151              		.loc 1 46 32 view .LVU29
+ 152 002c 0121     		movs	r1, #1
+ 153 002e 9954     		strb	r1, [r3, r2]
+  47:chelper/trapq.c ****             list_init(&tq->moves);
+ARM GAS  /tmp/ccEIhprR.s 			page 6
+
+
+ 154              		.loc 1 47 13 is_stmt 1 view .LVU30
+ 155              	.LVL6:
+  48:chelper/trapq.c ****             list_init(&tq->history);
+ 156              		.loc 1 48 13 view .LVU31
+ 157              	.LBB50:
+ 158              	.LBI42:
+  67:chelper/list.h **** {
+ 159              		.loc 2 67 1 view .LVU32
+ 160              	.LBB45:
+  69:chelper/list.h ****     head->root.prev = &head->root;
+ 161              		.loc 2 69 5 view .LVU33
+ 162              		.loc 2 70 5 view .LVU34
+ 163              		.loc 2 70 5 is_stmt 0 view .LVU35
+ 164              	.LBE45:
+ 165              	.LBE50:
+  49:chelper/trapq.c ****             return tq;
+ 166              		.loc 1 49 13 is_stmt 1 view .LVU36
+ 167              	.LBB51:
+ 168              	.LBI46:
+  67:chelper/list.h **** {
+ 169              		.loc 2 67 1 view .LVU37
+ 170              	.LBB48:
+  69:chelper/list.h ****     head->root.prev = &head->root;
+ 171              		.loc 2 69 5 view .LVU38
+ 172              		.loc 2 70 5 view .LVU39
+ 173              		.loc 2 70 5 is_stmt 0 view .LVU40
+ 174              	.LBE48:
+ 175              	.LBE51:
+  50:chelper/trapq.c ****         }
+ 176              		.loc 1 50 13 is_stmt 1 view .LVU41
+  50:chelper/trapq.c ****         }
+ 177              		.loc 1 50 20 is_stmt 0 view .LVU42
+ 178 0030 EDE7     		b	.L6
+ 179              	.LVL7:
+ 180              	.L12:
+  50:chelper/trapq.c ****         }
+ 181              		.loc 1 50 20 view .LVU43
+ 182              	.LBE41:
+  45:chelper/trapq.c ****             trapq_pool_used[i] = 1;
+ 183              		.loc 1 45 12 view .LVU44
+ 184 0032 0548     		ldr	r0, .L13+8
+ 185 0034 1821     		movs	r1, #24
+  44:chelper/trapq.c ****         if (!trapq_pool_used[i]) {
+ 186              		.loc 1 44 43 view .LVU45
+ 187 0036 0122     		movs	r2, #1
+ 188 0038 A0F11004 		sub	r4, r0, #16
+ 189 003c EDE7     		b	.L7
+ 190              	.L14:
+ 191 003e 00BF     		.align	2
+ 192              	.L13:
+ 193 0040 00000000 		.word	.LANCHOR1
+ 194 0044 00000000 		.word	.LANCHOR2
+ 195 0048 10000000 		.word	.LANCHOR2+16
+ 196              	.LBE54:
+ 197              		.cfi_endproc
+ 198              	.LFE7:
+ 200              		.section	.text.trapq_free,"ax",%progbits
+ARM GAS  /tmp/ccEIhprR.s 			page 7
+
+
+ 201              		.align	1
+ 202              		.p2align 2,,3
+ 203              		.global	trapq_free
+ 204              		.syntax unified
+ 205              		.thumb
+ 206              		.thumb_func
+ 207              		.fpu fpv4-sp-d16
+ 209              	trapq_free:
+ 210              	.LVL8:
+ 211              	.LFB8:
+  55:chelper/trapq.c **** 
+  56:chelper/trapq.c **** void
+  57:chelper/trapq.c **** trapq_free(struct trapq *tq)
+  58:chelper/trapq.c **** {
+ 212              		.loc 1 58 1 is_stmt 1 view -0
+ 213              		.cfi_startproc
+ 214              		@ args = 0, pretend = 0, frame = 0
+ 215              		@ frame_needed = 0, uses_anonymous_args = 0
+  59:chelper/trapq.c ****     if (tq == NULL) {
+ 216              		.loc 1 59 5 view .LVU47
+ 217              		.loc 1 59 8 is_stmt 0 view .LVU48
+ 218 0000 0028     		cmp	r0, #0
+ 219 0002 60D0     		beq	.L31
+  60:chelper/trapq.c ****         return;
+  61:chelper/trapq.c ****     }
+  62:chelper/trapq.c ****     
+  63:chelper/trapq.c ****     /* Free all moves in this trapq */
+  64:chelper/trapq.c ****     struct move *m, *tmp;
+ 220              		.loc 1 64 5 is_stmt 1 view .LVU49
+  65:chelper/trapq.c ****     list_for_each_entry_safe(m, tmp, &tq->moves, struct move, node) {
+ 221              		.loc 1 65 5 view .LVU50
+  58:chelper/trapq.c ****     if (tq == NULL) {
+ 222              		.loc 1 58 1 is_stmt 0 view .LVU51
+ 223 0004 2DE9F04F 		push	{r4, r5, r6, r7, r8, r9, r10, fp, lr}
+ 224              		.cfi_def_cfa_offset 36
+ 225              		.cfi_offset 4, -36
+ 226              		.cfi_offset 5, -32
+ 227              		.cfi_offset 6, -28
+ 228              		.cfi_offset 7, -24
+ 229              		.cfi_offset 8, -20
+ 230              		.cfi_offset 9, -16
+ 231              		.cfi_offset 10, -12
+ 232              		.cfi_offset 11, -8
+ 233              		.cfi_offset 14, -4
+ 234              		.loc 1 65 5 view .LVU52
+ 235 0008 0468     		ldr	r4, [r0]
+ 236 000a 2246     		mov	r2, r4
+ 237              	.LVL9:
+ 238              		.loc 1 65 5 view .LVU53
+ 239 000c A042     		cmp	r0, r4
+ 240 000e 52F88019 		ldr	r1, [r2], #-128
+ 241              	.LVL10:
+ 242              		.loc 1 65 5 view .LVU54
+ 243 0012 A1F18003 		sub	r3, r1, #128
+ 244              	.LVL11:
+ 245              		.loc 1 65 5 is_stmt 1 view .LVU55
+ 246 0016 1FD0     		beq	.L22
+ARM GAS  /tmp/ccEIhprR.s 			page 8
+
+
+ 247 0018 2B4D     		ldr	r5, .L34
+ 248              	.LBB55:
+ 249              	.LBB56:
+  66:chelper/trapq.c ****         list_del(&m->node);
+  67:chelper/trapq.c ****         move_free(m);
+  68:chelper/trapq.c ****     }
+  69:chelper/trapq.c ****     list_for_each_entry_safe(m, tmp, &tq->history, struct move, node) {
+  70:chelper/trapq.c ****         list_del(&m->node);
+  71:chelper/trapq.c ****         move_free(m);
+  72:chelper/trapq.c ****     }
+  73:chelper/trapq.c ****     
+  74:chelper/trapq.c ****     /* Return trapq to pool */
+  75:chelper/trapq.c ****     int idx = tq - trapq_pool;
+  76:chelper/trapq.c ****     if (idx >= 0 && idx < TRAPQ_POOL_SIZE) {
+  77:chelper/trapq.c ****         trapq_pool_used[idx] = 0;
+  78:chelper/trapq.c ****     }
+  79:chelper/trapq.c **** }
+  80:chelper/trapq.c **** 
+  81:chelper/trapq.c **** struct move *
+  82:chelper/trapq.c **** move_alloc(void)
+  83:chelper/trapq.c **** {
+  84:chelper/trapq.c ****     for (int i = 0; i < TRAPQ_MAX_MOVES; i++) {
+  85:chelper/trapq.c ****         if (!move_pool_used[i]) {
+  86:chelper/trapq.c ****             move_pool_used[i] = 1;
+  87:chelper/trapq.c ****             struct move *m = &move_pool[i];
+  88:chelper/trapq.c ****             memset(m, 0, sizeof(*m));
+  89:chelper/trapq.c ****             return m;
+  90:chelper/trapq.c ****         }
+  91:chelper/trapq.c ****     }
+  92:chelper/trapq.c ****     return NULL;  /* Pool exhausted */
+  93:chelper/trapq.c **** }
+  94:chelper/trapq.c **** 
+  95:chelper/trapq.c **** void
+  96:chelper/trapq.c **** move_free(struct move *m)
+  97:chelper/trapq.c **** {
+  98:chelper/trapq.c ****     if (m == NULL) {
+  99:chelper/trapq.c ****         return;
+ 100:chelper/trapq.c ****     }
+ 101:chelper/trapq.c ****     int idx = m - move_pool;
+ 102:chelper/trapq.c ****     if (idx >= 0 && idx < TRAPQ_MAX_MOVES) {
+ 103:chelper/trapq.c ****         move_pool_used[idx] = 0;
+ 250              		.loc 1 103 29 is_stmt 0 view .LVU56
+ 251 001a DFF8B8A0 		ldr	r10, .L34+12
+ 101:chelper/trapq.c ****     if (idx >= 0 && idx < TRAPQ_MAX_MOVES) {
+ 252              		.loc 1 101 9 view .LVU57
+ 253 001e DFF8B890 		ldr	r9, .L34+16
+ 254              	.LBE56:
+ 255              	.LBE55:
+ 256              	.LBB63:
+ 257              	.LBB64:
+  71:chelper/list.h **** }
+  72:chelper/list.h **** 
+  73:chelper/list.h **** /**
+  74:chelper/list.h ****  * @brief Check if list is empty
+  75:chelper/list.h ****  */
+  76:chelper/list.h **** static inline int
+  77:chelper/list.h **** list_empty(const struct list_head *head)
+ARM GAS  /tmp/ccEIhprR.s 			page 9
+
+
+  78:chelper/list.h **** {
+  79:chelper/list.h ****     return head->root.next == &head->root;
+  80:chelper/list.h **** }
+  81:chelper/list.h **** 
+  82:chelper/list.h **** /**
+  83:chelper/list.h ****  * @brief Get first entry in list (or NULL if empty)
+  84:chelper/list.h ****  * @param head   Pointer to list_head
+  85:chelper/list.h ****  * @param type   Type of the containing struct
+  86:chelper/list.h ****  * @param member Name of the list_node member
+  87:chelper/list.h ****  */
+  88:chelper/list.h **** #define list_first_entry(head, type, member) \
+  89:chelper/list.h ****     (list_empty(head) ? NULL : list_entry((head)->root.next, type, member))
+  90:chelper/list.h **** 
+  91:chelper/list.h **** /**
+  92:chelper/list.h ****  * @brief Get last entry in list (or NULL if empty)
+  93:chelper/list.h ****  * @param head   Pointer to list_head
+  94:chelper/list.h ****  * @param type   Type of the containing struct
+  95:chelper/list.h ****  * @param member Name of the list_node member
+  96:chelper/list.h ****  */
+  97:chelper/list.h **** #define list_last_entry(head, type, member) \
+  98:chelper/list.h ****     (list_empty(head) ? NULL : list_entry((head)->root.prev, type, member))
+  99:chelper/list.h **** 
+ 100:chelper/list.h **** /**
+ 101:chelper/list.h ****  * @brief Get next entry in list
+ 102:chelper/list.h ****  * @param pos    Current entry pointer
+ 103:chelper/list.h ****  * @param type   Type of the containing struct
+ 104:chelper/list.h ****  * @param member Name of the list_node member
+ 105:chelper/list.h ****  */
+ 106:chelper/list.h **** #define list_next_entry(pos, type, member) \
+ 107:chelper/list.h ****     list_entry((pos)->member.next, type, member)
+ 108:chelper/list.h **** 
+ 109:chelper/list.h **** /**
+ 110:chelper/list.h ****  * @brief Get previous entry in list
+ 111:chelper/list.h ****  * @param pos    Current entry pointer
+ 112:chelper/list.h ****  * @param type   Type of the containing struct
+ 113:chelper/list.h ****  * @param member Name of the list_node member
+ 114:chelper/list.h ****  */
+ 115:chelper/list.h **** #define list_prev_entry(pos, type, member) \
+ 116:chelper/list.h ****     list_entry((pos)->member.prev, type, member)
+ 117:chelper/list.h **** 
+ 118:chelper/list.h **** /**
+ 119:chelper/list.h ****  * @brief Insert a new node between two known consecutive nodes
+ 120:chelper/list.h ****  */
+ 121:chelper/list.h **** static inline void
+ 122:chelper/list.h **** list_add_between(struct list_node *node, struct list_node *prev,
+ 123:chelper/list.h ****                  struct list_node *next)
+ 124:chelper/list.h **** {
+ 125:chelper/list.h ****     next->prev = node;
+ 126:chelper/list.h ****     node->next = next;
+ 127:chelper/list.h ****     node->prev = prev;
+ 128:chelper/list.h ****     prev->next = node;
+ 129:chelper/list.h **** }
+ 130:chelper/list.h **** 
+ 131:chelper/list.h **** /**
+ 132:chelper/list.h ****  * @brief Add node to the front of the list (after head)
+ 133:chelper/list.h ****  */
+ 134:chelper/list.h **** static inline void
+ARM GAS  /tmp/ccEIhprR.s 			page 10
+
+
+ 135:chelper/list.h **** list_add_head(struct list_node *node, struct list_head *head)
+ 136:chelper/list.h **** {
+ 137:chelper/list.h ****     list_add_between(node, &head->root, head->root.next);
+ 138:chelper/list.h **** }
+ 139:chelper/list.h **** 
+ 140:chelper/list.h **** /**
+ 141:chelper/list.h ****  * @brief Add node to the end of the list (before head)
+ 142:chelper/list.h ****  */
+ 143:chelper/list.h **** static inline void
+ 144:chelper/list.h **** list_add_tail(struct list_node *node, struct list_head *head)
+ 145:chelper/list.h **** {
+ 146:chelper/list.h ****     list_add_between(node, head->root.prev, &head->root);
+ 147:chelper/list.h **** }
+ 148:chelper/list.h **** 
+ 149:chelper/list.h **** /**
+ 150:chelper/list.h ****  * @brief Remove a node from its list
+ 151:chelper/list.h ****  */
+ 152:chelper/list.h **** static inline void
+ 153:chelper/list.h **** list_del(struct list_node *node)
+ 154:chelper/list.h **** {
+ 155:chelper/list.h ****     struct list_node *prev = node->prev;
+ 156:chelper/list.h ****     struct list_node *next = node->next;
+ 157:chelper/list.h ****     prev->next = next;
+ 158:chelper/list.h ****     next->prev = prev;
+ 159:chelper/list.h ****     /* Poison pointers to catch use-after-remove bugs */
+ 160:chelper/list.h ****     node->next = NULL;
+ 258              		.loc 2 160 16 view .LVU58
+ 259 0022 0027     		movs	r7, #0
+ 260              	.LBE64:
+ 261              	.LBE63:
+ 262              	.LBB68:
+ 263              	.LBB57:
+ 102:chelper/trapq.c ****         move_pool_used[idx] = 0;
+ 264              		.loc 1 102 8 view .LVU59
+ 265 0024 41F27808 		movw	r8, #4216
+ 266              	.LVL12:
+ 267              	.L18:
+ 102:chelper/trapq.c ****         move_pool_used[idx] = 0;
+ 268              		.loc 1 102 8 view .LVU60
+ 269              	.LBE57:
+ 270              	.LBE68:
+  66:chelper/trapq.c ****         move_free(m);
+ 271              		.loc 1 66 9 is_stmt 1 discriminator 3 view .LVU61
+ 272              	.LBB69:
+ 273              	.LBI63:
+ 153:chelper/list.h **** {
+ 274              		.loc 2 153 1 discriminator 3 view .LVU62
+ 275              	.LBB65:
+ 155:chelper/list.h ****     struct list_node *next = node->next;
+ 276              		.loc 2 155 5 discriminator 3 view .LVU63
+ 277              	.LBE65:
+ 278              	.LBE69:
+ 279              	.LBB70:
+ 280              	.LBB58:
+ 281              		.loc 1 103 9 discriminator 3 view .LVU64
+ 282              	.LBE58:
+ 283              	.LBE70:
+ARM GAS  /tmp/ccEIhprR.s 			page 11
+
+
+  65:chelper/trapq.c ****         list_del(&m->node);
+ 284              		.loc 1 65 5 discriminator 3 view .LVU65
+ 285              	.LBB71:
+ 286              	.LBB66:
+ 155:chelper/list.h ****     struct list_node *next = node->next;
+ 287              		.loc 2 155 23 is_stmt 0 discriminator 3 view .LVU66
+ 288 0028 D2F88460 		ldr	r6, [r2, #132]
+ 289              	.LVL13:
+ 156:chelper/list.h ****     prev->next = next;
+ 290              		.loc 2 156 5 is_stmt 1 discriminator 3 view .LVU67
+ 157:chelper/list.h ****     next->prev = prev;
+ 291              		.loc 2 157 5 discriminator 3 view .LVU68
+ 292              	.LBE66:
+ 293              	.LBE71:
+ 294              	.LBB72:
+ 295              	.LBB59:
+ 101:chelper/trapq.c ****     if (idx >= 0 && idx < TRAPQ_MAX_MOVES) {
+ 296              		.loc 1 101 17 is_stmt 0 discriminator 3 view .LVU69
+ 297 002c 541B     		subs	r4, r2, r5
+ 298              	.LBE59:
+ 299              	.LBE72:
+ 300              	.LBB73:
+ 301              	.LBB67:
+ 157:chelper/list.h ****     next->prev = prev;
+ 302              		.loc 2 157 16 discriminator 3 view .LVU70
+ 303 002e 3160     		str	r1, [r6]
+ 304              	.LVL14:
+ 158:chelper/list.h ****     /* Poison pointers to catch use-after-remove bugs */
+ 305              		.loc 2 158 5 is_stmt 1 discriminator 3 view .LVU71
+ 158:chelper/list.h ****     /* Poison pointers to catch use-after-remove bugs */
+ 306              		.loc 2 158 16 is_stmt 0 discriminator 3 view .LVU72
+ 307 0030 4E60     		str	r6, [r1, #4]
+ 308              		.loc 2 160 5 is_stmt 1 discriminator 3 view .LVU73
+ 161:chelper/list.h ****     node->prev = NULL;
+ 309              		.loc 2 161 16 is_stmt 0 discriminator 3 view .LVU74
+ 310 0032 C2E92077 		strd	r7, r7, [r2, #128]
+ 311              	.LVL15:
+ 312              		.loc 2 161 16 discriminator 3 view .LVU75
+ 313              	.LBE67:
+ 314              	.LBE73:
+  67:chelper/trapq.c ****     }
+ 315              		.loc 1 67 9 is_stmt 1 discriminator 3 view .LVU76
+ 316              	.LBB74:
+ 317              	.LBI55:
+  96:chelper/trapq.c **** {
+ 318              		.loc 1 96 1 discriminator 3 view .LVU77
+ 319              	.LBB60:
+  98:chelper/trapq.c ****         return;
+ 320              		.loc 1 98 5 discriminator 3 view .LVU78
+ 101:chelper/trapq.c ****     if (idx >= 0 && idx < TRAPQ_MAX_MOVES) {
+ 321              		.loc 1 101 5 discriminator 3 view .LVU79
+ 102:chelper/trapq.c ****         move_pool_used[idx] = 0;
+ 322              		.loc 1 102 5 discriminator 3 view .LVU80
+ 101:chelper/trapq.c ****     if (idx >= 0 && idx < TRAPQ_MAX_MOVES) {
+ 323              		.loc 1 101 9 is_stmt 0 discriminator 3 view .LVU81
+ 324 0036 4FEAE40C 		asr	ip, r4, #3
+ 325 003a 09FB0CFC 		mul	ip, r9, ip
+ARM GAS  /tmp/ccEIhprR.s 			page 12
+
+
+ 326              	.LBE60:
+ 327              	.LBE74:
+  65:chelper/trapq.c ****         list_del(&m->node);
+ 328              		.loc 1 65 5 discriminator 3 view .LVU82
+ 329 003e 03F1800E 		add	lr, r3, #128
+ 330              	.LBB75:
+ 331              	.LBB61:
+ 102:chelper/trapq.c ****         move_pool_used[idx] = 0;
+ 332              		.loc 1 102 8 discriminator 3 view .LVU83
+ 333 0042 4445     		cmp	r4, r8
+ 334              	.LBE61:
+ 335              	.LBE75:
+  65:chelper/trapq.c ****         list_del(&m->node);
+ 336              		.loc 1 65 5 discriminator 3 view .LVU84
+ 337 0044 D3F88010 		ldr	r1, [r3, #128]
+ 338              	.LBB76:
+ 339              	.LBB62:
+ 340              		.loc 1 103 29 discriminator 3 view .LVU85
+ 341 0048 98BF     		it	ls
+ 342 004a 0AF80C70 		strbls	r7, [r10, ip]
+ 343              	.LBE62:
+ 344              	.LBE76:
+  65:chelper/trapq.c ****         list_del(&m->node);
+ 345              		.loc 1 65 5 discriminator 3 view .LVU86
+ 346 004e 7045     		cmp	r0, lr
+ 347 0050 1A46     		mov	r2, r3
+ 348 0052 A1F18003 		sub	r3, r1, #128
+ 349              	.LVL16:
+  65:chelper/trapq.c ****         list_del(&m->node);
+ 350              		.loc 1 65 5 is_stmt 1 discriminator 3 view .LVU87
+ 351 0056 E7D1     		bne	.L18
+ 352              	.LVL17:
+ 353              	.L22:
+  69:chelper/trapq.c ****         list_del(&m->node);
+ 354              		.loc 1 69 5 view .LVU88
+ 355 0058 0746     		mov	r7, r0
+ 356 005a 57F8084F 		ldr	r4, [r7, #8]!
+ 357 005e 2246     		mov	r2, r4
+ 358              	.LVL18:
+  69:chelper/trapq.c ****         list_del(&m->node);
+ 359              		.loc 1 69 5 is_stmt 0 view .LVU89
+ 360 0060 A742     		cmp	r7, r4
+ 361 0062 52F88019 		ldr	r1, [r2], #-128
+ 362              	.LVL19:
+  69:chelper/trapq.c ****         list_del(&m->node);
+ 363              		.loc 1 69 5 view .LVU90
+ 364 0066 A1F18003 		sub	r3, r1, #128
+ 365              	.LVL20:
+  69:chelper/trapq.c ****         list_del(&m->node);
+ 366              		.loc 1 69 5 is_stmt 1 view .LVU91
+ 367 006a 22D0     		beq	.L20
+ 368 006c 164D     		ldr	r5, .L34
+ 369              	.LBB77:
+ 370              	.LBB78:
+ 371              		.loc 1 103 29 is_stmt 0 view .LVU92
+ 372 006e DFF864A0 		ldr	r10, .L34+12
+ 101:chelper/trapq.c ****     if (idx >= 0 && idx < TRAPQ_MAX_MOVES) {
+ARM GAS  /tmp/ccEIhprR.s 			page 13
+
+
+ 373              		.loc 1 101 9 view .LVU93
+ 374 0072 DFF86490 		ldr	r9, .L34+16
+ 375              	.LBE78:
+ 376              	.LBE77:
+ 377              	.LBB85:
+ 378              	.LBB86:
+ 160:chelper/list.h ****     node->prev = NULL;
+ 379              		.loc 2 160 16 view .LVU94
+ 380 0076 0024     		movs	r4, #0
+ 381              	.LBE86:
+ 382              	.LBE85:
+ 383              	.LBB90:
+ 384              	.LBB79:
+ 102:chelper/trapq.c ****         move_pool_used[idx] = 0;
+ 385              		.loc 1 102 8 view .LVU95
+ 386 0078 41F27808 		movw	r8, #4216
+ 387              	.LVL21:
+ 388              	.L19:
+ 102:chelper/trapq.c ****         move_pool_used[idx] = 0;
+ 389              		.loc 1 102 8 view .LVU96
+ 390              	.LBE79:
+ 391              	.LBE90:
+  70:chelper/trapq.c ****         move_free(m);
+ 392              		.loc 1 70 9 is_stmt 1 discriminator 3 view .LVU97
+ 393              	.LBB91:
+ 394              	.LBI85:
+ 153:chelper/list.h **** {
+ 395              		.loc 2 153 1 discriminator 3 view .LVU98
+ 396              	.LBB87:
+ 155:chelper/list.h ****     struct list_node *next = node->next;
+ 397              		.loc 2 155 5 discriminator 3 view .LVU99
+ 398              	.LBE87:
+ 399              	.LBE91:
+ 400              	.LBB92:
+ 401              	.LBB80:
+ 402              		.loc 1 103 9 discriminator 3 view .LVU100
+ 403              	.LBE80:
+ 404              	.LBE92:
+  69:chelper/trapq.c ****         list_del(&m->node);
+ 405              		.loc 1 69 5 discriminator 3 view .LVU101
+ 406              	.LBB93:
+ 407              	.LBB88:
+ 155:chelper/list.h ****     struct list_node *next = node->next;
+ 408              		.loc 2 155 23 is_stmt 0 discriminator 3 view .LVU102
+ 409 007c D2F884B0 		ldr	fp, [r2, #132]
+ 410              	.LVL22:
+ 156:chelper/list.h ****     prev->next = next;
+ 411              		.loc 2 156 5 is_stmt 1 discriminator 3 view .LVU103
+ 157:chelper/list.h ****     next->prev = prev;
+ 412              		.loc 2 157 5 discriminator 3 view .LVU104
+ 413              	.LBE88:
+ 414              	.LBE93:
+ 415              	.LBB94:
+ 416              	.LBB81:
+ 101:chelper/trapq.c ****     if (idx >= 0 && idx < TRAPQ_MAX_MOVES) {
+ 417              		.loc 1 101 17 is_stmt 0 discriminator 3 view .LVU105
+ 418 0080 A2EB050E 		sub	lr, r2, r5
+ARM GAS  /tmp/ccEIhprR.s 			page 14
+
+
+ 419              	.LBE81:
+ 420              	.LBE94:
+ 421              	.LBB95:
+ 422              	.LBB89:
+ 157:chelper/list.h ****     next->prev = prev;
+ 423              		.loc 2 157 16 discriminator 3 view .LVU106
+ 424 0084 CBF80010 		str	r1, [fp]
+ 425              	.LVL23:
+ 158:chelper/list.h ****     /* Poison pointers to catch use-after-remove bugs */
+ 426              		.loc 2 158 5 is_stmt 1 discriminator 3 view .LVU107
+ 158:chelper/list.h ****     /* Poison pointers to catch use-after-remove bugs */
+ 427              		.loc 2 158 16 is_stmt 0 discriminator 3 view .LVU108
+ 428 0088 C1F804B0 		str	fp, [r1, #4]
+ 160:chelper/list.h ****     node->prev = NULL;
+ 429              		.loc 2 160 5 is_stmt 1 discriminator 3 view .LVU109
+ 430              		.loc 2 161 16 is_stmt 0 discriminator 3 view .LVU110
+ 431 008c C2E92044 		strd	r4, r4, [r2, #128]
+ 432              	.LVL24:
+ 433              		.loc 2 161 16 discriminator 3 view .LVU111
+ 434              	.LBE89:
+ 435              	.LBE95:
+  71:chelper/trapq.c ****     }
+ 436              		.loc 1 71 9 is_stmt 1 discriminator 3 view .LVU112
+ 437              	.LBB96:
+ 438              	.LBI77:
+  96:chelper/trapq.c **** {
+ 439              		.loc 1 96 1 discriminator 3 view .LVU113
+ 440              	.LBB82:
+  98:chelper/trapq.c ****         return;
+ 441              		.loc 1 98 5 discriminator 3 view .LVU114
+ 101:chelper/trapq.c ****     if (idx >= 0 && idx < TRAPQ_MAX_MOVES) {
+ 442              		.loc 1 101 5 discriminator 3 view .LVU115
+ 102:chelper/trapq.c ****         move_pool_used[idx] = 0;
+ 443              		.loc 1 102 5 discriminator 3 view .LVU116
+ 101:chelper/trapq.c ****     if (idx >= 0 && idx < TRAPQ_MAX_MOVES) {
+ 444              		.loc 1 101 9 is_stmt 0 discriminator 3 view .LVU117
+ 445 0090 4FEAEE0C 		asr	ip, lr, #3
+ 446 0094 09FB0CFC 		mul	ip, r9, ip
+ 447              	.LBE82:
+ 448              	.LBE96:
+  69:chelper/trapq.c ****         list_del(&m->node);
+ 449              		.loc 1 69 5 discriminator 3 view .LVU118
+ 450 0098 03F18006 		add	r6, r3, #128
+ 451              	.LBB97:
+ 452              	.LBB83:
+ 102:chelper/trapq.c ****         move_pool_used[idx] = 0;
+ 453              		.loc 1 102 8 discriminator 3 view .LVU119
+ 454 009c C645     		cmp	lr, r8
+ 455              	.LBE83:
+ 456              	.LBE97:
+  69:chelper/trapq.c ****         list_del(&m->node);
+ 457              		.loc 1 69 5 discriminator 3 view .LVU120
+ 458 009e D3F88010 		ldr	r1, [r3, #128]
+ 459              	.LBB98:
+ 460              	.LBB84:
+ 461              		.loc 1 103 29 discriminator 3 view .LVU121
+ 462 00a2 98BF     		it	ls
+ARM GAS  /tmp/ccEIhprR.s 			page 15
+
+
+ 463 00a4 0AF80C40 		strbls	r4, [r10, ip]
+ 464              	.LBE84:
+ 465              	.LBE98:
+  69:chelper/trapq.c ****         list_del(&m->node);
+ 466              		.loc 1 69 5 discriminator 3 view .LVU122
+ 467 00a8 B742     		cmp	r7, r6
+ 468 00aa 1A46     		mov	r2, r3
+ 469 00ac A1F18003 		sub	r3, r1, #128
+ 470              	.LVL25:
+  69:chelper/trapq.c ****         list_del(&m->node);
+ 471              		.loc 1 69 5 is_stmt 1 discriminator 3 view .LVU123
+ 472 00b0 E4D1     		bne	.L19
+ 473              	.LVL26:
+ 474              	.L20:
+  75:chelper/trapq.c ****     if (idx >= 0 && idx < TRAPQ_POOL_SIZE) {
+ 475              		.loc 1 75 5 view .LVU124
+  75:chelper/trapq.c ****     if (idx >= 0 && idx < TRAPQ_POOL_SIZE) {
+ 476              		.loc 1 75 18 is_stmt 0 view .LVU125
+ 477 00b2 064B     		ldr	r3, .L34+4
+ 478              	.LVL27:
+  75:chelper/trapq.c ****     if (idx >= 0 && idx < TRAPQ_POOL_SIZE) {
+ 479              		.loc 1 75 18 view .LVU126
+ 480 00b4 C01A     		subs	r0, r0, r3
+ 481              	.LVL28:
+  76:chelper/trapq.c ****         trapq_pool_used[idx] = 0;
+ 482              		.loc 1 76 5 is_stmt 1 view .LVU127
+  76:chelper/trapq.c ****         trapq_pool_used[idx] = 0;
+ 483              		.loc 1 76 8 is_stmt 0 view .LVU128
+ 484 00b6 1028     		cmp	r0, #16
+ 485 00b8 03D8     		bhi	.L15
+  77:chelper/trapq.c ****     }
+ 486              		.loc 1 77 9 is_stmt 1 view .LVU129
+  77:chelper/trapq.c ****     }
+ 487              		.loc 1 77 30 is_stmt 0 view .LVU130
+ 488 00ba 054B     		ldr	r3, .L34+8
+  75:chelper/trapq.c ****     if (idx >= 0 && idx < TRAPQ_POOL_SIZE) {
+ 489              		.loc 1 75 9 view .LVU131
+ 490 00bc 0011     		asrs	r0, r0, #4
+ 491              	.LVL29:
+  77:chelper/trapq.c ****     }
+ 492              		.loc 1 77 30 view .LVU132
+ 493 00be 0022     		movs	r2, #0
+ 494 00c0 1A54     		strb	r2, [r3, r0]
+ 495              	.L15:
+  79:chelper/trapq.c **** 
+ 496              		.loc 1 79 1 view .LVU133
+ 497 00c2 BDE8F08F 		pop	{r4, r5, r6, r7, r8, r9, r10, fp, pc}
+ 498              	.LVL30:
+ 499              	.L31:
+ 500              		.cfi_def_cfa_offset 0
+ 501              		.cfi_restore 4
+ 502              		.cfi_restore 5
+ 503              		.cfi_restore 6
+ 504              		.cfi_restore 7
+ 505              		.cfi_restore 8
+ 506              		.cfi_restore 9
+ 507              		.cfi_restore 10
+ARM GAS  /tmp/ccEIhprR.s 			page 16
+
+
+ 508              		.cfi_restore 11
+ 509              		.cfi_restore 14
+  79:chelper/trapq.c **** 
+ 510              		.loc 1 79 1 view .LVU134
+ 511 00c6 7047     		bx	lr
+ 512              	.L35:
+ 513              		.align	2
+ 514              	.L34:
+ 515 00c8 00000000 		.word	move_pool
+ 516 00cc 00000000 		.word	.LANCHOR2
+ 517 00d0 00000000 		.word	.LANCHOR1
+ 518 00d4 00000000 		.word	.LANCHOR0
+ 519 00d8 F1F0F0F0 		.word	-252645135
+ 520              		.cfi_endproc
+ 521              	.LFE8:
+ 523              		.section	.text.move_alloc,"ax",%progbits
+ 524              		.align	1
+ 525              		.p2align 2,,3
+ 526              		.global	move_alloc
+ 527              		.syntax unified
+ 528              		.thumb
+ 529              		.thumb_func
+ 530              		.fpu fpv4-sp-d16
+ 532              	move_alloc:
+ 533              	.LFB9:
+  83:chelper/trapq.c ****     for (int i = 0; i < TRAPQ_MAX_MOVES; i++) {
+ 534              		.loc 1 83 1 is_stmt 1 view -0
+ 535              		.cfi_startproc
+ 536              		@ args = 0, pretend = 0, frame = 0
+ 537              		@ frame_needed = 0, uses_anonymous_args = 0
+  84:chelper/trapq.c ****         if (!move_pool_used[i]) {
+ 538              		.loc 1 84 5 view .LVU136
+ 539              	.LBB101:
+  84:chelper/trapq.c ****         if (!move_pool_used[i]) {
+ 540              		.loc 1 84 10 view .LVU137
+ 541              	.LVL31:
+  84:chelper/trapq.c ****         if (!move_pool_used[i]) {
+ 542              		.loc 1 84 21 view .LVU138
+ 543 0000 0E48     		ldr	r0, .L43
+ 544              	.LBE101:
+  83:chelper/trapq.c ****     for (int i = 0; i < TRAPQ_MAX_MOVES; i++) {
+ 545              		.loc 1 83 1 is_stmt 0 view .LVU139
+ 546 0002 10B5     		push	{r4, lr}
+ 547              		.cfi_def_cfa_offset 8
+ 548              		.cfi_offset 4, -8
+ 549              		.cfi_offset 14, -4
+ 550              	.LBB103:
+  84:chelper/trapq.c ****         if (!move_pool_used[i]) {
+ 551              		.loc 1 84 14 view .LVU140
+ 552 0004 0023     		movs	r3, #0
+ 553 0006 0246     		mov	r2, r0
+ 554 0008 02E0     		b	.L39
+ 555              	.LVL32:
+ 556              	.L37:
+  84:chelper/trapq.c ****         if (!move_pool_used[i]) {
+ 557              		.loc 1 84 43 discriminator 2 view .LVU141
+ 558 000a 0133     		adds	r3, r3, #1
+ARM GAS  /tmp/ccEIhprR.s 			page 17
+
+
+ 559              	.LVL33:
+  84:chelper/trapq.c ****         if (!move_pool_used[i]) {
+ 560              		.loc 1 84 21 is_stmt 1 discriminator 2 view .LVU142
+  84:chelper/trapq.c ****         if (!move_pool_used[i]) {
+ 561              		.loc 1 84 5 is_stmt 0 discriminator 2 view .LVU143
+ 562 000c 202B     		cmp	r3, #32
+ 563 000e 12D0     		beq	.L42
+ 564              	.LVL34:
+ 565              	.L39:
+  85:chelper/trapq.c ****             move_pool_used[i] = 1;
+ 566              		.loc 1 85 9 is_stmt 1 view .LVU144
+  84:chelper/trapq.c ****         if (!move_pool_used[i]) {
+ 567              		.loc 1 84 42 view .LVU145
+  85:chelper/trapq.c ****             move_pool_used[i] = 1;
+ 568              		.loc 1 85 28 is_stmt 0 view .LVU146
+ 569 0010 12F8011B 		ldrb	r1, [r2], #1	@ zero_extendqisi2
+  85:chelper/trapq.c ****             move_pool_used[i] = 1;
+ 570              		.loc 1 85 12 view .LVU147
+ 571 0014 0029     		cmp	r1, #0
+ 572 0016 F8D1     		bne	.L37
+ 573              	.LBB102:
+  86:chelper/trapq.c ****             struct move *m = &move_pool[i];
+ 574              		.loc 1 86 13 is_stmt 1 view .LVU148
+  87:chelper/trapq.c ****             memset(m, 0, sizeof(*m));
+ 575              		.loc 1 87 26 is_stmt 0 view .LVU149
+ 576 0018 094C     		ldr	r4, .L43+4
+ 577 001a 03EB0312 		add	r2, r3, r3, lsl #4
+ 578 001e 04EBC204 		add	r4, r4, r2, lsl #3
+  86:chelper/trapq.c ****             struct move *m = &move_pool[i];
+ 579              		.loc 1 86 31 view .LVU150
+ 580 0022 4FF0010C 		mov	ip, #1
+ 581 0026 00F803C0 		strb	ip, [r0, r3]
+  87:chelper/trapq.c ****             memset(m, 0, sizeof(*m));
+ 582              		.loc 1 87 13 is_stmt 1 view .LVU151
+ 583              	.LVL35:
+  88:chelper/trapq.c ****             return m;
+ 584              		.loc 1 88 13 view .LVU152
+ 585 002a 8822     		movs	r2, #136
+ 586 002c 2046     		mov	r0, r4
+ 587 002e FFF7FEFF 		bl	memset
+ 588              	.LVL36:
+  89:chelper/trapq.c ****         }
+ 589              		.loc 1 89 13 view .LVU153
+ 590              	.LBE102:
+ 591              	.LBE103:
+  93:chelper/trapq.c **** 
+ 592              		.loc 1 93 1 is_stmt 0 view .LVU154
+ 593 0032 2046     		mov	r0, r4
+ 594 0034 10BD     		pop	{r4, pc}
+ 595              	.LVL37:
+ 596              	.L42:
+  92:chelper/trapq.c **** }
+ 597              		.loc 1 92 12 view .LVU155
+ 598 0036 0024     		movs	r4, #0
+  93:chelper/trapq.c **** 
+ 599              		.loc 1 93 1 view .LVU156
+ 600 0038 2046     		mov	r0, r4
+ARM GAS  /tmp/ccEIhprR.s 			page 18
+
+
+ 601 003a 10BD     		pop	{r4, pc}
+ 602              	.L44:
+ 603              		.align	2
+ 604              	.L43:
+ 605 003c 00000000 		.word	.LANCHOR0
+ 606 0040 00000000 		.word	move_pool
+ 607              		.cfi_endproc
+ 608              	.LFE9:
+ 610              		.section	.text.move_free,"ax",%progbits
+ 611              		.align	1
+ 612              		.p2align 2,,3
+ 613              		.global	move_free
+ 614              		.syntax unified
+ 615              		.thumb
+ 616              		.thumb_func
+ 617              		.fpu fpv4-sp-d16
+ 619              	move_free:
+ 620              	.LVL38:
+ 621              	.LFB10:
+  97:chelper/trapq.c ****     if (m == NULL) {
+ 622              		.loc 1 97 1 is_stmt 1 view -0
+ 623              		.cfi_startproc
+ 624              		@ args = 0, pretend = 0, frame = 0
+ 625              		@ frame_needed = 0, uses_anonymous_args = 0
+ 626              		@ link register save eliminated.
+  98:chelper/trapq.c ****         return;
+ 627              		.loc 1 98 5 view .LVU158
+  98:chelper/trapq.c ****         return;
+ 628              		.loc 1 98 8 is_stmt 0 view .LVU159
+ 629 0000 60B1     		cbz	r0, .L45
+ 101:chelper/trapq.c ****     if (idx >= 0 && idx < TRAPQ_MAX_MOVES) {
+ 630              		.loc 1 101 5 is_stmt 1 view .LVU160
+ 101:chelper/trapq.c ****     if (idx >= 0 && idx < TRAPQ_MAX_MOVES) {
+ 631              		.loc 1 101 17 is_stmt 0 view .LVU161
+ 632 0002 074A     		ldr	r2, .L50
+ 102:chelper/trapq.c ****         move_pool_used[idx] = 0;
+ 633              		.loc 1 102 8 view .LVU162
+ 634 0004 41F27803 		movw	r3, #4216
+ 101:chelper/trapq.c ****     if (idx >= 0 && idx < TRAPQ_MAX_MOVES) {
+ 635              		.loc 1 101 17 view .LVU163
+ 636 0008 801A     		subs	r0, r0, r2
+ 637              	.LVL39:
+ 102:chelper/trapq.c ****         move_pool_used[idx] = 0;
+ 638              		.loc 1 102 5 is_stmt 1 view .LVU164
+ 102:chelper/trapq.c ****         move_pool_used[idx] = 0;
+ 639              		.loc 1 102 8 is_stmt 0 view .LVU165
+ 640 000a 9842     		cmp	r0, r3
+ 641 000c 06D8     		bhi	.L45
+ 642              		.loc 1 103 9 is_stmt 1 view .LVU166
+ 101:chelper/trapq.c ****     if (idx >= 0 && idx < TRAPQ_MAX_MOVES) {
+ 643              		.loc 1 101 9 is_stmt 0 view .LVU167
+ 644 000e 054A     		ldr	r2, .L50+4
+ 645              		.loc 1 103 29 view .LVU168
+ 646 0010 054B     		ldr	r3, .L50+8
+ 101:chelper/trapq.c ****     if (idx >= 0 && idx < TRAPQ_MAX_MOVES) {
+ 647              		.loc 1 101 9 view .LVU169
+ 648 0012 C010     		asrs	r0, r0, #3
+ARM GAS  /tmp/ccEIhprR.s 			page 19
+
+
+ 649              	.LVL40:
+ 101:chelper/trapq.c ****     if (idx >= 0 && idx < TRAPQ_MAX_MOVES) {
+ 650              		.loc 1 101 9 view .LVU170
+ 651 0014 02FB00F0 		mul	r0, r2, r0
+ 652              		.loc 1 103 29 view .LVU171
+ 653 0018 0022     		movs	r2, #0
+ 654 001a 1A54     		strb	r2, [r3, r0]
+ 655              	.LVL41:
+ 656              	.L45:
+ 104:chelper/trapq.c ****     }
+ 105:chelper/trapq.c **** }
+ 657              		.loc 1 105 1 view .LVU172
+ 658 001c 7047     		bx	lr
+ 659              	.L51:
+ 660 001e 00BF     		.align	2
+ 661              	.L50:
+ 662 0020 00000000 		.word	move_pool
+ 663 0024 F1F0F0F0 		.word	-252645135
+ 664 0028 00000000 		.word	.LANCHOR0
+ 665              		.cfi_endproc
+ 666              	.LFE10:
+ 668              		.global	__aeabi_dcmple
+ 669              		.global	__aeabi_dcmpgt
+ 670              		.global	__aeabi_dcmplt
+ 671              		.global	__aeabi_dmul
+ 672              		.global	__aeabi_dadd
+ 673              		.global	__aeabi_dsub
+ 674              		.section	.text.move_get_distance,"ax",%progbits
+ 675              		.align	1
+ 676              		.p2align 2,,3
+ 677              		.global	move_get_distance
+ 678              		.syntax unified
+ 679              		.thumb
+ 680              		.thumb_func
+ 681              		.fpu fpv4-sp-d16
+ 683              	move_get_distance:
+ 684              	.LVL42:
+ 685              	.LFB11:
+ 106:chelper/trapq.c **** 
+ 107:chelper/trapq.c **** /* ========== Move Calculation Functions ========== */
+ 108:chelper/trapq.c **** 
+ 109:chelper/trapq.c **** /**
+ 110:chelper/trapq.c ****  * Calculate distance traveled at time t within a move using trapezoidal profile
+ 111:chelper/trapq.c ****  */
+ 112:chelper/trapq.c **** double
+ 113:chelper/trapq.c **** move_get_distance(const struct move *m, double move_time)
+ 114:chelper/trapq.c **** {
+ 686              		.loc 1 114 1 is_stmt 1 view -0
+ 687              		.cfi_startproc
+ 688              		@ args = 0, pretend = 0, frame = 0
+ 689              		@ frame_needed = 0, uses_anonymous_args = 0
+ 115:chelper/trapq.c ****     if (move_time <= 0.0) {
+ 690              		.loc 1 115 5 view .LVU174
+ 114:chelper/trapq.c ****     if (move_time <= 0.0) {
+ 691              		.loc 1 114 1 is_stmt 0 view .LVU175
+ 692 0000 2DE9F047 		push	{r4, r5, r6, r7, r8, r9, r10, lr}
+ 693              		.cfi_def_cfa_offset 32
+ARM GAS  /tmp/ccEIhprR.s 			page 20
+
+
+ 694              		.cfi_offset 4, -32
+ 695              		.cfi_offset 5, -28
+ 696              		.cfi_offset 6, -24
+ 697              		.cfi_offset 7, -20
+ 698              		.cfi_offset 8, -16
+ 699              		.cfi_offset 9, -12
+ 700              		.cfi_offset 10, -8
+ 701              		.cfi_offset 14, -4
+ 702 0004 55EC104B 		vmov	r4, r5, d0
+ 703 0008 2DED028B 		vpush.64	{d8}
+ 704              		.cfi_def_cfa_offset 40
+ 705              		.cfi_offset 80, -40
+ 706              		.cfi_offset 81, -36
+ 114:chelper/trapq.c ****     if (move_time <= 0.0) {
+ 707              		.loc 1 114 1 view .LVU176
+ 708 000c 8246     		mov	r10, r0
+ 709              		.loc 1 115 8 view .LVU177
+ 710 000e 0022     		movs	r2, #0
+ 711 0010 10EE100A 		vmov	r0, s0	@ int
+ 712              	.LVL43:
+ 713              		.loc 1 115 8 view .LVU178
+ 714 0014 0023     		movs	r3, #0
+ 715 0016 2946     		mov	r1, r5
+ 716 0018 FFF7FEFF 		bl	__aeabi_dcmple
+ 717              	.LVL44:
+ 718              		.loc 1 115 8 view .LVU179
+ 719 001c 0028     		cmp	r0, #0
+ 720 001e 40F0CD80 		bne	.L69
+ 116:chelper/trapq.c ****         return 0.0;
+ 117:chelper/trapq.c ****     }
+ 118:chelper/trapq.c ****     if (move_time >= m->move_t) {
+ 721              		.loc 1 118 5 is_stmt 1 view .LVU180
+ 722              		.loc 1 118 23 is_stmt 0 view .LVU181
+ 723 0022 DAE90267 		ldrd	r6, [r10, #8]
+ 724              		.loc 1 118 8 view .LVU182
+ 725 0026 2246     		mov	r2, r4
+ 726 0028 2B46     		mov	r3, r5
+ 727 002a 3046     		mov	r0, r6
+ 728 002c 3946     		mov	r1, r7
+ 729 002e FFF7FEFF 		bl	__aeabi_dcmple
+ 730              	.LVL45:
+ 731 0032 08B1     		cbz	r0, .L54
+ 119:chelper/trapq.c ****         move_time = m->move_t;
+ 732              		.loc 1 119 19 view .LVU183
+ 733 0034 3446     		mov	r4, r6
+ 734              	.LVL46:
+ 735              		.loc 1 119 19 view .LVU184
+ 736 0036 3D46     		mov	r5, r7
+ 737              	.L54:
+ 738              	.LVL47:
+ 120:chelper/trapq.c ****     }
+ 121:chelper/trapq.c ****     
+ 122:chelper/trapq.c ****     /* Trapezoidal velocity profile:
+ 123:chelper/trapq.c ****      * distance = start_v * t + half_accel * t^2
+ 124:chelper/trapq.c ****      * 
+ 125:chelper/trapq.c ****      * For a full trapezoidal profile with accel/cruise/decel phases,
+ 126:chelper/trapq.c ****      * we need to handle each phase separately.
+ARM GAS  /tmp/ccEIhprR.s 			page 21
+
+
+ 127:chelper/trapq.c ****      */
+ 128:chelper/trapq.c ****     double accel_t = m->accel_t;
+ 739              		.loc 1 128 5 is_stmt 1 view .LVU185
+ 129:chelper/trapq.c ****     double cruise_t = m->cruise_t;
+ 740              		.loc 1 129 5 view .LVU186
+ 130:chelper/trapq.c ****     double decel_t = m->decel_t;
+ 741              		.loc 1 130 5 view .LVU187
+ 131:chelper/trapq.c ****     
+ 132:chelper/trapq.c ****     double dist = 0.0;
+ 742              		.loc 1 132 5 view .LVU188
+ 133:chelper/trapq.c ****     double t = move_time;
+ 743              		.loc 1 133 5 view .LVU189
+ 134:chelper/trapq.c ****     
+ 135:chelper/trapq.c ****     /* Acceleration phase */
+ 136:chelper/trapq.c ****     if (t > 0.0 && accel_t > 0.0) {
+ 744              		.loc 1 136 5 view .LVU190
+ 745              		.loc 1 136 8 is_stmt 0 view .LVU191
+ 746 0038 0022     		movs	r2, #0
+ 747 003a 0023     		movs	r3, #0
+ 748 003c 2046     		mov	r0, r4
+ 749 003e 2946     		mov	r1, r5
+ 750 0040 FFF7FEFF 		bl	__aeabi_dcmpgt
+ 751              	.LVL48:
+ 752              		.loc 1 136 8 view .LVU192
+ 753 0044 0028     		cmp	r0, #0
+ 754 0046 3AD0     		beq	.L79
+ 128:chelper/trapq.c ****     double cruise_t = m->cruise_t;
+ 755              		.loc 1 128 12 discriminator 1 view .LVU193
+ 756 0048 DAE90A67 		ldrd	r6, [r10, #40]
+ 757              	.LVL49:
+ 758              		.loc 1 136 17 discriminator 1 view .LVU194
+ 759 004c 0022     		movs	r2, #0
+ 760 004e 0023     		movs	r3, #0
+ 761 0050 3046     		mov	r0, r6
+ 762 0052 3946     		mov	r1, r7
+ 763 0054 FFF7FEFF 		bl	__aeabi_dcmpgt
+ 764              	.LVL50:
+ 765 0058 0028     		cmp	r0, #0
+ 766 005a 00F08380 		beq	.L80
+ 767              	.LBB104:
+ 137:chelper/trapq.c ****         double at = (t < accel_t) ? t : accel_t;
+ 768              		.loc 1 137 9 is_stmt 1 view .LVU195
+ 769              		.loc 1 137 39 is_stmt 0 view .LVU196
+ 770 005e 3246     		mov	r2, r6
+ 771 0060 3B46     		mov	r3, r7
+ 772 0062 2046     		mov	r0, r4
+ 773 0064 2946     		mov	r1, r5
+ 774 0066 FFF7FEFF 		bl	__aeabi_dcmplt
+ 775              	.LVL51:
+ 776 006a 08B1     		cbz	r0, .L60
+ 777 006c 2646     		mov	r6, r4
+ 778              	.LVL52:
+ 779              		.loc 1 137 39 view .LVU197
+ 780 006e 2F46     		mov	r7, r5
+ 781              	.L60:
+ 782              	.LVL53:
+ 138:chelper/trapq.c ****         dist += m->start_v * at + m->half_accel * at * at;
+ARM GAS  /tmp/ccEIhprR.s 			page 22
+
+
+ 783              		.loc 1 138 9 is_stmt 1 discriminator 4 view .LVU198
+ 784              		.loc 1 138 49 is_stmt 0 discriminator 4 view .LVU199
+ 785 0070 DAE90623 		ldrd	r2, [r10, #24]
+ 786 0074 3046     		mov	r0, r6
+ 787 0076 3946     		mov	r1, r7
+ 788 0078 FFF7FEFF 		bl	__aeabi_dmul
+ 789              	.LVL54:
+ 790              		.loc 1 138 54 discriminator 4 view .LVU200
+ 791 007c 3246     		mov	r2, r6
+ 792 007e 3B46     		mov	r3, r7
+ 793 0080 FFF7FEFF 		bl	__aeabi_dmul
+ 794              	.LVL55:
+ 795              		.loc 1 138 28 discriminator 4 view .LVU201
+ 796 0084 DAE90423 		ldrd	r2, [r10, #16]
+ 797              		.loc 1 138 54 discriminator 4 view .LVU202
+ 798 0088 8046     		mov	r8, r0
+ 799 008a 8946     		mov	r9, r1
+ 800              		.loc 1 138 28 discriminator 4 view .LVU203
+ 801 008c 3046     		mov	r0, r6
+ 802 008e 3946     		mov	r1, r7
+ 803 0090 FFF7FEFF 		bl	__aeabi_dmul
+ 804              	.LVL56:
+ 805 0094 0246     		mov	r2, r0
+ 806 0096 0B46     		mov	r3, r1
+ 807              		.loc 1 138 33 discriminator 4 view .LVU204
+ 808 0098 4046     		mov	r0, r8
+ 809 009a 4946     		mov	r1, r9
+ 810 009c FFF7FEFF 		bl	__aeabi_dadd
+ 811              	.LVL57:
+ 812              		.loc 1 138 14 discriminator 4 view .LVU205
+ 813 00a0 0022     		movs	r2, #0
+ 814 00a2 0023     		movs	r3, #0
+ 815 00a4 FFF7FEFF 		bl	__aeabi_dadd
+ 816              	.LVL58:
+ 139:chelper/trapq.c ****         t -= at;
+ 817              		.loc 1 139 11 discriminator 4 view .LVU206
+ 818 00a8 3246     		mov	r2, r6
+ 138:chelper/trapq.c ****         dist += m->start_v * at + m->half_accel * at * at;
+ 819              		.loc 1 138 14 discriminator 4 view .LVU207
+ 820 00aa 41EC180B 		vmov	d8, r0, r1
+ 821              	.LVL59:
+ 822              		.loc 1 139 9 is_stmt 1 discriminator 4 view .LVU208
+ 823              		.loc 1 139 11 is_stmt 0 discriminator 4 view .LVU209
+ 824 00ae 3B46     		mov	r3, r7
+ 825 00b0 2046     		mov	r0, r4
+ 826              	.LVL60:
+ 827              		.loc 1 139 11 discriminator 4 view .LVU210
+ 828 00b2 2946     		mov	r1, r5
+ 829 00b4 FFF7FEFF 		bl	__aeabi_dsub
+ 830              	.LVL61:
+ 831 00b8 0446     		mov	r4, r0
+ 832              	.LVL62:
+ 833              		.loc 1 139 11 discriminator 4 view .LVU211
+ 834 00ba 0D46     		mov	r5, r1
+ 835              	.LVL63:
+ 836              		.loc 1 139 11 discriminator 4 view .LVU212
+ 837 00bc 01E0     		b	.L56
+ARM GAS  /tmp/ccEIhprR.s 			page 23
+
+
+ 838              	.LVL64:
+ 839              	.L79:
+ 840              		.loc 1 139 11 discriminator 4 view .LVU213
+ 841              	.LBE104:
+ 132:chelper/trapq.c ****     double t = move_time;
+ 842              		.loc 1 132 12 view .LVU214
+ 843 00be 9FED468B 		vldr.64	d8, .L83
+ 844              	.LVL65:
+ 845              	.L56:
+ 140:chelper/trapq.c ****     }
+ 141:chelper/trapq.c ****     
+ 142:chelper/trapq.c ****     /* Cruise phase */
+ 143:chelper/trapq.c ****     if (t > 0.0 && cruise_t > 0.0) {
+ 846              		.loc 1 143 5 is_stmt 1 view .LVU215
+ 847              		.loc 1 143 8 is_stmt 0 view .LVU216
+ 848 00c2 0022     		movs	r2, #0
+ 849 00c4 0023     		movs	r3, #0
+ 850 00c6 2046     		mov	r0, r4
+ 851 00c8 2946     		mov	r1, r5
+ 852 00ca FFF7FEFF 		bl	__aeabi_dcmpgt
+ 853              	.LVL66:
+ 854 00ce 0028     		cmp	r0, #0
+ 855 00d0 4AD1     		bne	.L58
+ 856              	.L61:
+ 144:chelper/trapq.c ****         double ct = (t < cruise_t) ? t : cruise_t;
+ 145:chelper/trapq.c ****         dist += m->cruise_v * ct;
+ 146:chelper/trapq.c ****         t -= ct;
+ 147:chelper/trapq.c ****     }
+ 148:chelper/trapq.c ****     
+ 149:chelper/trapq.c ****     /* Deceleration phase */
+ 150:chelper/trapq.c ****     if (t > 0.0 && decel_t > 0.0) {
+ 857              		.loc 1 150 5 is_stmt 1 view .LVU217
+ 858              		.loc 1 150 8 is_stmt 0 view .LVU218
+ 859 00d2 0022     		movs	r2, #0
+ 860 00d4 0023     		movs	r3, #0
+ 861 00d6 2046     		mov	r0, r4
+ 862 00d8 2946     		mov	r1, r5
+ 863 00da FFF7FEFF 		bl	__aeabi_dcmpgt
+ 864              	.LVL67:
+ 865 00de 38B9     		cbnz	r0, .L63
+ 866              	.L52:
+ 151:chelper/trapq.c ****         double dt = (t < decel_t) ? t : decel_t;
+ 152:chelper/trapq.c ****         /* Decel starts at cruise_v, decelerates at -half_accel*2 */
+ 153:chelper/trapq.c ****         dist += m->cruise_v * dt - m->half_accel * dt * dt;
+ 154:chelper/trapq.c ****     }
+ 155:chelper/trapq.c ****     
+ 156:chelper/trapq.c ****     return dist;
+ 157:chelper/trapq.c **** }
+ 867              		.loc 1 157 1 view .LVU219
+ 868 00e0 B0EE480A 		vmov.f32	s0, s16
+ 869 00e4 F0EE680A 		vmov.f32	s1, s17
+ 870 00e8 BDEC028B 		vldm	sp!, {d8}
+ 871              		.cfi_remember_state
+ 872              		.cfi_restore 80
+ 873              		.cfi_restore 81
+ 874              		.cfi_def_cfa_offset 32
+ 875              	.LVL68:
+ARM GAS  /tmp/ccEIhprR.s 			page 24
+
+
+ 876              		.loc 1 157 1 view .LVU220
+ 877 00ec BDE8F087 		pop	{r4, r5, r6, r7, r8, r9, r10, pc}
+ 878              	.LVL69:
+ 879              	.L63:
+ 880              		.cfi_restore_state
+ 130:chelper/trapq.c ****     
+ 881              		.loc 1 130 12 discriminator 1 view .LVU221
+ 882 00f0 DAE90E67 		ldrd	r6, [r10, #56]
+ 150:chelper/trapq.c ****         double dt = (t < decel_t) ? t : decel_t;
+ 883              		.loc 1 150 17 discriminator 1 view .LVU222
+ 884 00f4 0022     		movs	r2, #0
+ 885 00f6 0023     		movs	r3, #0
+ 886 00f8 3046     		mov	r0, r6
+ 887 00fa 3946     		mov	r1, r7
+ 888 00fc FFF7FEFF 		bl	__aeabi_dcmpgt
+ 889              	.LVL70:
+ 890 0100 0028     		cmp	r0, #0
+ 891 0102 EDD0     		beq	.L52
+ 892              	.LBB105:
+ 151:chelper/trapq.c ****         double dt = (t < decel_t) ? t : decel_t;
+ 893              		.loc 1 151 9 is_stmt 1 view .LVU223
+ 151:chelper/trapq.c ****         double dt = (t < decel_t) ? t : decel_t;
+ 894              		.loc 1 151 39 is_stmt 0 view .LVU224
+ 895 0104 2246     		mov	r2, r4
+ 896 0106 2B46     		mov	r3, r5
+ 897 0108 3046     		mov	r0, r6
+ 898 010a 3946     		mov	r1, r7
+ 899 010c FFF7FEFF 		bl	__aeabi_dcmpgt
+ 900              	.LVL71:
+ 901 0110 0028     		cmp	r0, #0
+ 902 0112 5DD0     		beq	.L82
+ 903              	.LVL72:
+ 904              	.L68:
+ 153:chelper/trapq.c ****     }
+ 905              		.loc 1 153 9 is_stmt 1 discriminator 4 view .LVU225
+ 153:chelper/trapq.c ****     }
+ 906              		.loc 1 153 29 is_stmt 0 discriminator 4 view .LVU226
+ 907 0114 DAE90823 		ldrd	r2, [r10, #32]
+ 908 0118 2046     		mov	r0, r4
+ 909 011a 2946     		mov	r1, r5
+ 910 011c FFF7FEFF 		bl	__aeabi_dmul
+ 911              	.LVL73:
+ 153:chelper/trapq.c ****     }
+ 912              		.loc 1 153 50 discriminator 4 view .LVU227
+ 913 0120 DAE90623 		ldrd	r2, [r10, #24]
+ 153:chelper/trapq.c ****     }
+ 914              		.loc 1 153 29 discriminator 4 view .LVU228
+ 915 0124 0646     		mov	r6, r0
+ 916 0126 0F46     		mov	r7, r1
+ 153:chelper/trapq.c ****     }
+ 917              		.loc 1 153 50 discriminator 4 view .LVU229
+ 918 0128 2046     		mov	r0, r4
+ 919 012a 2946     		mov	r1, r5
+ 920 012c FFF7FEFF 		bl	__aeabi_dmul
+ 921              	.LVL74:
+ 153:chelper/trapq.c ****     }
+ 922              		.loc 1 153 55 discriminator 4 view .LVU230
+ARM GAS  /tmp/ccEIhprR.s 			page 25
+
+
+ 923 0130 2246     		mov	r2, r4
+ 924 0132 2B46     		mov	r3, r5
+ 925 0134 FFF7FEFF 		bl	__aeabi_dmul
+ 926              	.LVL75:
+ 927 0138 0246     		mov	r2, r0
+ 928 013a 0B46     		mov	r3, r1
+ 153:chelper/trapq.c ****     }
+ 929              		.loc 1 153 34 discriminator 4 view .LVU231
+ 930 013c 3046     		mov	r0, r6
+ 931 013e 3946     		mov	r1, r7
+ 932 0140 FFF7FEFF 		bl	__aeabi_dsub
+ 933              	.LVL76:
+ 934 0144 0246     		mov	r2, r0
+ 935 0146 0B46     		mov	r3, r1
+ 153:chelper/trapq.c ****     }
+ 936              		.loc 1 153 14 discriminator 4 view .LVU232
+ 937 0148 51EC180B 		vmov	r0, r1, d8
+ 938 014c FFF7FEFF 		bl	__aeabi_dadd
+ 939              	.LVL77:
+ 940 0150 41EC180B 		vmov	d8, r0, r1
+ 941              	.LVL78:
+ 153:chelper/trapq.c ****     }
+ 942              		.loc 1 153 14 discriminator 4 view .LVU233
+ 943              	.LBE105:
+ 944              		.loc 1 157 1 discriminator 4 view .LVU234
+ 945 0154 B0EE480A 		vmov.f32	s0, s16
+ 946 0158 F0EE680A 		vmov.f32	s1, s17
+ 947 015c BDEC028B 		vldm	sp!, {d8}
+ 948              		.cfi_remember_state
+ 949              		.cfi_restore 80
+ 950              		.cfi_restore 81
+ 951              		.cfi_def_cfa_offset 32
+ 952 0160 BDE8F087 		pop	{r4, r5, r6, r7, r8, r9, r10, pc}
+ 953              	.LVL79:
+ 954              	.L80:
+ 955              		.cfi_restore_state
+ 132:chelper/trapq.c ****     double t = move_time;
+ 956              		.loc 1 132 12 view .LVU235
+ 957 0164 9FED1C8B 		vldr.64	d8, .L83
+ 958              	.LVL80:
+ 959              	.L58:
+ 129:chelper/trapq.c ****     double decel_t = m->decel_t;
+ 960              		.loc 1 129 12 discriminator 1 view .LVU236
+ 961 0168 DAE90C67 		ldrd	r6, [r10, #48]
+ 962              	.LVL81:
+ 143:chelper/trapq.c ****         double ct = (t < cruise_t) ? t : cruise_t;
+ 963              		.loc 1 143 17 discriminator 1 view .LVU237
+ 964 016c 0022     		movs	r2, #0
+ 965 016e 0023     		movs	r3, #0
+ 966 0170 3046     		mov	r0, r6
+ 967 0172 3946     		mov	r1, r7
+ 968 0174 FFF7FEFF 		bl	__aeabi_dcmpgt
+ 969              	.LVL82:
+ 970 0178 0028     		cmp	r0, #0
+ 971 017a B9D0     		beq	.L63
+ 972              	.LBB106:
+ 144:chelper/trapq.c ****         dist += m->cruise_v * ct;
+ARM GAS  /tmp/ccEIhprR.s 			page 26
+
+
+ 973              		.loc 1 144 9 is_stmt 1 view .LVU238
+ 144:chelper/trapq.c ****         dist += m->cruise_v * ct;
+ 974              		.loc 1 144 40 is_stmt 0 view .LVU239
+ 975 017c 2246     		mov	r2, r4
+ 976 017e 2B46     		mov	r3, r5
+ 977 0180 3046     		mov	r0, r6
+ 978 0182 3946     		mov	r1, r7
+ 979 0184 FFF7FEFF 		bl	__aeabi_dcmpgt
+ 980              	.LVL83:
+ 981 0188 08B1     		cbz	r0, .L65
+ 982 018a 2646     		mov	r6, r4
+ 983 018c 2F46     		mov	r7, r5
+ 984              	.L65:
+ 985              	.LVL84:
+ 145:chelper/trapq.c ****         t -= ct;
+ 986              		.loc 1 145 9 is_stmt 1 discriminator 4 view .LVU240
+ 145:chelper/trapq.c ****         t -= ct;
+ 987              		.loc 1 145 29 is_stmt 0 discriminator 4 view .LVU241
+ 988 018e DAE90823 		ldrd	r2, [r10, #32]
+ 989 0192 3046     		mov	r0, r6
+ 990 0194 3946     		mov	r1, r7
+ 991 0196 FFF7FEFF 		bl	__aeabi_dmul
+ 992              	.LVL85:
+ 993 019a 0246     		mov	r2, r0
+ 994 019c 0B46     		mov	r3, r1
+ 145:chelper/trapq.c ****         t -= ct;
+ 995              		.loc 1 145 14 discriminator 4 view .LVU242
+ 996 019e 51EC180B 		vmov	r0, r1, d8
+ 997 01a2 FFF7FEFF 		bl	__aeabi_dadd
+ 998              	.LVL86:
+ 146:chelper/trapq.c ****     }
+ 999              		.loc 1 146 11 discriminator 4 view .LVU243
+ 1000 01a6 3246     		mov	r2, r6
+ 145:chelper/trapq.c ****         t -= ct;
+ 1001              		.loc 1 145 14 discriminator 4 view .LVU244
+ 1002 01a8 41EC180B 		vmov	d8, r0, r1
+ 1003              	.LVL87:
+ 146:chelper/trapq.c ****     }
+ 1004              		.loc 1 146 9 is_stmt 1 discriminator 4 view .LVU245
+ 146:chelper/trapq.c ****     }
+ 1005              		.loc 1 146 11 is_stmt 0 discriminator 4 view .LVU246
+ 1006 01ac 3B46     		mov	r3, r7
+ 1007 01ae 2046     		mov	r0, r4
+ 1008              	.LVL88:
+ 146:chelper/trapq.c ****     }
+ 1009              		.loc 1 146 11 discriminator 4 view .LVU247
+ 1010 01b0 2946     		mov	r1, r5
+ 1011 01b2 FFF7FEFF 		bl	__aeabi_dsub
+ 1012              	.LVL89:
+ 1013 01b6 0446     		mov	r4, r0
+ 1014              	.LVL90:
+ 146:chelper/trapq.c ****     }
+ 1015              		.loc 1 146 11 discriminator 4 view .LVU248
+ 1016 01b8 0D46     		mov	r5, r1
+ 1017              	.LVL91:
+ 146:chelper/trapq.c ****     }
+ 1018              		.loc 1 146 11 discriminator 4 view .LVU249
+ARM GAS  /tmp/ccEIhprR.s 			page 27
+
+
+ 1019 01ba 8AE7     		b	.L61
+ 1020              	.LVL92:
+ 1021              	.L69:
+ 146:chelper/trapq.c ****     }
+ 1022              		.loc 1 146 11 discriminator 4 view .LVU250
+ 1023              	.LBE106:
+ 116:chelper/trapq.c ****     }
+ 1024              		.loc 1 116 16 view .LVU251
+ 1025 01bc 9FED068B 		vldr.64	d8, .L83
+ 1026              		.loc 1 157 1 view .LVU252
+ 1027 01c0 B0EE480A 		vmov.f32	s0, s16
+ 1028 01c4 F0EE680A 		vmov.f32	s1, s17
+ 1029 01c8 BDEC028B 		vldm	sp!, {d8}
+ 1030              		.cfi_remember_state
+ 1031              		.cfi_restore 80
+ 1032              		.cfi_restore 81
+ 1033              		.cfi_def_cfa_offset 32
+ 1034 01cc BDE8F087 		pop	{r4, r5, r6, r7, r8, r9, r10, pc}
+ 1035              	.LVL93:
+ 1036              	.L82:
+ 1037              		.cfi_restore_state
+ 1038              	.LBB107:
+ 151:chelper/trapq.c ****         /* Decel starts at cruise_v, decelerates at -half_accel*2 */
+ 1039              		.loc 1 151 39 view .LVU253
+ 1040 01d0 3446     		mov	r4, r6
+ 1041              	.LVL94:
+ 151:chelper/trapq.c ****         /* Decel starts at cruise_v, decelerates at -half_accel*2 */
+ 1042              		.loc 1 151 39 view .LVU254
+ 1043 01d2 3D46     		mov	r5, r7
+ 1044 01d4 9EE7     		b	.L68
+ 1045              	.L84:
+ 1046 01d6 00BF     		.align	3
+ 1047              	.L83:
+ 1048 01d8 00000000 		.word	0
+ 1049 01dc 00000000 		.word	0
+ 1050              	.LBE107:
+ 1051              		.cfi_endproc
+ 1052              	.LFE11:
+ 1054              		.section	.text.move_get_coord,"ax",%progbits
+ 1055              		.align	1
+ 1056              		.p2align 2,,3
+ 1057              		.global	move_get_coord
+ 1058              		.syntax unified
+ 1059              		.thumb
+ 1060              		.thumb_func
+ 1061              		.fpu fpv4-sp-d16
+ 1063              	move_get_coord:
+ 1064              	.LVL95:
+ 1065              	.LFB12:
+ 158:chelper/trapq.c **** 
+ 159:chelper/trapq.c **** void
+ 160:chelper/trapq.c **** move_get_coord(const struct move *m, double move_time, struct coord *pos)
+ 161:chelper/trapq.c **** {
+ 1066              		.loc 1 161 1 is_stmt 1 view -0
+ 1067              		.cfi_startproc
+ 1068              		@ args = 0, pretend = 0, frame = 0
+ 1069              		@ frame_needed = 0, uses_anonymous_args = 0
+ARM GAS  /tmp/ccEIhprR.s 			page 28
+
+
+ 162:chelper/trapq.c ****     double dist = move_get_distance(m, move_time);
+ 1070              		.loc 1 162 5 view .LVU256
+ 161:chelper/trapq.c ****     double dist = move_get_distance(m, move_time);
+ 1071              		.loc 1 161 1 is_stmt 0 view .LVU257
+ 1072 0000 F8B5     		push	{r3, r4, r5, r6, r7, lr}
+ 1073              		.cfi_def_cfa_offset 24
+ 1074              		.cfi_offset 3, -24
+ 1075              		.cfi_offset 4, -20
+ 1076              		.cfi_offset 5, -16
+ 1077              		.cfi_offset 6, -12
+ 1078              		.cfi_offset 7, -8
+ 1079              		.cfi_offset 14, -4
+ 161:chelper/trapq.c ****     double dist = move_get_distance(m, move_time);
+ 1080              		.loc 1 161 1 view .LVU258
+ 1081 0002 0446     		mov	r4, r0
+ 1082 0004 0D46     		mov	r5, r1
+ 1083              		.loc 1 162 19 view .LVU259
+ 1084 0006 FFF7FEFF 		bl	move_get_distance
+ 1085              	.LVL96:
+ 1086              		.loc 1 162 19 view .LVU260
+ 1087 000a 57EC106B 		vmov	r6, r7, d0
+ 163:chelper/trapq.c ****     
+ 164:chelper/trapq.c ****     pos->x = m->start_pos.x + m->axes_r.x * dist;
+ 1088              		.loc 1 164 5 is_stmt 1 view .LVU261
+ 1089              		.loc 1 164 43 is_stmt 0 view .LVU262
+ 1090 000e 10EE100A 		vmov	r0, s0	@ int
+ 1091 0012 D4E91823 		ldrd	r2, [r4, #96]
+ 1092 0016 3946     		mov	r1, r7
+ 1093 0018 FFF7FEFF 		bl	__aeabi_dmul
+ 1094              	.LVL97:
+ 1095              		.loc 1 164 29 view .LVU263
+ 1096 001c D4E91023 		ldrd	r2, [r4, #64]
+ 1097 0020 FFF7FEFF 		bl	__aeabi_dadd
+ 1098              	.LVL98:
+ 165:chelper/trapq.c ****     pos->y = m->start_pos.y + m->axes_r.y * dist;
+ 1099              		.loc 1 165 43 view .LVU264
+ 1100 0024 D4E91A23 		ldrd	r2, [r4, #104]
+ 164:chelper/trapq.c ****     pos->y = m->start_pos.y + m->axes_r.y * dist;
+ 1101              		.loc 1 164 12 view .LVU265
+ 1102 0028 C5E90001 		strd	r0, [r5]
+ 1103              		.loc 1 165 5 is_stmt 1 view .LVU266
+ 1104              		.loc 1 165 43 is_stmt 0 view .LVU267
+ 1105 002c 3046     		mov	r0, r6
+ 1106 002e 3946     		mov	r1, r7
+ 1107 0030 FFF7FEFF 		bl	__aeabi_dmul
+ 1108              	.LVL99:
+ 1109              		.loc 1 165 29 view .LVU268
+ 1110 0034 D4E91223 		ldrd	r2, [r4, #72]
+ 1111 0038 FFF7FEFF 		bl	__aeabi_dadd
+ 1112              	.LVL100:
+ 166:chelper/trapq.c ****     pos->z = m->start_pos.z + m->axes_r.z * dist;
+ 1113              		.loc 1 166 43 view .LVU269
+ 1114 003c D4E91C23 		ldrd	r2, [r4, #112]
+ 165:chelper/trapq.c ****     pos->y = m->start_pos.y + m->axes_r.y * dist;
+ 1115              		.loc 1 165 12 view .LVU270
+ 1116 0040 C5E90201 		strd	r0, [r5, #8]
+ 1117              		.loc 1 166 5 is_stmt 1 view .LVU271
+ARM GAS  /tmp/ccEIhprR.s 			page 29
+
+
+ 1118              		.loc 1 166 43 is_stmt 0 view .LVU272
+ 1119 0044 3046     		mov	r0, r6
+ 1120 0046 3946     		mov	r1, r7
+ 1121 0048 FFF7FEFF 		bl	__aeabi_dmul
+ 1122              	.LVL101:
+ 1123              		.loc 1 166 29 view .LVU273
+ 1124 004c D4E91423 		ldrd	r2, [r4, #80]
+ 1125 0050 FFF7FEFF 		bl	__aeabi_dadd
+ 1126              	.LVL102:
+ 167:chelper/trapq.c ****     pos->e = m->start_pos.e + m->axes_r.e * dist;
+ 1127              		.loc 1 167 43 view .LVU274
+ 1128 0054 D4E91E23 		ldrd	r2, [r4, #120]
+ 166:chelper/trapq.c ****     pos->z = m->start_pos.z + m->axes_r.z * dist;
+ 1129              		.loc 1 166 12 view .LVU275
+ 1130 0058 C5E90401 		strd	r0, [r5, #16]
+ 1131              		.loc 1 167 5 is_stmt 1 view .LVU276
+ 1132              		.loc 1 167 43 is_stmt 0 view .LVU277
+ 1133 005c 3046     		mov	r0, r6
+ 1134 005e 3946     		mov	r1, r7
+ 1135 0060 FFF7FEFF 		bl	__aeabi_dmul
+ 1136              	.LVL103:
+ 1137              		.loc 1 167 29 view .LVU278
+ 1138 0064 D4E91623 		ldrd	r2, [r4, #88]
+ 1139 0068 FFF7FEFF 		bl	__aeabi_dadd
+ 1140              	.LVL104:
+ 1141              		.loc 1 167 12 view .LVU279
+ 1142 006c C5E90601 		strd	r0, [r5, #24]
+ 168:chelper/trapq.c **** }
+ 1143              		.loc 1 168 1 view .LVU280
+ 1144 0070 F8BD     		pop	{r3, r4, r5, r6, r7, pc}
+ 1145              		.loc 1 168 1 view .LVU281
+ 1146              		.cfi_endproc
+ 1147              	.LFE12:
+ 1149              		.section	.text.trapq_append,"ax",%progbits
+ 1150              		.align	1
+ 1151              		.p2align 2,,3
+ 1152              		.global	trapq_append
+ 1153              		.syntax unified
+ 1154              		.thumb
+ 1155              		.thumb_func
+ 1156              		.fpu fpv4-sp-d16
+ 1158              	trapq_append:
+ 1159              	.LVL105:
+ 1160              	.LFB13:
+ 169:chelper/trapq.c **** 
+ 170:chelper/trapq.c **** /* ========== Trapq Functions ========== */
+ 171:chelper/trapq.c **** 
+ 172:chelper/trapq.c **** void
+ 173:chelper/trapq.c **** trapq_append(struct trapq *tq, double print_time,
+ 174:chelper/trapq.c ****              double accel_t, double cruise_t, double decel_t,
+ 175:chelper/trapq.c ****              const struct coord *start_pos, const struct coord *axes_r,
+ 176:chelper/trapq.c ****              double start_v, double cruise_v, double accel)
+ 177:chelper/trapq.c **** {
+ 1161              		.loc 1 177 1 is_stmt 1 view -0
+ 1162              		.cfi_startproc
+ 1163              		@ args = 0, pretend = 0, frame = 24
+ 1164              		@ frame_needed = 0, uses_anonymous_args = 0
+ARM GAS  /tmp/ccEIhprR.s 			page 30
+
+
+ 178:chelper/trapq.c ****     struct move *m = move_alloc();
+ 1165              		.loc 1 178 5 view .LVU283
+ 1166              	.LBB116:
+ 1167              	.LBI116:
+  82:chelper/trapq.c **** {
+ 1168              		.loc 1 82 1 view .LVU284
+ 1169              	.LBB117:
+  84:chelper/trapq.c ****         if (!move_pool_used[i]) {
+ 1170              		.loc 1 84 21 view .LVU285
+ 1171              	.LBE117:
+ 1172              	.LBE116:
+ 177:chelper/trapq.c ****     struct move *m = move_alloc();
+ 1173              		.loc 1 177 1 is_stmt 0 view .LVU286
+ 1174 0000 2DE9F04F 		push	{r4, r5, r6, r7, r8, r9, r10, fp, lr}
+ 1175              		.cfi_def_cfa_offset 36
+ 1176              		.cfi_offset 4, -36
+ 1177              		.cfi_offset 5, -32
+ 1178              		.cfi_offset 6, -28
+ 1179              		.cfi_offset 7, -24
+ 1180              		.cfi_offset 8, -20
+ 1181              		.cfi_offset 9, -16
+ 1182              		.cfi_offset 10, -12
+ 1183              		.cfi_offset 11, -8
+ 1184              		.cfi_offset 14, -4
+ 1185 0004 2DED068B 		vpush.64	{d8, d9, d10}
+ 1186              		.cfi_def_cfa_offset 60
+ 1187              		.cfi_offset 80, -60
+ 1188              		.cfi_offset 81, -56
+ 1189              		.cfi_offset 82, -52
+ 1190              		.cfi_offset 83, -48
+ 1191              		.cfi_offset 84, -44
+ 1192              		.cfi_offset 85, -40
+ 1193 0008 B0EE40AA 		vmov.f32	s20, s0
+ 1194 000c F0EE60AA 		vmov.f32	s21, s1
+ 1195 0010 B0EE449A 		vmov.f32	s18, s8
+ 1196 0014 F0EE649A 		vmov.f32	s19, s9
+ 1197 0018 8246     		mov	r10, r0
+ 1198 001a 3648     		ldr	r0, .L93
+ 1199              	.LVL106:
+ 177:chelper/trapq.c ****     struct move *m = move_alloc();
+ 1200              		.loc 1 177 1 view .LVU287
+ 1201 001c B0EE458A 		vmov.f32	s16, s10
+ 1202 0020 F0EE658A 		vmov.f32	s17, s11
+ 1203 0024 87B0     		sub	sp, sp, #28
+ 1204              		.cfi_def_cfa_offset 88
+ 177:chelper/trapq.c ****     struct move *m = move_alloc();
+ 1205              		.loc 1 177 1 view .LVU288
+ 1206 0026 1446     		mov	r4, r2
+ 1207 0028 8DED002B 		vstr.64	d2, [sp]
+ 1208 002c 8DED023B 		vstr.64	d3, [sp, #8]
+ 1209 0030 8DED046B 		vstr.64	d6, [sp, #16]
+ 1210 0034 59EC118B 		vmov	r8, r9, d1
+ 1211 0038 0D46     		mov	r5, r1
+ 1212              	.LBB120:
+ 1213              	.LBB119:
+  84:chelper/trapq.c ****         if (!move_pool_used[i]) {
+ 1214              		.loc 1 84 14 view .LVU289
+ARM GAS  /tmp/ccEIhprR.s 			page 31
+
+
+ 1215 003a 0023     		movs	r3, #0
+ 1216 003c 0246     		mov	r2, r0
+ 1217              	.LVL107:
+  84:chelper/trapq.c ****         if (!move_pool_used[i]) {
+ 1218              		.loc 1 84 14 view .LVU290
+ 1219 003e 02E0     		b	.L90
+ 1220              	.LVL108:
+ 1221              	.L88:
+  84:chelper/trapq.c ****         if (!move_pool_used[i]) {
+ 1222              		.loc 1 84 43 view .LVU291
+ 1223 0040 0133     		adds	r3, r3, #1
+ 1224              	.LVL109:
+  84:chelper/trapq.c ****         if (!move_pool_used[i]) {
+ 1225              		.loc 1 84 21 is_stmt 1 view .LVU292
+  84:chelper/trapq.c ****         if (!move_pool_used[i]) {
+ 1226              		.loc 1 84 5 is_stmt 0 view .LVU293
+ 1227 0042 202B     		cmp	r3, #32
+ 1228 0044 51D0     		beq	.L87
+ 1229              	.LVL110:
+ 1230              	.L90:
+  85:chelper/trapq.c ****             move_pool_used[i] = 1;
+ 1231              		.loc 1 85 9 is_stmt 1 view .LVU294
+  84:chelper/trapq.c ****         if (!move_pool_used[i]) {
+ 1232              		.loc 1 84 42 view .LVU295
+  85:chelper/trapq.c ****             move_pool_used[i] = 1;
+ 1233              		.loc 1 85 28 is_stmt 0 view .LVU296
+ 1234 0046 12F8011B 		ldrb	r1, [r2], #1	@ zero_extendqisi2
+  85:chelper/trapq.c ****             move_pool_used[i] = 1;
+ 1235              		.loc 1 85 12 view .LVU297
+ 1236 004a 0029     		cmp	r1, #0
+ 1237 004c F8D1     		bne	.L88
+ 1238              	.LBB118:
+  86:chelper/trapq.c ****             struct move *m = &move_pool[i];
+ 1239              		.loc 1 86 13 is_stmt 1 view .LVU298
+  87:chelper/trapq.c ****             memset(m, 0, sizeof(*m));
+ 1240              		.loc 1 87 26 is_stmt 0 view .LVU299
+ 1241 004e DFF8ACB0 		ldr	fp, .L93+8
+ 1242 0052 03EB0317 		add	r7, r3, r3, lsl #4
+ 1243 0056 0BEBC706 		add	r6, fp, r7, lsl #3
+  86:chelper/trapq.c ****             struct move *m = &move_pool[i];
+ 1244              		.loc 1 86 31 view .LVU300
+ 1245 005a 4FF0010C 		mov	ip, #1
+ 1246 005e 00F803C0 		strb	ip, [r0, r3]
+  87:chelper/trapq.c ****             memset(m, 0, sizeof(*m));
+ 1247              		.loc 1 87 13 is_stmt 1 view .LVU301
+ 1248              	.LVL111:
+  88:chelper/trapq.c ****             return m;
+ 1249              		.loc 1 88 13 view .LVU302
+ 1250 0062 8822     		movs	r2, #136
+ 1251 0064 3046     		mov	r0, r6
+ 1252 0066 FFF7FEFF 		bl	memset
+ 1253              	.LVL112:
+  89:chelper/trapq.c ****         }
+ 1254              		.loc 1 89 13 view .LVU303
+  89:chelper/trapq.c ****         }
+ 1255              		.loc 1 89 13 is_stmt 0 view .LVU304
+ 1256              	.LBE118:
+ARM GAS  /tmp/ccEIhprR.s 			page 32
+
+
+ 1257              	.LBE119:
+ 1258              	.LBE120:
+ 179:chelper/trapq.c ****     if (m == NULL) {
+ 1259              		.loc 1 179 5 is_stmt 1 view .LVU305
+ 180:chelper/trapq.c ****         /* Pool exhausted - should not happen in normal operation */
+ 181:chelper/trapq.c ****         return;
+ 182:chelper/trapq.c ****     }
+ 183:chelper/trapq.c ****     
+ 184:chelper/trapq.c ****     m->print_time = print_time;
+ 1260              		.loc 1 184 5 view .LVU306
+ 185:chelper/trapq.c ****     m->move_t = accel_t + cruise_t + decel_t;
+ 1261              		.loc 1 185 25 is_stmt 0 view .LVU307
+ 1262 006a DDE90023 		ldrd	r2, [sp]
+ 184:chelper/trapq.c ****     m->move_t = accel_t + cruise_t + decel_t;
+ 1263              		.loc 1 184 19 view .LVU308
+ 1264 006e 86ED00AB 		vstr.64	d10, [r6]
+ 1265              		.loc 1 185 5 is_stmt 1 view .LVU309
+ 1266              		.loc 1 185 25 is_stmt 0 view .LVU310
+ 1267 0072 4046     		mov	r0, r8
+ 1268 0074 4946     		mov	r1, r9
+ 1269 0076 FFF7FEFF 		bl	__aeabi_dadd
+ 1270              	.LVL113:
+ 1271              		.loc 1 185 36 view .LVU311
+ 1272 007a DDE90223 		ldrd	r2, [sp, #8]
+ 1273 007e FFF7FEFF 		bl	__aeabi_dadd
+ 1274              	.LVL114:
+ 186:chelper/trapq.c ****     m->accel_t = accel_t;
+ 187:chelper/trapq.c ****     m->cruise_t = cruise_t;
+ 1275              		.loc 1 187 17 view .LVU312
+ 1276 0082 9DED007B 		vldr.64	d7, [sp]
+ 1277 0086 86ED0C7B 		vstr.64	d7, [r6, #48]
+ 188:chelper/trapq.c ****     m->decel_t = decel_t;
+ 1278              		.loc 1 188 16 view .LVU313
+ 1279 008a 9DED027B 		vldr.64	d7, [sp, #8]
+ 185:chelper/trapq.c ****     m->accel_t = accel_t;
+ 1280              		.loc 1 185 15 view .LVU314
+ 1281 008e C6E90201 		strd	r0, [r6, #8]
+ 186:chelper/trapq.c ****     m->accel_t = accel_t;
+ 1282              		.loc 1 186 5 is_stmt 1 view .LVU315
+ 187:chelper/trapq.c ****     m->decel_t = decel_t;
+ 1283              		.loc 1 187 5 view .LVU316
+ 1284              		.loc 1 188 5 view .LVU317
+ 189:chelper/trapq.c ****     m->start_v = start_v;
+ 190:chelper/trapq.c ****     m->cruise_v = cruise_v;
+ 191:chelper/trapq.c ****     m->half_accel = accel * 0.5;
+ 1285              		.loc 1 191 27 is_stmt 0 view .LVU318
+ 1286 0092 194B     		ldr	r3, .L93+4
+ 1287 0094 DDE90401 		ldrd	r0, [sp, #16]
+ 1288 0098 0022     		movs	r2, #0
+ 186:chelper/trapq.c ****     m->cruise_t = cruise_t;
+ 1289              		.loc 1 186 16 view .LVU319
+ 1290 009a C6E90A89 		strd	r8, [r6, #40]
+ 188:chelper/trapq.c ****     m->start_v = start_v;
+ 1291              		.loc 1 188 16 view .LVU320
+ 1292 009e 86ED0E7B 		vstr.64	d7, [r6, #56]
+ 189:chelper/trapq.c ****     m->start_v = start_v;
+ 1293              		.loc 1 189 5 is_stmt 1 view .LVU321
+ARM GAS  /tmp/ccEIhprR.s 			page 33
+
+
+ 189:chelper/trapq.c ****     m->start_v = start_v;
+ 1294              		.loc 1 189 16 is_stmt 0 view .LVU322
+ 1295 00a2 86ED049B 		vstr.64	d9, [r6, #16]
+ 190:chelper/trapq.c ****     m->half_accel = accel * 0.5;
+ 1296              		.loc 1 190 5 is_stmt 1 view .LVU323
+ 190:chelper/trapq.c ****     m->half_accel = accel * 0.5;
+ 1297              		.loc 1 190 17 is_stmt 0 view .LVU324
+ 1298 00a6 86ED088B 		vstr.64	d8, [r6, #32]
+ 1299              		.loc 1 191 5 is_stmt 1 view .LVU325
+ 1300              		.loc 1 191 27 is_stmt 0 view .LVU326
+ 1301 00aa FFF7FEFF 		bl	__aeabi_dmul
+ 1302              	.LVL115:
+ 1303              		.loc 1 191 19 view .LVU327
+ 1304 00ae C6E90601 		strd	r0, [r6, #24]
+ 192:chelper/trapq.c ****     m->start_pos = *start_pos;
+ 1305              		.loc 1 192 5 is_stmt 1 view .LVU328
+ 1306              		.loc 1 192 18 is_stmt 0 view .LVU329
+ 1307 00b2 0FCD     		ldmia	r5!, {r0, r1, r2, r3}
+ 1308              	.LVL116:
+ 1309              		.loc 1 192 18 view .LVU330
+ 1310 00b4 06F1400E 		add	lr, r6, #64
+ 1311 00b8 AEE80F00 		stmia	lr!, {r0, r1, r2, r3}
+ 1312 00bc 95E80F00 		ldm	r5, {r0, r1, r2, r3}
+ 1313 00c0 8EE80F00 		stm	lr, {r0, r1, r2, r3}
+ 193:chelper/trapq.c ****     m->axes_r = *axes_r;
+ 1314              		.loc 1 193 5 is_stmt 1 view .LVU331
+ 1315              		.loc 1 193 15 is_stmt 0 view .LVU332
+ 1316 00c4 0FCC     		ldmia	r4!, {r0, r1, r2, r3}
+ 1317              	.LVL117:
+ 1318              		.loc 1 193 15 view .LVU333
+ 1319 00c6 06F1600C 		add	ip, r6, #96
+ 1320 00ca ACE80F00 		stmia	ip!, {r0, r1, r2, r3}
+ 1321 00ce 94E80F00 		ldm	r4, {r0, r1, r2, r3}
+ 1322 00d2 FF00     		lsls	r7, r7, #3
+ 1323 00d4 8CE80F00 		stm	ip, {r0, r1, r2, r3}
+ 194:chelper/trapq.c ****     
+ 195:chelper/trapq.c ****     list_add_tail(&m->node, &tq->moves);
+ 1324              		.loc 1 195 5 is_stmt 1 view .LVU334
+ 1325 00d8 8037     		adds	r7, r7, #128
+ 1326              	.LBB121:
+ 1327              	.LBB122:
+ 146:chelper/list.h **** }
+ 1328              		.loc 2 146 5 is_stmt 0 view .LVU335
+ 1329 00da DAF80430 		ldr	r3, [r10, #4]
+ 1330              	.LBE122:
+ 1331              	.LBE121:
+ 1332              		.loc 1 195 5 view .LVU336
+ 1333 00de 5F44     		add	r7, r7, fp
+ 1334              	.LVL118:
+ 1335              	.LBB126:
+ 1336              	.LBI121:
+ 144:chelper/list.h **** {
+ 1337              		.loc 2 144 1 is_stmt 1 view .LVU337
+ 1338              	.LBB125:
+ 146:chelper/list.h **** }
+ 1339              		.loc 2 146 5 view .LVU338
+ 1340              	.LBB123:
+ARM GAS  /tmp/ccEIhprR.s 			page 34
+
+
+ 1341              	.LBI123:
+ 122:chelper/list.h ****                  struct list_node *next)
+ 1342              		.loc 2 122 1 view .LVU339
+ 1343              	.LBB124:
+ 125:chelper/list.h ****     node->next = next;
+ 1344              		.loc 2 125 5 view .LVU340
+ 125:chelper/list.h ****     node->next = next;
+ 1345              		.loc 2 125 16 is_stmt 0 view .LVU341
+ 1346 00e0 CAF80470 		str	r7, [r10, #4]
+ 126:chelper/list.h ****     node->prev = prev;
+ 1347              		.loc 2 126 5 is_stmt 1 view .LVU342
+ 127:chelper/list.h ****     prev->next = node;
+ 1348              		.loc 2 127 16 is_stmt 0 view .LVU343
+ 1349 00e4 C6E920A3 		strd	r10, r3, [r6, #128]
+ 128:chelper/list.h **** }
+ 1350              		.loc 2 128 5 is_stmt 1 view .LVU344
+ 128:chelper/list.h **** }
+ 1351              		.loc 2 128 16 is_stmt 0 view .LVU345
+ 1352 00e8 1F60     		str	r7, [r3]
+ 1353              	.LVL119:
+ 1354              	.L87:
+ 128:chelper/list.h **** }
+ 1355              		.loc 2 128 16 view .LVU346
+ 1356              	.LBE124:
+ 1357              	.LBE123:
+ 1358              	.LBE125:
+ 1359              	.LBE126:
+ 196:chelper/trapq.c **** }
+ 1360              		.loc 1 196 1 view .LVU347
+ 1361 00ea 07B0     		add	sp, sp, #28
+ 1362              		.cfi_def_cfa_offset 60
+ 1363              	.LVL120:
+ 1364              		.loc 1 196 1 view .LVU348
+ 1365              		@ sp needed
+ 1366 00ec BDEC068B 		vldm	sp!, {d8-d10}
+ 1367              		.cfi_restore 84
+ 1368              		.cfi_restore 85
+ 1369              		.cfi_restore 82
+ 1370              		.cfi_restore 83
+ 1371              		.cfi_restore 80
+ 1372              		.cfi_restore 81
+ 1373              		.cfi_def_cfa_offset 36
+ 1374              	.LVL121:
+ 1375              		.loc 1 196 1 view .LVU349
+ 1376 00f0 BDE8F08F 		pop	{r4, r5, r6, r7, r8, r9, r10, fp, pc}
+ 1377              	.LVL122:
+ 1378              	.L94:
+ 1379              		.loc 1 196 1 view .LVU350
+ 1380              		.align	2
+ 1381              	.L93:
+ 1382 00f4 00000000 		.word	.LANCHOR0
+ 1383 00f8 0000E03F 		.word	1071644672
+ 1384 00fc 00000000 		.word	move_pool
+ 1385              		.cfi_endproc
+ 1386              	.LFE13:
+ 1388              		.section	.text.trapq_finalize_moves,"ax",%progbits
+ 1389              		.align	1
+ARM GAS  /tmp/ccEIhprR.s 			page 35
+
+
+ 1390              		.p2align 2,,3
+ 1391              		.global	trapq_finalize_moves
+ 1392              		.syntax unified
+ 1393              		.thumb
+ 1394              		.thumb_func
+ 1395              		.fpu fpv4-sp-d16
+ 1397              	trapq_finalize_moves:
+ 1398              	.LVL123:
+ 1399              	.LFB14:
+ 197:chelper/trapq.c **** 
+ 198:chelper/trapq.c **** void
+ 199:chelper/trapq.c **** trapq_finalize_moves(struct trapq *tq, double print_time)
+ 200:chelper/trapq.c **** {
+ 1400              		.loc 1 200 1 is_stmt 1 view -0
+ 1401              		.cfi_startproc
+ 1402              		@ args = 0, pretend = 0, frame = 0
+ 1403              		@ frame_needed = 0, uses_anonymous_args = 0
+ 201:chelper/trapq.c ****     struct move *m, *tmp;
+ 1404              		.loc 1 201 5 view .LVU352
+ 202:chelper/trapq.c ****     
+ 203:chelper/trapq.c ****     list_for_each_entry_safe(m, tmp, &tq->moves, struct move, node) {
+ 1405              		.loc 1 203 5 view .LVU353
+ 200:chelper/trapq.c ****     struct move *m, *tmp;
+ 1406              		.loc 1 200 1 is_stmt 0 view .LVU354
+ 1407 0000 2DE9F84F 		push	{r3, r4, r5, r6, r7, r8, r9, r10, fp, lr}
+ 1408              		.cfi_def_cfa_offset 40
+ 1409              		.cfi_offset 3, -40
+ 1410              		.cfi_offset 4, -36
+ 1411              		.cfi_offset 5, -32
+ 1412              		.cfi_offset 6, -28
+ 1413              		.cfi_offset 7, -24
+ 1414              		.cfi_offset 8, -20
+ 1415              		.cfi_offset 9, -16
+ 1416              		.cfi_offset 10, -12
+ 1417              		.cfi_offset 11, -8
+ 1418              		.cfi_offset 14, -4
+ 1419              		.loc 1 203 5 view .LVU355
+ 1420 0004 0568     		ldr	r5, [r0]
+ 1421              	.LVL124:
+ 1422              		.loc 1 203 5 view .LVU356
+ 1423 0006 2C46     		mov	r4, r5
+ 1424 0008 8442     		cmp	r4, r0
+ 1425 000a 55F88069 		ldr	r6, [r5], #-128
+ 1426              	.LVL125:
+ 1427              		.loc 1 203 5 is_stmt 1 view .LVU357
+ 1428 000e 25D0     		beq	.L95
+ 1429 0010 59EC108B 		vmov	r8, r9, d0
+ 1430 0014 0746     		mov	r7, r0
+ 1431 0016 803E     		subs	r6, r6, #128
+ 1432              	.LVL126:
+ 1433              	.LBB127:
+ 1434              	.LBB128:
+ 1435              	.LBB129:
+ 1436              		.loc 2 161 16 is_stmt 0 view .LVU358
+ 1437 0018 4FF0000B 		mov	fp, #0
+ 1438              	.LBE129:
+ 1439              	.LBE128:
+ARM GAS  /tmp/ccEIhprR.s 			page 36
+
+
+ 1440              	.LBB132:
+ 1441              	.LBB133:
+ 146:chelper/list.h **** }
+ 1442              		.loc 2 146 5 view .LVU359
+ 1443 001c 00F1080A 		add	r10, r0, #8
+ 1444              	.LVL127:
+ 1445              	.L99:
+ 146:chelper/list.h **** }
+ 1446              		.loc 2 146 5 view .LVU360
+ 1447              	.LBE133:
+ 1448              	.LBE132:
+ 204:chelper/trapq.c ****         double move_end = m->print_time + m->move_t;
+ 1449              		.loc 1 204 9 is_stmt 1 view .LVU361
+ 205:chelper/trapq.c ****         if (move_end <= print_time) {
+ 1450              		.loc 1 205 9 view .LVU362
+ 204:chelper/trapq.c ****         double move_end = m->print_time + m->move_t;
+ 1451              		.loc 1 204 16 is_stmt 0 view .LVU363
+ 1452 0020 D5E90223 		ldrd	r2, [r5, #8]
+ 1453 0024 D5E90001 		ldrd	r0, [r5]
+ 1454 0028 FFF7FEFF 		bl	__aeabi_dadd
+ 1455              	.LVL128:
+ 1456              		.loc 1 205 12 view .LVU364
+ 1457 002c 4246     		mov	r2, r8
+ 1458 002e 4B46     		mov	r3, r9
+ 1459 0030 FFF7FEFF 		bl	__aeabi_dcmple
+ 1460              	.LVL129:
+ 206:chelper/trapq.c ****             /* Move is complete - move to history */
+ 207:chelper/trapq.c ****             list_del(&m->node);
+ 1461              		.loc 1 207 13 is_stmt 1 view .LVU365
+ 1462              	.LBB137:
+ 1463              	.LBI128:
+ 153:chelper/list.h **** {
+ 1464              		.loc 2 153 1 view .LVU366
+ 1465              	.LBB130:
+ 155:chelper/list.h ****     struct list_node *next = node->next;
+ 1466              		.loc 2 155 5 view .LVU367
+ 1467              	.LBE130:
+ 1468              	.LBE137:
+ 1469              	.LBE127:
+ 203:chelper/trapq.c ****         double move_end = m->print_time + m->move_t;
+ 1470              		.loc 1 203 5 view .LVU368
+ 1471              	.LBB140:
+ 205:chelper/trapq.c ****             /* Move is complete - move to history */
+ 1472              		.loc 1 205 12 is_stmt 0 view .LVU369
+ 1473 0034 50B1     		cbz	r0, .L97
+ 1474              	.LBB138:
+ 1475              	.LBB131:
+ 156:chelper/list.h ****     prev->next = next;
+ 1476              		.loc 2 156 23 view .LVU370
+ 1477 0036 D5E92032 		ldrd	r3, r2, [r5, #128]
+ 1478              	.LVL130:
+ 157:chelper/list.h ****     next->prev = prev;
+ 1479              		.loc 2 157 5 is_stmt 1 view .LVU371
+ 157:chelper/list.h ****     next->prev = prev;
+ 1480              		.loc 2 157 16 is_stmt 0 view .LVU372
+ 1481 003a 1360     		str	r3, [r2]
+ 158:chelper/list.h ****     /* Poison pointers to catch use-after-remove bugs */
+ARM GAS  /tmp/ccEIhprR.s 			page 37
+
+
+ 1482              		.loc 2 158 5 is_stmt 1 view .LVU373
+ 158:chelper/list.h ****     /* Poison pointers to catch use-after-remove bugs */
+ 1483              		.loc 2 158 16 is_stmt 0 view .LVU374
+ 1484 003c 5A60     		str	r2, [r3, #4]
+ 160:chelper/list.h ****     node->prev = NULL;
+ 1485              		.loc 2 160 5 is_stmt 1 view .LVU375
+ 1486              		.loc 2 161 5 view .LVU376
+ 1487              		.loc 2 161 16 is_stmt 0 view .LVU377
+ 1488 003e C5F884B0 		str	fp, [r5, #132]
+ 1489              	.LVL131:
+ 1490              		.loc 2 161 16 view .LVU378
+ 1491              	.LBE131:
+ 1492              	.LBE138:
+ 208:chelper/trapq.c ****             list_add_tail(&m->node, &tq->history);
+ 1493              		.loc 1 208 13 is_stmt 1 view .LVU379
+ 1494              	.LBB139:
+ 1495              	.LBI132:
+ 144:chelper/list.h **** {
+ 1496              		.loc 2 144 1 view .LVU380
+ 1497              	.LBB136:
+ 146:chelper/list.h **** }
+ 1498              		.loc 2 146 5 view .LVU381
+ 1499 0042 FB68     		ldr	r3, [r7, #12]
+ 1500              	.LVL132:
+ 1501              	.LBB134:
+ 1502              	.LBI134:
+ 122:chelper/list.h ****                  struct list_node *next)
+ 1503              		.loc 2 122 1 view .LVU382
+ 1504              	.LBB135:
+ 125:chelper/list.h ****     node->next = next;
+ 1505              		.loc 2 125 5 view .LVU383
+ 125:chelper/list.h ****     node->next = next;
+ 1506              		.loc 2 125 16 is_stmt 0 view .LVU384
+ 1507 0044 FC60     		str	r4, [r7, #12]
+ 126:chelper/list.h ****     node->prev = prev;
+ 1508              		.loc 2 126 5 is_stmt 1 view .LVU385
+ 127:chelper/list.h ****     prev->next = node;
+ 1509              		.loc 2 127 16 is_stmt 0 view .LVU386
+ 1510 0046 C5E920A3 		strd	r10, r3, [r5, #128]
+ 128:chelper/list.h **** }
+ 1511              		.loc 2 128 5 is_stmt 1 view .LVU387
+ 128:chelper/list.h **** }
+ 1512              		.loc 2 128 16 is_stmt 0 view .LVU388
+ 1513 004a 1C60     		str	r4, [r3]
+ 1514              	.LVL133:
+ 1515              	.L97:
+ 128:chelper/list.h **** }
+ 1516              		.loc 2 128 16 view .LVU389
+ 1517              	.LBE135:
+ 1518              	.LBE134:
+ 1519              	.LBE136:
+ 1520              	.LBE139:
+ 1521              	.LBE140:
+ 203:chelper/trapq.c ****         double move_end = m->print_time + m->move_t;
+ 1522              		.loc 1 203 5 discriminator 2 view .LVU390
+ 1523 004c 3446     		mov	r4, r6
+ 1524 004e 3546     		mov	r5, r6
+ARM GAS  /tmp/ccEIhprR.s 			page 38
+
+
+ 1525 0050 54F8806F 		ldr	r6, [r4, #128]!
+ 1526              	.LVL134:
+ 203:chelper/trapq.c ****         double move_end = m->print_time + m->move_t;
+ 1527              		.loc 1 203 5 discriminator 2 view .LVU391
+ 1528 0054 BC42     		cmp	r4, r7
+ 1529 0056 A6F18006 		sub	r6, r6, #128
+ 1530              	.LVL135:
+ 203:chelper/trapq.c ****         double move_end = m->print_time + m->move_t;
+ 1531              		.loc 1 203 5 is_stmt 1 discriminator 2 view .LVU392
+ 1532 005a E1D1     		bne	.L99
+ 1533              	.LVL136:
+ 1534              	.L95:
+ 209:chelper/trapq.c ****         }
+ 210:chelper/trapq.c ****     }
+ 211:chelper/trapq.c **** }
+ 1535              		.loc 1 211 1 is_stmt 0 view .LVU393
+ 1536 005c BDE8F88F 		pop	{r3, r4, r5, r6, r7, r8, r9, r10, fp, pc}
+ 1537              		.cfi_endproc
+ 1538              	.LFE14:
+ 1540              		.section	.text.trapq_free_moves,"ax",%progbits
+ 1541              		.align	1
+ 1542              		.p2align 2,,3
+ 1543              		.global	trapq_free_moves
+ 1544              		.syntax unified
+ 1545              		.thumb
+ 1546              		.thumb_func
+ 1547              		.fpu fpv4-sp-d16
+ 1549              	trapq_free_moves:
+ 1550              	.LVL137:
+ 1551              	.LFB15:
+ 212:chelper/trapq.c **** 
+ 213:chelper/trapq.c **** void
+ 214:chelper/trapq.c **** trapq_free_moves(struct trapq *tq, double print_time)
+ 215:chelper/trapq.c **** {
+ 1552              		.loc 1 215 1 is_stmt 1 view -0
+ 1553              		.cfi_startproc
+ 1554              		@ args = 0, pretend = 0, frame = 0
+ 1555              		@ frame_needed = 0, uses_anonymous_args = 0
+ 216:chelper/trapq.c ****     struct move *m, *tmp;
+ 1556              		.loc 1 216 5 view .LVU395
+ 217:chelper/trapq.c ****     
+ 218:chelper/trapq.c ****     list_for_each_entry_safe(m, tmp, &tq->history, struct move, node) {
+ 1557              		.loc 1 218 5 view .LVU396
+ 215:chelper/trapq.c ****     struct move *m, *tmp;
+ 1558              		.loc 1 215 1 is_stmt 0 view .LVU397
+ 1559 0000 2DE9F84F 		push	{r3, r4, r5, r6, r7, r8, r9, r10, fp, lr}
+ 1560              		.cfi_def_cfa_offset 40
+ 1561              		.cfi_offset 3, -40
+ 1562              		.cfi_offset 4, -36
+ 1563              		.cfi_offset 5, -32
+ 1564              		.cfi_offset 6, -28
+ 1565              		.cfi_offset 7, -24
+ 1566              		.cfi_offset 8, -20
+ 1567              		.cfi_offset 9, -16
+ 1568              		.cfi_offset 10, -12
+ 1569              		.cfi_offset 11, -8
+ 1570              		.cfi_offset 14, -4
+ARM GAS  /tmp/ccEIhprR.s 			page 39
+
+
+ 1571              		.loc 1 218 5 view .LVU398
+ 1572 0004 0646     		mov	r6, r0
+ 1573 0006 56F8083F 		ldr	r3, [r6, #8]!
+ 1574 000a 1D46     		mov	r5, r3
+ 1575              	.LVL138:
+ 1576              		.loc 1 218 5 view .LVU399
+ 1577 000c 9E42     		cmp	r6, r3
+ 1578 000e 55F88049 		ldr	r4, [r5], #-128
+ 1579              	.LVL139:
+ 1580              		.loc 1 218 5 is_stmt 1 view .LVU400
+ 1581 0012 30D0     		beq	.L103
+ 1582 0014 5BEC10AB 		vmov	r10, fp, d0
+ 1583              	.LBB141:
+ 1584              	.LBB142:
+ 1585              	.LBB143:
+ 101:chelper/trapq.c ****     if (idx >= 0 && idx < TRAPQ_MAX_MOVES) {
+ 1586              		.loc 1 101 17 is_stmt 0 view .LVU401
+ 1587 0018 DFF86880 		ldr	r8, .L111+8
+ 1588 001c 803C     		subs	r4, r4, #128
+ 1589              	.LVL140:
+ 101:chelper/trapq.c ****     if (idx >= 0 && idx < TRAPQ_MAX_MOVES) {
+ 1590              		.loc 1 101 17 view .LVU402
+ 1591              	.LBE143:
+ 1592              	.LBE142:
+ 1593              	.LBB150:
+ 1594              	.LBB151:
+ 160:chelper/list.h ****     node->prev = NULL;
+ 1595              		.loc 2 160 16 view .LVU403
+ 1596 001e 0027     		movs	r7, #0
+ 1597              	.LBE151:
+ 1598              	.LBE150:
+ 1599              	.LBB156:
+ 1600              	.LBB144:
+ 102:chelper/trapq.c ****         move_pool_used[idx] = 0;
+ 1601              		.loc 1 102 8 view .LVU404
+ 1602 0020 41F27809 		movw	r9, #4216
+ 1603              	.LVL141:
+ 1604              	.L108:
+ 102:chelper/trapq.c ****         move_pool_used[idx] = 0;
+ 1605              		.loc 1 102 8 view .LVU405
+ 1606              	.LBE144:
+ 1607              	.LBE156:
+ 219:chelper/trapq.c ****         double move_end = m->print_time + m->move_t;
+ 1608              		.loc 1 219 9 is_stmt 1 view .LVU406
+ 220:chelper/trapq.c ****         if (move_end < print_time) {
+ 1609              		.loc 1 220 9 view .LVU407
+ 219:chelper/trapq.c ****         double move_end = m->print_time + m->move_t;
+ 1610              		.loc 1 219 16 is_stmt 0 view .LVU408
+ 1611 0024 D5E90223 		ldrd	r2, [r5, #8]
+ 1612 0028 D5E90001 		ldrd	r0, [r5]
+ 1613 002c FFF7FEFF 		bl	__aeabi_dadd
+ 1614              	.LVL142:
+ 1615              		.loc 1 220 12 view .LVU409
+ 1616 0030 5246     		mov	r2, r10
+ 1617 0032 5B46     		mov	r3, fp
+ 1618 0034 FFF7FEFF 		bl	__aeabi_dcmplt
+ 1619              	.LVL143:
+ARM GAS  /tmp/ccEIhprR.s 			page 40
+
+
+ 221:chelper/trapq.c ****             list_del(&m->node);
+ 1620              		.loc 1 221 13 is_stmt 1 view .LVU410
+ 1621              	.LBB157:
+ 1622              	.LBI150:
+ 153:chelper/list.h **** {
+ 1623              		.loc 2 153 1 view .LVU411
+ 1624              	.LBB152:
+ 155:chelper/list.h ****     struct list_node *next = node->next;
+ 1625              		.loc 2 155 5 view .LVU412
+ 1626              	.LBE152:
+ 1627              	.LBE157:
+ 1628              	.LBE141:
+ 218:chelper/trapq.c ****         double move_end = m->print_time + m->move_t;
+ 1629              		.loc 1 218 5 view .LVU413
+ 218:chelper/trapq.c ****         double move_end = m->print_time + m->move_t;
+ 1630              		.loc 1 218 5 is_stmt 0 view .LVU414
+ 1631 0038 04F18002 		add	r2, r4, #128
+ 1632              	.LBB166:
+ 1633              	.LBB158:
+ 1634              	.LBB145:
+ 101:chelper/trapq.c ****     if (idx >= 0 && idx < TRAPQ_MAX_MOVES) {
+ 1635              		.loc 1 101 17 view .LVU415
+ 1636 003c A5EB0803 		sub	r3, r5, r8
+ 1637              	.LBE145:
+ 1638              	.LBE158:
+ 220:chelper/trapq.c ****             list_del(&m->node);
+ 1639              		.loc 1 220 12 view .LVU416
+ 1640 0040 90B1     		cbz	r0, .L106
+ 1641              	.LBB159:
+ 1642              	.LBB146:
+ 103:chelper/trapq.c ****     }
+ 1643              		.loc 1 103 9 is_stmt 1 view .LVU417
+ 101:chelper/trapq.c ****     if (idx >= 0 && idx < TRAPQ_MAX_MOVES) {
+ 1644              		.loc 1 101 9 is_stmt 0 view .LVU418
+ 1645 0042 0E48     		ldr	r0, .L111
+ 1646              	.LBE146:
+ 1647              	.LBE159:
+ 1648              	.LBB160:
+ 1649              	.LBB153:
+ 155:chelper/list.h ****     struct list_node *next = node->next;
+ 1650              		.loc 2 155 23 view .LVU419
+ 1651 0044 D5F884C0 		ldr	ip, [r5, #132]
+ 1652              	.LVL144:
+ 156:chelper/list.h ****     prev->next = next;
+ 1653              		.loc 2 156 5 is_stmt 1 view .LVU420
+ 1654              	.LBE153:
+ 1655              	.LBE160:
+ 1656              	.LBB161:
+ 1657              	.LBB147:
+ 101:chelper/trapq.c ****     if (idx >= 0 && idx < TRAPQ_MAX_MOVES) {
+ 1658              		.loc 1 101 9 is_stmt 0 view .LVU421
+ 1659 0048 D910     		asrs	r1, r3, #3
+ 1660 004a 00FB01F1 		mul	r1, r0, r1
+ 102:chelper/trapq.c ****         move_pool_used[idx] = 0;
+ 1661              		.loc 1 102 8 view .LVU422
+ 1662 004e 4B45     		cmp	r3, r9
+ 1663              	.LBE147:
+ARM GAS  /tmp/ccEIhprR.s 			page 41
+
+
+ 1664              	.LBE161:
+ 1665              	.LBB162:
+ 1666              	.LBB154:
+ 156:chelper/list.h ****     prev->next = next;
+ 1667              		.loc 2 156 23 view .LVU423
+ 1668 0050 D5F88000 		ldr	r0, [r5, #128]
+ 1669              	.LVL145:
+ 157:chelper/list.h ****     next->prev = prev;
+ 1670              		.loc 2 157 5 is_stmt 1 view .LVU424
+ 1671              	.LBE154:
+ 1672              	.LBE162:
+ 1673              	.LBB163:
+ 1674              	.LBB148:
+ 103:chelper/trapq.c ****     }
+ 1675              		.loc 1 103 29 is_stmt 0 view .LVU425
+ 1676 0054 98BF     		it	ls
+ 1677 0056 0A4B     		ldrls	r3, .L111+4
+ 1678              	.LBE148:
+ 1679              	.LBE163:
+ 1680              	.LBB164:
+ 1681              	.LBB155:
+ 157:chelper/list.h ****     next->prev = prev;
+ 1682              		.loc 2 157 16 view .LVU426
+ 1683 0058 CCF80000 		str	r0, [ip]
+ 158:chelper/list.h ****     /* Poison pointers to catch use-after-remove bugs */
+ 1684              		.loc 2 158 5 is_stmt 1 view .LVU427
+ 158:chelper/list.h ****     /* Poison pointers to catch use-after-remove bugs */
+ 1685              		.loc 2 158 16 is_stmt 0 view .LVU428
+ 1686 005c C0F804C0 		str	ip, [r0, #4]
+ 160:chelper/list.h ****     node->prev = NULL;
+ 1687              		.loc 2 160 5 is_stmt 1 view .LVU429
+ 1688              		.loc 2 161 16 is_stmt 0 view .LVU430
+ 1689 0060 C5E92077 		strd	r7, r7, [r5, #128]
+ 1690              	.LVL146:
+ 1691              		.loc 2 161 16 view .LVU431
+ 1692              	.LBE155:
+ 1693              	.LBE164:
+ 222:chelper/trapq.c ****             move_free(m);
+ 1694              		.loc 1 222 13 is_stmt 1 view .LVU432
+ 1695              	.LBB165:
+ 1696              	.LBI142:
+  96:chelper/trapq.c **** {
+ 1697              		.loc 1 96 1 view .LVU433
+ 1698              	.LBB149:
+  98:chelper/trapq.c ****         return;
+ 1699              		.loc 1 98 5 view .LVU434
+ 101:chelper/trapq.c ****     if (idx >= 0 && idx < TRAPQ_MAX_MOVES) {
+ 1700              		.loc 1 101 5 view .LVU435
+ 102:chelper/trapq.c ****         move_pool_used[idx] = 0;
+ 1701              		.loc 1 102 5 view .LVU436
+ 103:chelper/trapq.c ****     }
+ 1702              		.loc 1 103 29 is_stmt 0 view .LVU437
+ 1703 0064 98BF     		it	ls
+ 1704 0066 5F54     		strbls	r7, [r3, r1]
+ 1705              	.L106:
+ 103:chelper/trapq.c ****     }
+ 1706              		.loc 1 103 29 view .LVU438
+ARM GAS  /tmp/ccEIhprR.s 			page 42
+
+
+ 1707              	.LBE149:
+ 1708              	.LBE165:
+ 1709              	.LBE166:
+ 218:chelper/trapq.c ****         double move_end = m->print_time + m->move_t;
+ 1710              		.loc 1 218 5 discriminator 2 view .LVU439
+ 1711 0068 D4F88030 		ldr	r3, [r4, #128]
+ 1712 006c 9642     		cmp	r6, r2
+ 1713 006e 2546     		mov	r5, r4
+ 1714 0070 A3F18004 		sub	r4, r3, #128
+ 1715              	.LVL147:
+ 218:chelper/trapq.c ****         double move_end = m->print_time + m->move_t;
+ 1716              		.loc 1 218 5 is_stmt 1 discriminator 2 view .LVU440
+ 1717 0074 D6D1     		bne	.L108
+ 1718              	.LVL148:
+ 1719              	.L103:
+ 223:chelper/trapq.c ****         }
+ 224:chelper/trapq.c ****     }
+ 225:chelper/trapq.c **** }
+ 1720              		.loc 1 225 1 is_stmt 0 view .LVU441
+ 1721 0076 BDE8F88F 		pop	{r3, r4, r5, r6, r7, r8, r9, r10, fp, pc}
+ 1722              	.LVL149:
+ 1723              	.L112:
+ 1724              		.loc 1 225 1 view .LVU442
+ 1725 007a 00BF     		.align	2
+ 1726              	.L111:
+ 1727 007c F1F0F0F0 		.word	-252645135
+ 1728 0080 00000000 		.word	.LANCHOR0
+ 1729 0084 00000000 		.word	move_pool
+ 1730              		.cfi_endproc
+ 1731              	.LFE15:
+ 1733              		.global	__aeabi_dcmpge
+ 1734              		.section	.text.trapq_get_position,"ax",%progbits
+ 1735              		.align	1
+ 1736              		.p2align 2,,3
+ 1737              		.global	trapq_get_position
+ 1738              		.syntax unified
+ 1739              		.thumb
+ 1740              		.thumb_func
+ 1741              		.fpu fpv4-sp-d16
+ 1743              	trapq_get_position:
+ 1744              	.LVL150:
+ 1745              	.LFB16:
+ 226:chelper/trapq.c **** 
+ 227:chelper/trapq.c **** int
+ 228:chelper/trapq.c **** trapq_get_position(const struct trapq *tq, double print_time, struct coord *pos)
+ 229:chelper/trapq.c **** {
+ 1746              		.loc 1 229 1 is_stmt 1 view -0
+ 1747              		.cfi_startproc
+ 1748              		@ args = 0, pretend = 0, frame = 0
+ 1749              		@ frame_needed = 0, uses_anonymous_args = 0
+ 230:chelper/trapq.c ****     /* Search in active moves first */
+ 231:chelper/trapq.c ****     struct move *m;
+ 1750              		.loc 1 231 5 view .LVU444
+ 232:chelper/trapq.c ****     list_for_each_entry(m, &tq->moves, struct move, node) {
+ 1751              		.loc 1 232 5 view .LVU445
+ 1752 0000 0368     		ldr	r3, [r0]
+ 1753 0002 9842     		cmp	r0, r3
+ARM GAS  /tmp/ccEIhprR.s 			page 43
+
+
+ 229:chelper/trapq.c ****     /* Search in active moves first */
+ 1754              		.loc 1 229 1 is_stmt 0 view .LVU446
+ 1755 0004 2DE9F047 		push	{r4, r5, r6, r7, r8, r9, r10, lr}
+ 1756              		.cfi_def_cfa_offset 32
+ 1757              		.cfi_offset 4, -32
+ 1758              		.cfi_offset 5, -28
+ 1759              		.cfi_offset 6, -24
+ 1760              		.cfi_offset 7, -20
+ 1761              		.cfi_offset 8, -16
+ 1762              		.cfi_offset 9, -12
+ 1763              		.cfi_offset 10, -8
+ 1764              		.cfi_offset 14, -4
+ 229:chelper/trapq.c ****     /* Search in active moves first */
+ 1765              		.loc 1 229 1 view .LVU447
+ 1766 0008 59EC108B 		vmov	r8, r9, d0
+ 1767 000c 8246     		mov	r10, r0
+ 1768 000e 0D46     		mov	r5, r1
+ 1769              	.LVL151:
+ 1770              		.loc 1 232 5 is_stmt 1 view .LVU448
+ 1771 0010 1ED0     		beq	.L114
+ 1772 0012 A3F18004 		sub	r4, r3, #128
+ 1773              	.LVL152:
+ 1774              	.L119:
+ 1775              	.LBB167:
+ 233:chelper/trapq.c ****         double move_end = m->print_time + m->move_t;
+ 1776              		.loc 1 233 9 view .LVU449
+ 1777              		.loc 1 233 28 is_stmt 0 view .LVU450
+ 1778 0016 D4E90067 		ldrd	r6, [r4]
+ 1779              	.LVL153:
+ 234:chelper/trapq.c ****         if (print_time >= m->print_time && print_time <= move_end) {
+ 1780              		.loc 1 234 9 is_stmt 1 view .LVU451
+ 1781              		.loc 1 234 12 is_stmt 0 view .LVU452
+ 1782 001a 4B46     		mov	r3, r9
+ 1783 001c 3946     		mov	r1, r7
+ 1784 001e 4246     		mov	r2, r8
+ 1785 0020 3046     		mov	r0, r6
+ 1786 0022 FFF7FEFF 		bl	__aeabi_dcmple
+ 1787              	.LVL154:
+ 1788              		.loc 1 234 12 view .LVU453
+ 1789 0026 0346     		mov	r3, r0
+ 233:chelper/trapq.c ****         double move_end = m->print_time + m->move_t;
+ 1790              		.loc 1 233 16 view .LVU454
+ 1791 0028 3946     		mov	r1, r7
+ 1792 002a 3046     		mov	r0, r6
+ 1793              		.loc 1 234 12 view .LVU455
+ 1794 002c 53B1     		cbz	r3, .L115
+ 233:chelper/trapq.c ****         double move_end = m->print_time + m->move_t;
+ 1795              		.loc 1 233 16 discriminator 1 view .LVU456
+ 1796 002e D4E90223 		ldrd	r2, [r4, #8]
+ 1797              	.LVL155:
+ 233:chelper/trapq.c ****         double move_end = m->print_time + m->move_t;
+ 1798              		.loc 1 233 16 discriminator 1 view .LVU457
+ 1799 0032 FFF7FEFF 		bl	__aeabi_dadd
+ 1800              	.LVL156:
+ 233:chelper/trapq.c ****         double move_end = m->print_time + m->move_t;
+ 1801              		.loc 1 233 16 discriminator 1 view .LVU458
+ 1802 0036 0246     		mov	r2, r0
+ARM GAS  /tmp/ccEIhprR.s 			page 44
+
+
+ 1803 0038 0B46     		mov	r3, r1
+ 1804              		.loc 1 234 41 discriminator 1 view .LVU459
+ 1805 003a 4046     		mov	r0, r8
+ 1806 003c 4946     		mov	r1, r9
+ 1807 003e FFF7FEFF 		bl	__aeabi_dcmple
+ 1808              	.LVL157:
+ 1809 0042 50BB     		cbnz	r0, .L132
+ 1810              	.L115:
+ 1811              	.LBE167:
+ 232:chelper/trapq.c ****         double move_end = m->print_time + m->move_t;
+ 1812              		.loc 1 232 5 is_stmt 1 discriminator 2 view .LVU460
+ 1813 0044 D4F88030 		ldr	r3, [r4, #128]
+ 1814 0048 9A45     		cmp	r10, r3
+ 1815 004a A3F18004 		sub	r4, r3, #128
+ 1816              	.LVL158:
+ 232:chelper/trapq.c ****         double move_end = m->print_time + m->move_t;
+ 1817              		.loc 1 232 5 discriminator 2 view .LVU461
+ 1818 004e E2D1     		bne	.L119
+ 1819              	.LVL159:
+ 1820              	.L114:
+ 235:chelper/trapq.c ****             double move_time = print_time - m->print_time;
+ 236:chelper/trapq.c ****             move_get_coord(m, move_time, pos);
+ 237:chelper/trapq.c ****             return 0;
+ 238:chelper/trapq.c ****         }
+ 239:chelper/trapq.c ****     }
+ 240:chelper/trapq.c ****     
+ 241:chelper/trapq.c ****     /* Search in history */
+ 242:chelper/trapq.c ****     list_for_each_entry(m, &tq->history, struct move, node) {
+ 1821              		.loc 1 242 5 view .LVU462
+ 1822 0050 5AF8083F 		ldr	r3, [r10, #8]!
+ 1823              	.LVL160:
+ 1824              		.loc 1 242 5 is_stmt 0 view .LVU463
+ 1825 0054 9A45     		cmp	r10, r3
+ 1826 0056 A3F18004 		sub	r4, r3, #128
+ 1827              	.LVL161:
+ 1828              		.loc 1 242 5 is_stmt 1 view .LVU464
+ 1829 005a 1AD0     		beq	.L124
+ 1830              	.L123:
+ 1831              	.LBB168:
+ 243:chelper/trapq.c ****         double move_end = m->print_time + m->move_t;
+ 1832              		.loc 1 243 9 view .LVU465
+ 1833              		.loc 1 243 28 is_stmt 0 view .LVU466
+ 1834 005c D4E90067 		ldrd	r6, [r4]
+ 1835              	.LVL162:
+ 244:chelper/trapq.c ****         if (print_time >= m->print_time && print_time <= move_end) {
+ 1836              		.loc 1 244 9 is_stmt 1 view .LVU467
+ 1837              		.loc 1 244 12 is_stmt 0 view .LVU468
+ 1838 0060 4B46     		mov	r3, r9
+ 1839 0062 3946     		mov	r1, r7
+ 1840 0064 4246     		mov	r2, r8
+ 1841 0066 3046     		mov	r0, r6
+ 1842 0068 FFF7FEFF 		bl	__aeabi_dcmple
+ 1843              	.LVL163:
+ 1844              		.loc 1 244 12 view .LVU469
+ 1845 006c 0346     		mov	r3, r0
+ 243:chelper/trapq.c ****         double move_end = m->print_time + m->move_t;
+ 1846              		.loc 1 243 16 view .LVU470
+ARM GAS  /tmp/ccEIhprR.s 			page 45
+
+
+ 1847 006e 3946     		mov	r1, r7
+ 1848 0070 3046     		mov	r0, r6
+ 1849              		.loc 1 244 12 view .LVU471
+ 1850 0072 43B1     		cbz	r3, .L120
+ 243:chelper/trapq.c ****         double move_end = m->print_time + m->move_t;
+ 1851              		.loc 1 243 16 discriminator 1 view .LVU472
+ 1852 0074 D4E90223 		ldrd	r2, [r4, #8]
+ 1853              	.LVL164:
+ 243:chelper/trapq.c ****         double move_end = m->print_time + m->move_t;
+ 1854              		.loc 1 243 16 discriminator 1 view .LVU473
+ 1855 0078 FFF7FEFF 		bl	__aeabi_dadd
+ 1856              	.LVL165:
+ 1857              		.loc 1 244 41 discriminator 1 view .LVU474
+ 1858 007c 4246     		mov	r2, r8
+ 1859 007e 4B46     		mov	r3, r9
+ 1860 0080 FFF7FEFF 		bl	__aeabi_dcmpge
+ 1861              	.LVL166:
+ 1862 0084 48B9     		cbnz	r0, .L132
+ 1863              	.L120:
+ 1864              	.LBE168:
+ 242:chelper/trapq.c ****         double move_end = m->print_time + m->move_t;
+ 1865              		.loc 1 242 5 is_stmt 1 discriminator 2 view .LVU475
+ 1866 0086 D4F88030 		ldr	r3, [r4, #128]
+ 1867 008a 9A45     		cmp	r10, r3
+ 1868 008c A3F18004 		sub	r4, r3, #128
+ 1869              	.LVL167:
+ 242:chelper/trapq.c ****         double move_end = m->print_time + m->move_t;
+ 1870              		.loc 1 242 5 discriminator 2 view .LVU476
+ 1871 0090 E4D1     		bne	.L123
+ 1872              	.L124:
+ 245:chelper/trapq.c ****             double move_time = print_time - m->print_time;
+ 246:chelper/trapq.c ****             move_get_coord(m, move_time, pos);
+ 247:chelper/trapq.c ****             return 0;
+ 248:chelper/trapq.c ****         }
+ 249:chelper/trapq.c ****     }
+ 250:chelper/trapq.c ****     
+ 251:chelper/trapq.c ****     return -1;  /* No move at this time */
+ 1873              		.loc 1 251 12 is_stmt 0 view .LVU477
+ 1874 0092 4FF0FF30 		mov	r0, #-1
+ 252:chelper/trapq.c **** }
+ 1875              		.loc 1 252 1 view .LVU478
+ 1876 0096 BDE8F087 		pop	{r4, r5, r6, r7, r8, r9, r10, pc}
+ 1877              	.LVL168:
+ 1878              	.L132:
+ 1879              	.LBB170:
+ 1880              	.LBB169:
+ 245:chelper/trapq.c ****             double move_time = print_time - m->print_time;
+ 1881              		.loc 1 245 13 is_stmt 1 view .LVU479
+ 246:chelper/trapq.c ****             return 0;
+ 1882              		.loc 1 246 13 view .LVU480
+ 245:chelper/trapq.c ****             double move_time = print_time - m->print_time;
+ 1883              		.loc 1 245 20 is_stmt 0 view .LVU481
+ 1884 009a 3246     		mov	r2, r6
+ 1885 009c 3B46     		mov	r3, r7
+ 1886 009e 4046     		mov	r0, r8
+ 1887 00a0 4946     		mov	r1, r9
+ 1888 00a2 FFF7FEFF 		bl	__aeabi_dsub
+ARM GAS  /tmp/ccEIhprR.s 			page 46
+
+
+ 1889              	.LVL169:
+ 1890 00a6 41EC100B 		vmov	d0, r0, r1
+ 246:chelper/trapq.c ****             return 0;
+ 1891              		.loc 1 246 13 view .LVU482
+ 1892 00aa 2046     		mov	r0, r4
+ 1893 00ac 2946     		mov	r1, r5
+ 1894 00ae FFF7FEFF 		bl	move_get_coord
+ 1895              	.LVL170:
+ 247:chelper/trapq.c ****         }
+ 1896              		.loc 1 247 13 is_stmt 1 view .LVU483
+ 247:chelper/trapq.c ****         }
+ 1897              		.loc 1 247 20 is_stmt 0 view .LVU484
+ 1898 00b2 0020     		movs	r0, #0
+ 1899              	.LBE169:
+ 1900              	.LBE170:
+ 1901              		.loc 1 252 1 view .LVU485
+ 1902 00b4 BDE8F087 		pop	{r4, r5, r6, r7, r8, r9, r10, pc}
+ 1903              		.loc 1 252 1 view .LVU486
+ 1904              		.cfi_endproc
+ 1905              	.LFE16:
+ 1907              		.section	.text.trapq_has_moves,"ax",%progbits
+ 1908              		.align	1
+ 1909              		.p2align 2,,3
+ 1910              		.global	trapq_has_moves
+ 1911              		.syntax unified
+ 1912              		.thumb
+ 1913              		.thumb_func
+ 1914              		.fpu fpv4-sp-d16
+ 1916              	trapq_has_moves:
+ 1917              	.LVL171:
+ 1918              	.LFB17:
+ 253:chelper/trapq.c **** 
+ 254:chelper/trapq.c **** int
+ 255:chelper/trapq.c **** trapq_has_moves(const struct trapq *tq)
+ 256:chelper/trapq.c **** {
+ 1919              		.loc 1 256 1 is_stmt 1 view -0
+ 1920              		.cfi_startproc
+ 1921              		@ args = 0, pretend = 0, frame = 0
+ 1922              		@ frame_needed = 0, uses_anonymous_args = 0
+ 1923              		@ link register save eliminated.
+ 257:chelper/trapq.c ****     return !list_empty(&tq->moves);
+ 1924              		.loc 1 257 5 view .LVU488
+ 1925              	.LBB171:
+ 1926              	.LBI171:
+  77:chelper/list.h **** {
+ 1927              		.loc 2 77 1 view .LVU489
+ 1928              	.LBB172:
+  79:chelper/list.h **** }
+ 1929              		.loc 2 79 5 view .LVU490
+  79:chelper/list.h **** }
+ 1930              		.loc 2 79 5 is_stmt 0 view .LVU491
+ 1931              	.LBE172:
+ 1932              	.LBE171:
+ 1933              		.loc 1 257 12 view .LVU492
+ 1934 0000 0368     		ldr	r3, [r0]
+ 258:chelper/trapq.c **** }
+ 1935              		.loc 1 258 1 view .LVU493
+ARM GAS  /tmp/ccEIhprR.s 			page 47
+
+
+ 1936 0002 181A     		subs	r0, r3, r0
+ 1937              	.LVL172:
+ 1938              		.loc 1 258 1 view .LVU494
+ 1939 0004 18BF     		it	ne
+ 1940 0006 0120     		movne	r0, #1
+ 1941 0008 7047     		bx	lr
+ 1942              		.cfi_endproc
+ 1943              	.LFE17:
+ 1945 000a 00BF     		.section	.text.trapq_first_move,"ax",%progbits
+ 1946              		.align	1
+ 1947              		.p2align 2,,3
+ 1948              		.global	trapq_first_move
+ 1949              		.syntax unified
+ 1950              		.thumb
+ 1951              		.thumb_func
+ 1952              		.fpu fpv4-sp-d16
+ 1954              	trapq_first_move:
+ 1955              	.LVL173:
+ 1956              	.LFB18:
+ 259:chelper/trapq.c **** 
+ 260:chelper/trapq.c **** struct move *
+ 261:chelper/trapq.c **** trapq_first_move(struct trapq *tq)
+ 262:chelper/trapq.c **** {
+ 1957              		.loc 1 262 1 is_stmt 1 view -0
+ 1958              		.cfi_startproc
+ 1959              		@ args = 0, pretend = 0, frame = 0
+ 1960              		@ frame_needed = 0, uses_anonymous_args = 0
+ 1961              		@ link register save eliminated.
+ 263:chelper/trapq.c ****     return list_first_entry(&tq->moves, struct move, node);
+ 1962              		.loc 1 263 5 view .LVU496
+ 1963              	.LBB173:
+ 1964              	.LBI173:
+  77:chelper/list.h **** {
+ 1965              		.loc 2 77 1 view .LVU497
+ 1966              	.LBB174:
+  79:chelper/list.h **** }
+ 1967              		.loc 2 79 5 view .LVU498
+  79:chelper/list.h **** }
+ 1968              		.loc 2 79 22 is_stmt 0 view .LVU499
+ 1969 0000 0368     		ldr	r3, [r0]
+ 1970              	.LVL174:
+  79:chelper/list.h **** }
+ 1971              		.loc 2 79 22 view .LVU500
+ 1972              	.LBE174:
+ 1973              	.LBE173:
+ 1974              		.loc 1 263 12 view .LVU501
+ 1975 0002 8342     		cmp	r3, r0
+ 1976 0004 14BF     		ite	ne
+ 1977 0006 A3F18000 		subne	r0, r3, #128
+ 1978              	.LVL175:
+ 1979              		.loc 1 263 12 view .LVU502
+ 1980 000a 0020     		moveq	r0, #0
+ 264:chelper/trapq.c **** }
+ 1981              		.loc 1 264 1 view .LVU503
+ 1982 000c 7047     		bx	lr
+ 1983              		.cfi_endproc
+ 1984              	.LFE18:
+ARM GAS  /tmp/ccEIhprR.s 			page 48
+
+
+ 1986 000e 00BF     		.section	.text.trapq_last_move,"ax",%progbits
+ 1987              		.align	1
+ 1988              		.p2align 2,,3
+ 1989              		.global	trapq_last_move
+ 1990              		.syntax unified
+ 1991              		.thumb
+ 1992              		.thumb_func
+ 1993              		.fpu fpv4-sp-d16
+ 1995              	trapq_last_move:
+ 1996              	.LVL176:
+ 1997              	.LFB19:
+ 265:chelper/trapq.c **** 
+ 266:chelper/trapq.c **** struct move *
+ 267:chelper/trapq.c **** trapq_last_move(struct trapq *tq)
+ 268:chelper/trapq.c **** {
+ 1998              		.loc 1 268 1 is_stmt 1 view -0
+ 1999              		.cfi_startproc
+ 2000              		@ args = 0, pretend = 0, frame = 0
+ 2001              		@ frame_needed = 0, uses_anonymous_args = 0
+ 2002              		@ link register save eliminated.
+ 269:chelper/trapq.c ****     return list_last_entry(&tq->moves, struct move, node);
+ 2003              		.loc 1 269 5 view .LVU505
+ 2004              	.LBB175:
+ 2005              	.LBI175:
+  77:chelper/list.h **** {
+ 2006              		.loc 2 77 1 view .LVU506
+ 2007              	.LBB176:
+  79:chelper/list.h **** }
+ 2008              		.loc 2 79 5 view .LVU507
+  79:chelper/list.h **** }
+ 2009              		.loc 2 79 5 is_stmt 0 view .LVU508
+ 2010              	.LBE176:
+ 2011              	.LBE175:
+ 2012              		.loc 1 269 12 view .LVU509
+ 2013 0000 0368     		ldr	r3, [r0]
+ 2014 0002 8342     		cmp	r3, r0
+ 2015 0004 1ABF     		itte	ne
+ 2016 0006 4068     		ldrne	r0, [r0, #4]
+ 2017              	.LVL177:
+ 2018              		.loc 1 269 12 view .LVU510
+ 2019 0008 8038     		subne	r0, r0, #128
+ 2020 000a 0020     		moveq	r0, #0
+ 270:chelper/trapq.c **** }
+ 2021              		.loc 1 270 1 view .LVU511
+ 2022 000c 7047     		bx	lr
+ 2023              		.cfi_endproc
+ 2024              	.LFE19:
+ 2026 000e 00BF     		.section	.bss.move_pool,"aw",%nobits
+ 2027              		.align	3
+ 2030              	move_pool:
+ 2031 0000 00000000 		.space	4352
+ 2031      00000000 
+ 2031      00000000 
+ 2031      00000000 
+ 2031      00000000 
+ 2032              		.section	.bss.move_pool_used,"aw",%nobits
+ 2033              		.align	2
+ARM GAS  /tmp/ccEIhprR.s 			page 49
+
+
+ 2034              		.set	.LANCHOR0,. + 0
+ 2037              	move_pool_used:
+ 2038 0000 00000000 		.space	32
+ 2038      00000000 
+ 2038      00000000 
+ 2038      00000000 
+ 2038      00000000 
+ 2039              		.section	.bss.trapq_pool,"aw",%nobits
+ 2040              		.align	2
+ 2041              		.set	.LANCHOR2,. + 0
+ 2044              	trapq_pool:
+ 2045 0000 00000000 		.space	32
+ 2045      00000000 
+ 2045      00000000 
+ 2045      00000000 
+ 2045      00000000 
+ 2046              		.section	.bss.trapq_pool_used,"aw",%nobits
+ 2047              		.align	2
+ 2048              		.set	.LANCHOR1,. + 0
+ 2051              	trapq_pool_used:
+ 2052 0000 0000     		.space	2
+ 2053              		.text
+ 2054              	.Letext0:
+ 2055              		.file 3 "chelper/trapq.h"
+ 2056              		.file 4 "/usr/lib/gcc/arm-none-eabi/10.3.1/include/stdint.h"
+ 2057              		.file 5 "<built-in>"
+ARM GAS  /tmp/ccEIhprR.s 			page 50
+
+
+DEFINED SYMBOLS
+                            *ABS*:0000000000000000 trapq.c
+     /tmp/ccEIhprR.s:18     .text.trapq_pool_init:0000000000000000 $t
+     /tmp/ccEIhprR.s:27     .text.trapq_pool_init:0000000000000000 trapq_pool_init
+     /tmp/ccEIhprR.s:55     .text.trapq_pool_init:0000000000000014 $d
+     /tmp/ccEIhprR.s:61     .text.trapq_alloc:0000000000000000 $t
+     /tmp/ccEIhprR.s:69     .text.trapq_alloc:0000000000000000 trapq_alloc
+     /tmp/ccEIhprR.s:193    .text.trapq_alloc:0000000000000040 $d
+     /tmp/ccEIhprR.s:201    .text.trapq_free:0000000000000000 $t
+     /tmp/ccEIhprR.s:209    .text.trapq_free:0000000000000000 trapq_free
+     /tmp/ccEIhprR.s:515    .text.trapq_free:00000000000000c8 $d
+     /tmp/ccEIhprR.s:2030   .bss.move_pool:0000000000000000 move_pool
+     /tmp/ccEIhprR.s:524    .text.move_alloc:0000000000000000 $t
+     /tmp/ccEIhprR.s:532    .text.move_alloc:0000000000000000 move_alloc
+     /tmp/ccEIhprR.s:605    .text.move_alloc:000000000000003c $d
+     /tmp/ccEIhprR.s:611    .text.move_free:0000000000000000 $t
+     /tmp/ccEIhprR.s:619    .text.move_free:0000000000000000 move_free
+     /tmp/ccEIhprR.s:662    .text.move_free:0000000000000020 $d
+     /tmp/ccEIhprR.s:675    .text.move_get_distance:0000000000000000 $t
+     /tmp/ccEIhprR.s:683    .text.move_get_distance:0000000000000000 move_get_distance
+     /tmp/ccEIhprR.s:1048   .text.move_get_distance:00000000000001d8 $d
+     /tmp/ccEIhprR.s:1055   .text.move_get_coord:0000000000000000 $t
+     /tmp/ccEIhprR.s:1063   .text.move_get_coord:0000000000000000 move_get_coord
+     /tmp/ccEIhprR.s:1150   .text.trapq_append:0000000000000000 $t
+     /tmp/ccEIhprR.s:1158   .text.trapq_append:0000000000000000 trapq_append
+     /tmp/ccEIhprR.s:1382   .text.trapq_append:00000000000000f4 $d
+     /tmp/ccEIhprR.s:1389   .text.trapq_finalize_moves:0000000000000000 $t
+     /tmp/ccEIhprR.s:1397   .text.trapq_finalize_moves:0000000000000000 trapq_finalize_moves
+     /tmp/ccEIhprR.s:1541   .text.trapq_free_moves:0000000000000000 $t
+     /tmp/ccEIhprR.s:1549   .text.trapq_free_moves:0000000000000000 trapq_free_moves
+     /tmp/ccEIhprR.s:1727   .text.trapq_free_moves:000000000000007c $d
+     /tmp/ccEIhprR.s:1735   .text.trapq_get_position:0000000000000000 $t
+     /tmp/ccEIhprR.s:1743   .text.trapq_get_position:0000000000000000 trapq_get_position
+     /tmp/ccEIhprR.s:1908   .text.trapq_has_moves:0000000000000000 $t
+     /tmp/ccEIhprR.s:1916   .text.trapq_has_moves:0000000000000000 trapq_has_moves
+     /tmp/ccEIhprR.s:1946   .text.trapq_first_move:0000000000000000 $t
+     /tmp/ccEIhprR.s:1954   .text.trapq_first_move:0000000000000000 trapq_first_move
+     /tmp/ccEIhprR.s:1987   .text.trapq_last_move:0000000000000000 $t
+     /tmp/ccEIhprR.s:1995   .text.trapq_last_move:0000000000000000 trapq_last_move
+     /tmp/ccEIhprR.s:2027   .bss.move_pool:0000000000000000 $d
+     /tmp/ccEIhprR.s:2033   .bss.move_pool_used:0000000000000000 $d
+     /tmp/ccEIhprR.s:2037   .bss.move_pool_used:0000000000000000 move_pool_used
+     /tmp/ccEIhprR.s:2040   .bss.trapq_pool:0000000000000000 $d
+     /tmp/ccEIhprR.s:2044   .bss.trapq_pool:0000000000000000 trapq_pool
+     /tmp/ccEIhprR.s:2047   .bss.trapq_pool_used:0000000000000000 $d
+     /tmp/ccEIhprR.s:2051   .bss.trapq_pool_used:0000000000000000 trapq_pool_used
+
+UNDEFINED SYMBOLS
+memset
+__aeabi_dcmple
+__aeabi_dcmpgt
+__aeabi_dcmplt
+__aeabi_dmul
+__aeabi_dadd
+__aeabi_dsub
+__aeabi_dcmpge

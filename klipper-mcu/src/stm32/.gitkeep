@@ -1,0 +1,6 @@
+# Placeholder for STM32 HAL files
+# This directory will contain:
+# - stm32f4.c (芯片初始化)
+# - gpio.c/h (GPIO 驱动)
+# - adc.c (ADC 驱动)
+# - serial.c (串口驱动)

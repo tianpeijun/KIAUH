@@ -1,0 +1,2036 @@
+ARM GAS  /tmp/ccLITLtJ.s 			page 1
+
+
+   1              		.cpu cortex-m4
+   2              		.eabi_attribute 27, 1
+   3              		.eabi_attribute 28, 1
+   4              		.eabi_attribute 20, 1
+   5              		.eabi_attribute 21, 1
+   6              		.eabi_attribute 23, 3
+   7              		.eabi_attribute 24, 1
+   8              		.eabi_attribute 25, 1
+   9              		.eabi_attribute 26, 1
+  10              		.eabi_attribute 30, 2
+  11              		.eabi_attribute 34, 1
+  12              		.eabi_attribute 18, 4
+  13              		.file	"kin_cartesian.c"
+  14              		.text
+  15              	.Ltext0:
+  16              		.cfi_sections	.debug_frame
+  17              		.global	__aeabi_dmul
+  18              		.section	.text.cartesian_x_calc_position,"ax",%progbits
+  19              		.align	1
+  20              		.p2align 2,,3
+  21              		.arch armv7e-m
+  22              		.syntax unified
+  23              		.thumb
+  24              		.thumb_func
+  25              		.fpu fpv4-sp-d16
+  27              	cartesian_x_calc_position:
+  28              	.LVL0:
+  29              	.LFB6:
+  30              		.file 1 "chelper/kin_cartesian.c"
+   1:chelper/kin_cartesian.c **** /**
+   2:chelper/kin_cartesian.c ****  * @file    kin_cartesian.c
+   3:chelper/kin_cartesian.c ****  * @brief   Cartesian kinematics implementation
+   4:chelper/kin_cartesian.c ****  * 
+   5:chelper/kin_cartesian.c ****  * Adapted from Klipper klippy/chelper/kin_cartesian.c for MCU use.
+   6:chelper/kin_cartesian.c ****  * Provides position calculation callbacks for Cartesian (X/Y/Z) printers.
+   7:chelper/kin_cartesian.c ****  * 
+   8:chelper/kin_cartesian.c ****  * In Cartesian kinematics, each axis maps directly to one stepper motor:
+   9:chelper/kin_cartesian.c ****  * - X axis -> X stepper
+  10:chelper/kin_cartesian.c ****  * - Y axis -> Y stepper
+  11:chelper/kin_cartesian.c ****  * - Z axis -> Z stepper
+  12:chelper/kin_cartesian.c ****  * - E axis -> Extruder stepper
+  13:chelper/kin_cartesian.c ****  * 
+  14:chelper/kin_cartesian.c ****  * Key adaptations:
+  15:chelper/kin_cartesian.c ****  * - Static memory pools instead of malloc/free
+  16:chelper/kin_cartesian.c ****  * - Removed Python FFI markers (__visible)
+  17:chelper/kin_cartesian.c ****  * - C99 compatible
+  18:chelper/kin_cartesian.c ****  */
+  19:chelper/kin_cartesian.c **** 
+  20:chelper/kin_cartesian.c **** #include "itersolve.h"
+  21:chelper/kin_cartesian.c **** #include "trapq.h"
+  22:chelper/kin_cartesian.c **** #include <math.h>
+  23:chelper/kin_cartesian.c **** 
+  24:chelper/kin_cartesian.c **** /* ========== Axis Definitions ========== */
+  25:chelper/kin_cartesian.c **** 
+  26:chelper/kin_cartesian.c **** #define AXIS_X      0
+  27:chelper/kin_cartesian.c **** #define AXIS_Y      1
+  28:chelper/kin_cartesian.c **** #define AXIS_Z      2
+ARM GAS  /tmp/ccLITLtJ.s 			page 2
+
+
+  29:chelper/kin_cartesian.c **** #define AXIS_E      3
+  30:chelper/kin_cartesian.c **** 
+  31:chelper/kin_cartesian.c **** /* ========== Position Calculation Callbacks ========== */
+  32:chelper/kin_cartesian.c **** 
+  33:chelper/kin_cartesian.c **** /**
+  34:chelper/kin_cartesian.c ****  * @brief Calculate X axis position at given time within a move
+  35:chelper/kin_cartesian.c ****  * 
+  36:chelper/kin_cartesian.c ****  * @param sk    Stepper kinematics (contains scale factor)
+  37:chelper/kin_cartesian.c ****  * @param m     Current move
+  38:chelper/kin_cartesian.c ****  * @param time  Time offset within move
+  39:chelper/kin_cartesian.c ****  * @return Position in stepper units (steps)
+  40:chelper/kin_cartesian.c ****  */
+  41:chelper/kin_cartesian.c **** static double
+  42:chelper/kin_cartesian.c **** cartesian_x_calc_position(struct stepper_kinematics *sk, struct move *m,
+  43:chelper/kin_cartesian.c ****                           double time)
+  44:chelper/kin_cartesian.c **** {
+  31              		.loc 1 44 1 view -0
+  32              		.cfi_startproc
+  33              		@ args = 0, pretend = 0, frame = 32
+  34              		@ frame_needed = 0, uses_anonymous_args = 0
+  45:chelper/kin_cartesian.c ****     struct coord pos;
+  35              		.loc 1 45 5 view .LVU1
+  46:chelper/kin_cartesian.c ****     move_get_coord(m, time, &pos);
+  36              		.loc 1 46 5 view .LVU2
+  44:chelper/kin_cartesian.c ****     struct coord pos;
+  37              		.loc 1 44 1 is_stmt 0 view .LVU3
+  38 0000 10B5     		push	{r4, lr}
+  39              		.cfi_def_cfa_offset 8
+  40              		.cfi_offset 4, -8
+  41              		.cfi_offset 14, -4
+  42 0002 88B0     		sub	sp, sp, #32
+  43              		.cfi_def_cfa_offset 40
+  44:chelper/kin_cartesian.c ****     struct coord pos;
+  44              		.loc 1 44 1 view .LVU4
+  45 0004 0446     		mov	r4, r0
+  46 0006 0846     		mov	r0, r1
+  47              	.LVL1:
+  48              		.loc 1 46 5 view .LVU5
+  49 0008 6946     		mov	r1, sp
+  50              	.LVL2:
+  51              		.loc 1 46 5 view .LVU6
+  52 000a FFF7FEFF 		bl	move_get_coord
+  53              	.LVL3:
+  47:chelper/kin_cartesian.c ****     return pos.x * sk->scale;
+  54              		.loc 1 47 5 is_stmt 1 view .LVU7
+  55              		.loc 1 47 18 is_stmt 0 view .LVU8
+  56 000e D4E91023 		ldrd	r2, [r4, #64]
+  57 0012 DDE90001 		ldrd	r0, [sp]
+  58 0016 FFF7FEFF 		bl	__aeabi_dmul
+  59              	.LVL4:
+  48:chelper/kin_cartesian.c **** }
+  60              		.loc 1 48 1 view .LVU9
+  61 001a 41EC100B 		vmov	d0, r0, r1
+  62 001e 08B0     		add	sp, sp, #32
+  63              		.cfi_def_cfa_offset 8
+  64              		@ sp needed
+  65 0020 10BD     		pop	{r4, pc}
+ARM GAS  /tmp/ccLITLtJ.s 			page 3
+
+
+  66              		.loc 1 48 1 view .LVU10
+  67              		.cfi_endproc
+  68              	.LFE6:
+  70 0022 00BF     		.section	.text.cartesian_y_calc_position,"ax",%progbits
+  71              		.align	1
+  72              		.p2align 2,,3
+  73              		.syntax unified
+  74              		.thumb
+  75              		.thumb_func
+  76              		.fpu fpv4-sp-d16
+  78              	cartesian_y_calc_position:
+  79              	.LVL5:
+  80              	.LFB7:
+  49:chelper/kin_cartesian.c **** 
+  50:chelper/kin_cartesian.c **** /**
+  51:chelper/kin_cartesian.c ****  * @brief Calculate Y axis position at given time within a move
+  52:chelper/kin_cartesian.c ****  */
+  53:chelper/kin_cartesian.c **** static double
+  54:chelper/kin_cartesian.c **** cartesian_y_calc_position(struct stepper_kinematics *sk, struct move *m,
+  55:chelper/kin_cartesian.c ****                           double time)
+  56:chelper/kin_cartesian.c **** {
+  81              		.loc 1 56 1 is_stmt 1 view -0
+  82              		.cfi_startproc
+  83              		@ args = 0, pretend = 0, frame = 32
+  84              		@ frame_needed = 0, uses_anonymous_args = 0
+  57:chelper/kin_cartesian.c ****     struct coord pos;
+  85              		.loc 1 57 5 view .LVU12
+  58:chelper/kin_cartesian.c ****     move_get_coord(m, time, &pos);
+  86              		.loc 1 58 5 view .LVU13
+  56:chelper/kin_cartesian.c ****     struct coord pos;
+  87              		.loc 1 56 1 is_stmt 0 view .LVU14
+  88 0000 10B5     		push	{r4, lr}
+  89              		.cfi_def_cfa_offset 8
+  90              		.cfi_offset 4, -8
+  91              		.cfi_offset 14, -4
+  92 0002 88B0     		sub	sp, sp, #32
+  93              		.cfi_def_cfa_offset 40
+  56:chelper/kin_cartesian.c ****     struct coord pos;
+  94              		.loc 1 56 1 view .LVU15
+  95 0004 0446     		mov	r4, r0
+  96 0006 0846     		mov	r0, r1
+  97              	.LVL6:
+  98              		.loc 1 58 5 view .LVU16
+  99 0008 6946     		mov	r1, sp
+ 100              	.LVL7:
+ 101              		.loc 1 58 5 view .LVU17
+ 102 000a FFF7FEFF 		bl	move_get_coord
+ 103              	.LVL8:
+  59:chelper/kin_cartesian.c ****     return pos.y * sk->scale;
+ 104              		.loc 1 59 5 is_stmt 1 view .LVU18
+ 105              		.loc 1 59 18 is_stmt 0 view .LVU19
+ 106 000e D4E91023 		ldrd	r2, [r4, #64]
+ 107 0012 DDE90201 		ldrd	r0, [sp, #8]
+ 108 0016 FFF7FEFF 		bl	__aeabi_dmul
+ 109              	.LVL9:
+  60:chelper/kin_cartesian.c **** }
+ 110              		.loc 1 60 1 view .LVU20
+ARM GAS  /tmp/ccLITLtJ.s 			page 4
+
+
+ 111 001a 41EC100B 		vmov	d0, r0, r1
+ 112 001e 08B0     		add	sp, sp, #32
+ 113              		.cfi_def_cfa_offset 8
+ 114              		@ sp needed
+ 115 0020 10BD     		pop	{r4, pc}
+ 116              		.loc 1 60 1 view .LVU21
+ 117              		.cfi_endproc
+ 118              	.LFE7:
+ 120 0022 00BF     		.section	.text.cartesian_z_calc_position,"ax",%progbits
+ 121              		.align	1
+ 122              		.p2align 2,,3
+ 123              		.syntax unified
+ 124              		.thumb
+ 125              		.thumb_func
+ 126              		.fpu fpv4-sp-d16
+ 128              	cartesian_z_calc_position:
+ 129              	.LVL10:
+ 130              	.LFB8:
+  61:chelper/kin_cartesian.c **** 
+  62:chelper/kin_cartesian.c **** /**
+  63:chelper/kin_cartesian.c ****  * @brief Calculate Z axis position at given time within a move
+  64:chelper/kin_cartesian.c ****  */
+  65:chelper/kin_cartesian.c **** static double
+  66:chelper/kin_cartesian.c **** cartesian_z_calc_position(struct stepper_kinematics *sk, struct move *m,
+  67:chelper/kin_cartesian.c ****                           double time)
+  68:chelper/kin_cartesian.c **** {
+ 131              		.loc 1 68 1 is_stmt 1 view -0
+ 132              		.cfi_startproc
+ 133              		@ args = 0, pretend = 0, frame = 32
+ 134              		@ frame_needed = 0, uses_anonymous_args = 0
+  69:chelper/kin_cartesian.c ****     struct coord pos;
+ 135              		.loc 1 69 5 view .LVU23
+  70:chelper/kin_cartesian.c ****     move_get_coord(m, time, &pos);
+ 136              		.loc 1 70 5 view .LVU24
+  68:chelper/kin_cartesian.c ****     struct coord pos;
+ 137              		.loc 1 68 1 is_stmt 0 view .LVU25
+ 138 0000 10B5     		push	{r4, lr}
+ 139              		.cfi_def_cfa_offset 8
+ 140              		.cfi_offset 4, -8
+ 141              		.cfi_offset 14, -4
+ 142 0002 88B0     		sub	sp, sp, #32
+ 143              		.cfi_def_cfa_offset 40
+  68:chelper/kin_cartesian.c ****     struct coord pos;
+ 144              		.loc 1 68 1 view .LVU26
+ 145 0004 0446     		mov	r4, r0
+ 146 0006 0846     		mov	r0, r1
+ 147              	.LVL11:
+ 148              		.loc 1 70 5 view .LVU27
+ 149 0008 6946     		mov	r1, sp
+ 150              	.LVL12:
+ 151              		.loc 1 70 5 view .LVU28
+ 152 000a FFF7FEFF 		bl	move_get_coord
+ 153              	.LVL13:
+  71:chelper/kin_cartesian.c ****     return pos.z * sk->scale;
+ 154              		.loc 1 71 5 is_stmt 1 view .LVU29
+ 155              		.loc 1 71 18 is_stmt 0 view .LVU30
+ 156 000e D4E91023 		ldrd	r2, [r4, #64]
+ARM GAS  /tmp/ccLITLtJ.s 			page 5
+
+
+ 157 0012 DDE90401 		ldrd	r0, [sp, #16]
+ 158 0016 FFF7FEFF 		bl	__aeabi_dmul
+ 159              	.LVL14:
+  72:chelper/kin_cartesian.c **** }
+ 160              		.loc 1 72 1 view .LVU31
+ 161 001a 41EC100B 		vmov	d0, r0, r1
+ 162 001e 08B0     		add	sp, sp, #32
+ 163              		.cfi_def_cfa_offset 8
+ 164              		@ sp needed
+ 165 0020 10BD     		pop	{r4, pc}
+ 166              		.loc 1 72 1 view .LVU32
+ 167              		.cfi_endproc
+ 168              	.LFE8:
+ 170 0022 00BF     		.section	.text.cartesian_e_calc_position,"ax",%progbits
+ 171              		.align	1
+ 172              		.p2align 2,,3
+ 173              		.syntax unified
+ 174              		.thumb
+ 175              		.thumb_func
+ 176              		.fpu fpv4-sp-d16
+ 178              	cartesian_e_calc_position:
+ 179              	.LVL15:
+ 180              	.LFB9:
+  73:chelper/kin_cartesian.c **** 
+  74:chelper/kin_cartesian.c **** /**
+  75:chelper/kin_cartesian.c ****  * @brief Calculate extruder position at given time within a move
+  76:chelper/kin_cartesian.c ****  */
+  77:chelper/kin_cartesian.c **** static double
+  78:chelper/kin_cartesian.c **** cartesian_e_calc_position(struct stepper_kinematics *sk, struct move *m,
+  79:chelper/kin_cartesian.c ****                           double time)
+  80:chelper/kin_cartesian.c **** {
+ 181              		.loc 1 80 1 is_stmt 1 view -0
+ 182              		.cfi_startproc
+ 183              		@ args = 0, pretend = 0, frame = 32
+ 184              		@ frame_needed = 0, uses_anonymous_args = 0
+  81:chelper/kin_cartesian.c ****     struct coord pos;
+ 185              		.loc 1 81 5 view .LVU34
+  82:chelper/kin_cartesian.c ****     move_get_coord(m, time, &pos);
+ 186              		.loc 1 82 5 view .LVU35
+  80:chelper/kin_cartesian.c ****     struct coord pos;
+ 187              		.loc 1 80 1 is_stmt 0 view .LVU36
+ 188 0000 10B5     		push	{r4, lr}
+ 189              		.cfi_def_cfa_offset 8
+ 190              		.cfi_offset 4, -8
+ 191              		.cfi_offset 14, -4
+ 192 0002 88B0     		sub	sp, sp, #32
+ 193              		.cfi_def_cfa_offset 40
+  80:chelper/kin_cartesian.c ****     struct coord pos;
+ 194              		.loc 1 80 1 view .LVU37
+ 195 0004 0446     		mov	r4, r0
+ 196 0006 0846     		mov	r0, r1
+ 197              	.LVL16:
+ 198              		.loc 1 82 5 view .LVU38
+ 199 0008 6946     		mov	r1, sp
+ 200              	.LVL17:
+ 201              		.loc 1 82 5 view .LVU39
+ 202 000a FFF7FEFF 		bl	move_get_coord
+ARM GAS  /tmp/ccLITLtJ.s 			page 6
+
+
+ 203              	.LVL18:
+  83:chelper/kin_cartesian.c ****     return pos.e * sk->scale;
+ 204              		.loc 1 83 5 is_stmt 1 view .LVU40
+ 205              		.loc 1 83 18 is_stmt 0 view .LVU41
+ 206 000e D4E91023 		ldrd	r2, [r4, #64]
+ 207 0012 DDE90601 		ldrd	r0, [sp, #24]
+ 208 0016 FFF7FEFF 		bl	__aeabi_dmul
+ 209              	.LVL19:
+  84:chelper/kin_cartesian.c **** }
+ 210              		.loc 1 84 1 view .LVU42
+ 211 001a 41EC100B 		vmov	d0, r0, r1
+ 212 001e 08B0     		add	sp, sp, #32
+ 213              		.cfi_def_cfa_offset 8
+ 214              		@ sp needed
+ 215 0020 10BD     		pop	{r4, pc}
+ 216              		.loc 1 84 1 view .LVU43
+ 217              		.cfi_endproc
+ 218              	.LFE9:
+ 220              		.global	__aeabi_ddiv
+ 221 0022 00BF     		.section	.text.cartesian_stepper_x_setup,"ax",%progbits
+ 222              		.align	1
+ 223              		.p2align 2,,3
+ 224              		.global	cartesian_stepper_x_setup
+ 225              		.syntax unified
+ 226              		.thumb
+ 227              		.thumb_func
+ 228              		.fpu fpv4-sp-d16
+ 230              	cartesian_stepper_x_setup:
+ 231              	.LVL20:
+ 232              	.LFB10:
+  85:chelper/kin_cartesian.c **** 
+  86:chelper/kin_cartesian.c **** /* ========== Kinematics Setup Functions ========== */
+  87:chelper/kin_cartesian.c **** 
+  88:chelper/kin_cartesian.c **** /**
+  89:chelper/kin_cartesian.c ****  * @brief Setup stepper kinematics for X axis
+  90:chelper/kin_cartesian.c ****  * 
+  91:chelper/kin_cartesian.c ****  * @param sk            Stepper kinematics to configure
+  92:chelper/kin_cartesian.c ****  * @param steps_per_mm  Steps per millimeter for this axis
+  93:chelper/kin_cartesian.c ****  */
+  94:chelper/kin_cartesian.c **** void
+  95:chelper/kin_cartesian.c **** cartesian_stepper_x_setup(struct stepper_kinematics *sk, double steps_per_mm)
+  96:chelper/kin_cartesian.c **** {
+ 233              		.loc 1 96 1 is_stmt 1 view -0
+ 234              		.cfi_startproc
+ 235              		@ args = 0, pretend = 0, frame = 0
+ 236              		@ frame_needed = 0, uses_anonymous_args = 0
+  97:chelper/kin_cartesian.c ****     sk->axis = AXIS_X;
+ 237              		.loc 1 97 5 view .LVU45
+  96:chelper/kin_cartesian.c ****     sk->axis = AXIS_X;
+ 238              		.loc 1 96 1 is_stmt 0 view .LVU46
+ 239 0000 10B5     		push	{r4, lr}
+ 240              		.cfi_def_cfa_offset 8
+ 241              		.cfi_offset 4, -8
+ 242              		.cfi_offset 14, -4
+ 243              		.loc 1 97 14 view .LVU47
+ 244 0002 0021     		movs	r1, #0
+  96:chelper/kin_cartesian.c ****     sk->axis = AXIS_X;
+ARM GAS  /tmp/ccLITLtJ.s 			page 7
+
+
+ 245              		.loc 1 96 1 view .LVU48
+ 246 0004 0446     		mov	r4, r0
+ 247              		.loc 1 97 14 view .LVU49
+ 248 0006 C163     		str	r1, [r0, #60]
+  98:chelper/kin_cartesian.c ****     sk->scale = steps_per_mm;
+ 249              		.loc 1 98 5 is_stmt 1 view .LVU50
+  99:chelper/kin_cartesian.c ****     sk->step_dist = 1.0 / steps_per_mm;
+ 250              		.loc 1 99 5 view .LVU51
+  98:chelper/kin_cartesian.c ****     sk->scale = steps_per_mm;
+ 251              		.loc 1 98 15 is_stmt 0 view .LVU52
+ 252 0008 80ED100B 		vstr.64	d0, [r0, #64]
+  96:chelper/kin_cartesian.c ****     sk->axis = AXIS_X;
+ 253              		.loc 1 96 1 view .LVU53
+ 254 000c 53EC102B 		vmov	r2, r3, d0
+ 255              		.loc 1 99 25 view .LVU54
+ 256 0010 0449     		ldr	r1, .L12
+ 257 0012 0020     		movs	r0, #0
+ 258              	.LVL21:
+ 259              		.loc 1 99 25 view .LVU55
+ 260 0014 FFF7FEFF 		bl	__aeabi_ddiv
+ 261              	.LVL22:
+ 100:chelper/kin_cartesian.c ****     sk->calc_position_cb = cartesian_x_calc_position;
+ 262              		.loc 1 100 26 view .LVU56
+ 263 0018 034B     		ldr	r3, .L12+4
+ 264 001a 2360     		str	r3, [r4]
+  99:chelper/kin_cartesian.c ****     sk->step_dist = 1.0 / steps_per_mm;
+ 265              		.loc 1 99 19 view .LVU57
+ 266 001c C4E90A01 		strd	r0, [r4, #40]
+ 267              		.loc 1 100 5 is_stmt 1 view .LVU58
+ 101:chelper/kin_cartesian.c **** }
+ 268              		.loc 1 101 1 is_stmt 0 view .LVU59
+ 269 0020 10BD     		pop	{r4, pc}
+ 270              	.LVL23:
+ 271              	.L13:
+ 272              		.loc 1 101 1 view .LVU60
+ 273 0022 00BF     		.align	2
+ 274              	.L12:
+ 275 0024 0000F03F 		.word	1072693248
+ 276 0028 00000000 		.word	cartesian_x_calc_position
+ 277              		.cfi_endproc
+ 278              	.LFE10:
+ 280              		.section	.text.cartesian_stepper_y_setup,"ax",%progbits
+ 281              		.align	1
+ 282              		.p2align 2,,3
+ 283              		.global	cartesian_stepper_y_setup
+ 284              		.syntax unified
+ 285              		.thumb
+ 286              		.thumb_func
+ 287              		.fpu fpv4-sp-d16
+ 289              	cartesian_stepper_y_setup:
+ 290              	.LVL24:
+ 291              	.LFB11:
+ 102:chelper/kin_cartesian.c **** 
+ 103:chelper/kin_cartesian.c **** /**
+ 104:chelper/kin_cartesian.c ****  * @brief Setup stepper kinematics for Y axis
+ 105:chelper/kin_cartesian.c ****  */
+ 106:chelper/kin_cartesian.c **** void
+ARM GAS  /tmp/ccLITLtJ.s 			page 8
+
+
+ 107:chelper/kin_cartesian.c **** cartesian_stepper_y_setup(struct stepper_kinematics *sk, double steps_per_mm)
+ 108:chelper/kin_cartesian.c **** {
+ 292              		.loc 1 108 1 is_stmt 1 view -0
+ 293              		.cfi_startproc
+ 294              		@ args = 0, pretend = 0, frame = 0
+ 295              		@ frame_needed = 0, uses_anonymous_args = 0
+ 109:chelper/kin_cartesian.c ****     sk->axis = AXIS_Y;
+ 296              		.loc 1 109 5 view .LVU62
+ 108:chelper/kin_cartesian.c ****     sk->axis = AXIS_Y;
+ 297              		.loc 1 108 1 is_stmt 0 view .LVU63
+ 298 0000 10B5     		push	{r4, lr}
+ 299              		.cfi_def_cfa_offset 8
+ 300              		.cfi_offset 4, -8
+ 301              		.cfi_offset 14, -4
+ 302              		.loc 1 109 14 view .LVU64
+ 303 0002 0121     		movs	r1, #1
+ 108:chelper/kin_cartesian.c ****     sk->axis = AXIS_Y;
+ 304              		.loc 1 108 1 view .LVU65
+ 305 0004 0446     		mov	r4, r0
+ 306              		.loc 1 109 14 view .LVU66
+ 307 0006 C163     		str	r1, [r0, #60]
+ 110:chelper/kin_cartesian.c ****     sk->scale = steps_per_mm;
+ 308              		.loc 1 110 5 is_stmt 1 view .LVU67
+ 111:chelper/kin_cartesian.c ****     sk->step_dist = 1.0 / steps_per_mm;
+ 309              		.loc 1 111 5 view .LVU68
+ 110:chelper/kin_cartesian.c ****     sk->scale = steps_per_mm;
+ 310              		.loc 1 110 15 is_stmt 0 view .LVU69
+ 311 0008 80ED100B 		vstr.64	d0, [r0, #64]
+ 108:chelper/kin_cartesian.c ****     sk->axis = AXIS_Y;
+ 312              		.loc 1 108 1 view .LVU70
+ 313 000c 53EC102B 		vmov	r2, r3, d0
+ 314              		.loc 1 111 25 view .LVU71
+ 315 0010 0449     		ldr	r1, .L16
+ 316 0012 0020     		movs	r0, #0
+ 317              	.LVL25:
+ 318              		.loc 1 111 25 view .LVU72
+ 319 0014 FFF7FEFF 		bl	__aeabi_ddiv
+ 320              	.LVL26:
+ 112:chelper/kin_cartesian.c ****     sk->calc_position_cb = cartesian_y_calc_position;
+ 321              		.loc 1 112 26 view .LVU73
+ 322 0018 034B     		ldr	r3, .L16+4
+ 323 001a 2360     		str	r3, [r4]
+ 111:chelper/kin_cartesian.c ****     sk->step_dist = 1.0 / steps_per_mm;
+ 324              		.loc 1 111 19 view .LVU74
+ 325 001c C4E90A01 		strd	r0, [r4, #40]
+ 326              		.loc 1 112 5 is_stmt 1 view .LVU75
+ 113:chelper/kin_cartesian.c **** }
+ 327              		.loc 1 113 1 is_stmt 0 view .LVU76
+ 328 0020 10BD     		pop	{r4, pc}
+ 329              	.LVL27:
+ 330              	.L17:
+ 331              		.loc 1 113 1 view .LVU77
+ 332 0022 00BF     		.align	2
+ 333              	.L16:
+ 334 0024 0000F03F 		.word	1072693248
+ 335 0028 00000000 		.word	cartesian_y_calc_position
+ 336              		.cfi_endproc
+ARM GAS  /tmp/ccLITLtJ.s 			page 9
+
+
+ 337              	.LFE11:
+ 339              		.section	.text.cartesian_stepper_z_setup,"ax",%progbits
+ 340              		.align	1
+ 341              		.p2align 2,,3
+ 342              		.global	cartesian_stepper_z_setup
+ 343              		.syntax unified
+ 344              		.thumb
+ 345              		.thumb_func
+ 346              		.fpu fpv4-sp-d16
+ 348              	cartesian_stepper_z_setup:
+ 349              	.LVL28:
+ 350              	.LFB12:
+ 114:chelper/kin_cartesian.c **** 
+ 115:chelper/kin_cartesian.c **** /**
+ 116:chelper/kin_cartesian.c ****  * @brief Setup stepper kinematics for Z axis
+ 117:chelper/kin_cartesian.c ****  */
+ 118:chelper/kin_cartesian.c **** void
+ 119:chelper/kin_cartesian.c **** cartesian_stepper_z_setup(struct stepper_kinematics *sk, double steps_per_mm)
+ 120:chelper/kin_cartesian.c **** {
+ 351              		.loc 1 120 1 is_stmt 1 view -0
+ 352              		.cfi_startproc
+ 353              		@ args = 0, pretend = 0, frame = 0
+ 354              		@ frame_needed = 0, uses_anonymous_args = 0
+ 121:chelper/kin_cartesian.c ****     sk->axis = AXIS_Z;
+ 355              		.loc 1 121 5 view .LVU79
+ 120:chelper/kin_cartesian.c ****     sk->axis = AXIS_Z;
+ 356              		.loc 1 120 1 is_stmt 0 view .LVU80
+ 357 0000 10B5     		push	{r4, lr}
+ 358              		.cfi_def_cfa_offset 8
+ 359              		.cfi_offset 4, -8
+ 360              		.cfi_offset 14, -4
+ 361              		.loc 1 121 14 view .LVU81
+ 362 0002 0221     		movs	r1, #2
+ 120:chelper/kin_cartesian.c ****     sk->axis = AXIS_Z;
+ 363              		.loc 1 120 1 view .LVU82
+ 364 0004 0446     		mov	r4, r0
+ 365              		.loc 1 121 14 view .LVU83
+ 366 0006 C163     		str	r1, [r0, #60]
+ 122:chelper/kin_cartesian.c ****     sk->scale = steps_per_mm;
+ 367              		.loc 1 122 5 is_stmt 1 view .LVU84
+ 123:chelper/kin_cartesian.c ****     sk->step_dist = 1.0 / steps_per_mm;
+ 368              		.loc 1 123 5 view .LVU85
+ 122:chelper/kin_cartesian.c ****     sk->scale = steps_per_mm;
+ 369              		.loc 1 122 15 is_stmt 0 view .LVU86
+ 370 0008 80ED100B 		vstr.64	d0, [r0, #64]
+ 120:chelper/kin_cartesian.c ****     sk->axis = AXIS_Z;
+ 371              		.loc 1 120 1 view .LVU87
+ 372 000c 53EC102B 		vmov	r2, r3, d0
+ 373              		.loc 1 123 25 view .LVU88
+ 374 0010 0449     		ldr	r1, .L20
+ 375 0012 0020     		movs	r0, #0
+ 376              	.LVL29:
+ 377              		.loc 1 123 25 view .LVU89
+ 378 0014 FFF7FEFF 		bl	__aeabi_ddiv
+ 379              	.LVL30:
+ 124:chelper/kin_cartesian.c ****     sk->calc_position_cb = cartesian_z_calc_position;
+ 380              		.loc 1 124 26 view .LVU90
+ARM GAS  /tmp/ccLITLtJ.s 			page 10
+
+
+ 381 0018 034B     		ldr	r3, .L20+4
+ 382 001a 2360     		str	r3, [r4]
+ 123:chelper/kin_cartesian.c ****     sk->step_dist = 1.0 / steps_per_mm;
+ 383              		.loc 1 123 19 view .LVU91
+ 384 001c C4E90A01 		strd	r0, [r4, #40]
+ 385              		.loc 1 124 5 is_stmt 1 view .LVU92
+ 125:chelper/kin_cartesian.c **** }
+ 386              		.loc 1 125 1 is_stmt 0 view .LVU93
+ 387 0020 10BD     		pop	{r4, pc}
+ 388              	.LVL31:
+ 389              	.L21:
+ 390              		.loc 1 125 1 view .LVU94
+ 391 0022 00BF     		.align	2
+ 392              	.L20:
+ 393 0024 0000F03F 		.word	1072693248
+ 394 0028 00000000 		.word	cartesian_z_calc_position
+ 395              		.cfi_endproc
+ 396              	.LFE12:
+ 398              		.section	.text.cartesian_stepper_e_setup,"ax",%progbits
+ 399              		.align	1
+ 400              		.p2align 2,,3
+ 401              		.global	cartesian_stepper_e_setup
+ 402              		.syntax unified
+ 403              		.thumb
+ 404              		.thumb_func
+ 405              		.fpu fpv4-sp-d16
+ 407              	cartesian_stepper_e_setup:
+ 408              	.LVL32:
+ 409              	.LFB13:
+ 126:chelper/kin_cartesian.c **** 
+ 127:chelper/kin_cartesian.c **** /**
+ 128:chelper/kin_cartesian.c ****  * @brief Setup stepper kinematics for extruder
+ 129:chelper/kin_cartesian.c ****  */
+ 130:chelper/kin_cartesian.c **** void
+ 131:chelper/kin_cartesian.c **** cartesian_stepper_e_setup(struct stepper_kinematics *sk, double steps_per_mm)
+ 132:chelper/kin_cartesian.c **** {
+ 410              		.loc 1 132 1 is_stmt 1 view -0
+ 411              		.cfi_startproc
+ 412              		@ args = 0, pretend = 0, frame = 0
+ 413              		@ frame_needed = 0, uses_anonymous_args = 0
+ 133:chelper/kin_cartesian.c ****     sk->axis = AXIS_E;
+ 414              		.loc 1 133 5 view .LVU96
+ 132:chelper/kin_cartesian.c ****     sk->axis = AXIS_E;
+ 415              		.loc 1 132 1 is_stmt 0 view .LVU97
+ 416 0000 10B5     		push	{r4, lr}
+ 417              		.cfi_def_cfa_offset 8
+ 418              		.cfi_offset 4, -8
+ 419              		.cfi_offset 14, -4
+ 420              		.loc 1 133 14 view .LVU98
+ 421 0002 0321     		movs	r1, #3
+ 132:chelper/kin_cartesian.c ****     sk->axis = AXIS_E;
+ 422              		.loc 1 132 1 view .LVU99
+ 423 0004 0446     		mov	r4, r0
+ 424              		.loc 1 133 14 view .LVU100
+ 425 0006 C163     		str	r1, [r0, #60]
+ 134:chelper/kin_cartesian.c ****     sk->scale = steps_per_mm;
+ 426              		.loc 1 134 5 is_stmt 1 view .LVU101
+ARM GAS  /tmp/ccLITLtJ.s 			page 11
+
+
+ 135:chelper/kin_cartesian.c ****     sk->step_dist = 1.0 / steps_per_mm;
+ 427              		.loc 1 135 5 view .LVU102
+ 134:chelper/kin_cartesian.c ****     sk->scale = steps_per_mm;
+ 428              		.loc 1 134 15 is_stmt 0 view .LVU103
+ 429 0008 80ED100B 		vstr.64	d0, [r0, #64]
+ 132:chelper/kin_cartesian.c ****     sk->axis = AXIS_E;
+ 430              		.loc 1 132 1 view .LVU104
+ 431 000c 53EC102B 		vmov	r2, r3, d0
+ 432              		.loc 1 135 25 view .LVU105
+ 433 0010 0449     		ldr	r1, .L24
+ 434 0012 0020     		movs	r0, #0
+ 435              	.LVL33:
+ 436              		.loc 1 135 25 view .LVU106
+ 437 0014 FFF7FEFF 		bl	__aeabi_ddiv
+ 438              	.LVL34:
+ 136:chelper/kin_cartesian.c ****     sk->calc_position_cb = cartesian_e_calc_position;
+ 439              		.loc 1 136 26 view .LVU107
+ 440 0018 034B     		ldr	r3, .L24+4
+ 441 001a 2360     		str	r3, [r4]
+ 135:chelper/kin_cartesian.c ****     sk->step_dist = 1.0 / steps_per_mm;
+ 442              		.loc 1 135 19 view .LVU108
+ 443 001c C4E90A01 		strd	r0, [r4, #40]
+ 444              		.loc 1 136 5 is_stmt 1 view .LVU109
+ 137:chelper/kin_cartesian.c **** }
+ 445              		.loc 1 137 1 is_stmt 0 view .LVU110
+ 446 0020 10BD     		pop	{r4, pc}
+ 447              	.LVL35:
+ 448              	.L25:
+ 449              		.loc 1 137 1 view .LVU111
+ 450 0022 00BF     		.align	2
+ 451              	.L24:
+ 452 0024 0000F03F 		.word	1072693248
+ 453 0028 00000000 		.word	cartesian_e_calc_position
+ 454              		.cfi_endproc
+ 455              	.LFE13:
+ 457              		.section	.text.cartesian_stepper_setup,"ax",%progbits
+ 458              		.align	1
+ 459              		.p2align 2,,3
+ 460              		.global	cartesian_stepper_setup
+ 461              		.syntax unified
+ 462              		.thumb
+ 463              		.thumb_func
+ 464              		.fpu fpv4-sp-d16
+ 466              	cartesian_stepper_setup:
+ 467              	.LVL36:
+ 468              	.LFB14:
+ 138:chelper/kin_cartesian.c **** 
+ 139:chelper/kin_cartesian.c **** /**
+ 140:chelper/kin_cartesian.c ****  * @brief Generic setup for any Cartesian axis
+ 141:chelper/kin_cartesian.c ****  * 
+ 142:chelper/kin_cartesian.c ****  * @param sk            Stepper kinematics to configure
+ 143:chelper/kin_cartesian.c ****  * @param axis          Axis index (0=X, 1=Y, 2=Z, 3=E)
+ 144:chelper/kin_cartesian.c ****  * @param steps_per_mm  Steps per millimeter
+ 145:chelper/kin_cartesian.c ****  */
+ 146:chelper/kin_cartesian.c **** void
+ 147:chelper/kin_cartesian.c **** cartesian_stepper_setup(struct stepper_kinematics *sk, int axis,
+ 148:chelper/kin_cartesian.c ****                         double steps_per_mm)
+ARM GAS  /tmp/ccLITLtJ.s 			page 12
+
+
+ 149:chelper/kin_cartesian.c **** {
+ 469              		.loc 1 149 1 is_stmt 1 view -0
+ 470              		.cfi_startproc
+ 471              		@ args = 0, pretend = 0, frame = 0
+ 472              		@ frame_needed = 0, uses_anonymous_args = 0
+ 150:chelper/kin_cartesian.c ****     switch (axis) {
+ 473              		.loc 1 150 5 view .LVU113
+ 474 0000 0229     		cmp	r1, #2
+ 149:chelper/kin_cartesian.c ****     switch (axis) {
+ 475              		.loc 1 149 1 is_stmt 0 view .LVU114
+ 476 0002 10B5     		push	{r4, lr}
+ 477              		.cfi_def_cfa_offset 8
+ 478              		.cfi_offset 4, -8
+ 479              		.cfi_offset 14, -4
+ 149:chelper/kin_cartesian.c ****     switch (axis) {
+ 480              		.loc 1 149 1 view .LVU115
+ 481 0004 53EC102B 		vmov	r2, r3, d0
+ 482 0008 0446     		mov	r4, r0
+ 483              		.loc 1 150 5 view .LVU116
+ 484 000a 10D0     		beq	.L27
+ 485 000c 0329     		cmp	r1, #3
+ 486 000e 26D0     		beq	.L28
+ 487 0010 0129     		cmp	r1, #1
+ 488 0012 18D0     		beq	.L29
+ 151:chelper/kin_cartesian.c ****     case AXIS_X:
+ 152:chelper/kin_cartesian.c ****         cartesian_stepper_x_setup(sk, steps_per_mm);
+ 489              		.loc 1 152 9 is_stmt 1 view .LVU117
+ 490              	.LVL37:
+ 491              	.LBB12:
+ 492              	.LBI12:
+  95:chelper/kin_cartesian.c **** {
+ 493              		.loc 1 95 1 view .LVU118
+ 494              	.LBB13:
+  97:chelper/kin_cartesian.c ****     sk->scale = steps_per_mm;
+ 495              		.loc 1 97 5 view .LVU119
+  97:chelper/kin_cartesian.c ****     sk->scale = steps_per_mm;
+ 496              		.loc 1 97 14 is_stmt 0 view .LVU120
+ 497 0014 0021     		movs	r1, #0
+ 498              	.LVL38:
+  98:chelper/kin_cartesian.c ****     sk->step_dist = 1.0 / steps_per_mm;
+ 499              		.loc 1 98 15 view .LVU121
+ 500 0016 84ED100B 		vstr.64	d0, [r4, #64]
+  97:chelper/kin_cartesian.c ****     sk->scale = steps_per_mm;
+ 501              		.loc 1 97 14 view .LVU122
+ 502 001a C163     		str	r1, [r0, #60]
+  98:chelper/kin_cartesian.c ****     sk->step_dist = 1.0 / steps_per_mm;
+ 503              		.loc 1 98 5 is_stmt 1 view .LVU123
+  99:chelper/kin_cartesian.c ****     sk->calc_position_cb = cartesian_x_calc_position;
+ 504              		.loc 1 99 5 view .LVU124
+  99:chelper/kin_cartesian.c ****     sk->calc_position_cb = cartesian_x_calc_position;
+ 505              		.loc 1 99 25 is_stmt 0 view .LVU125
+ 506 001c 1649     		ldr	r1, .L32
+ 507 001e 0020     		movs	r0, #0
+ 508              	.LVL39:
+  99:chelper/kin_cartesian.c ****     sk->calc_position_cb = cartesian_x_calc_position;
+ 509              		.loc 1 99 25 view .LVU126
+ 510 0020 FFF7FEFF 		bl	__aeabi_ddiv
+ARM GAS  /tmp/ccLITLtJ.s 			page 13
+
+
+ 511              	.LVL40:
+ 100:chelper/kin_cartesian.c **** }
+ 512              		.loc 1 100 26 view .LVU127
+ 513 0024 154B     		ldr	r3, .L32+4
+ 514 0026 2360     		str	r3, [r4]
+  99:chelper/kin_cartesian.c ****     sk->calc_position_cb = cartesian_x_calc_position;
+ 515              		.loc 1 99 19 view .LVU128
+ 516 0028 C4E90A01 		strd	r0, [r4, #40]
+ 100:chelper/kin_cartesian.c **** }
+ 517              		.loc 1 100 5 is_stmt 1 view .LVU129
+ 518              	.LBE13:
+ 519              	.LBE12:
+ 153:chelper/kin_cartesian.c ****         break;
+ 154:chelper/kin_cartesian.c ****     case AXIS_Y:
+ 155:chelper/kin_cartesian.c ****         cartesian_stepper_y_setup(sk, steps_per_mm);
+ 156:chelper/kin_cartesian.c ****         break;
+ 157:chelper/kin_cartesian.c ****     case AXIS_Z:
+ 158:chelper/kin_cartesian.c ****         cartesian_stepper_z_setup(sk, steps_per_mm);
+ 159:chelper/kin_cartesian.c ****         break;
+ 160:chelper/kin_cartesian.c ****     case AXIS_E:
+ 161:chelper/kin_cartesian.c ****         cartesian_stepper_e_setup(sk, steps_per_mm);
+ 162:chelper/kin_cartesian.c ****         break;
+ 163:chelper/kin_cartesian.c ****     default:
+ 164:chelper/kin_cartesian.c ****         /* Invalid axis - use X as default */
+ 165:chelper/kin_cartesian.c ****         cartesian_stepper_x_setup(sk, steps_per_mm);
+ 166:chelper/kin_cartesian.c ****         break;
+ 167:chelper/kin_cartesian.c ****     }
+ 168:chelper/kin_cartesian.c **** }
+ 520              		.loc 1 168 1 is_stmt 0 view .LVU130
+ 521 002c 10BD     		pop	{r4, pc}
+ 522              	.LVL41:
+ 523              	.L27:
+ 158:chelper/kin_cartesian.c ****         break;
+ 524              		.loc 1 158 9 is_stmt 1 view .LVU131
+ 525              	.LBB14:
+ 526              	.LBI14:
+ 119:chelper/kin_cartesian.c **** {
+ 527              		.loc 1 119 1 view .LVU132
+ 528              	.LBB15:
+ 121:chelper/kin_cartesian.c ****     sk->scale = steps_per_mm;
+ 529              		.loc 1 121 5 view .LVU133
+ 122:chelper/kin_cartesian.c ****     sk->step_dist = 1.0 / steps_per_mm;
+ 530              		.loc 1 122 15 is_stmt 0 view .LVU134
+ 531 002e 84ED100B 		vstr.64	d0, [r4, #64]
+ 121:chelper/kin_cartesian.c ****     sk->scale = steps_per_mm;
+ 532              		.loc 1 121 14 view .LVU135
+ 533 0032 C163     		str	r1, [r0, #60]
+ 122:chelper/kin_cartesian.c ****     sk->step_dist = 1.0 / steps_per_mm;
+ 534              		.loc 1 122 5 is_stmt 1 view .LVU136
+ 123:chelper/kin_cartesian.c ****     sk->calc_position_cb = cartesian_z_calc_position;
+ 535              		.loc 1 123 5 view .LVU137
+ 123:chelper/kin_cartesian.c ****     sk->calc_position_cb = cartesian_z_calc_position;
+ 536              		.loc 1 123 25 is_stmt 0 view .LVU138
+ 537 0034 1049     		ldr	r1, .L32
+ 538              	.LVL42:
+ 123:chelper/kin_cartesian.c ****     sk->calc_position_cb = cartesian_z_calc_position;
+ 539              		.loc 1 123 25 view .LVU139
+ARM GAS  /tmp/ccLITLtJ.s 			page 14
+
+
+ 540 0036 0020     		movs	r0, #0
+ 541              	.LVL43:
+ 123:chelper/kin_cartesian.c ****     sk->calc_position_cb = cartesian_z_calc_position;
+ 542              		.loc 1 123 25 view .LVU140
+ 543 0038 FFF7FEFF 		bl	__aeabi_ddiv
+ 544              	.LVL44:
+ 124:chelper/kin_cartesian.c **** }
+ 545              		.loc 1 124 26 view .LVU141
+ 546 003c 104B     		ldr	r3, .L32+8
+ 547 003e 2360     		str	r3, [r4]
+ 123:chelper/kin_cartesian.c ****     sk->calc_position_cb = cartesian_z_calc_position;
+ 548              		.loc 1 123 19 view .LVU142
+ 549 0040 C4E90A01 		strd	r0, [r4, #40]
+ 124:chelper/kin_cartesian.c **** }
+ 550              		.loc 1 124 5 is_stmt 1 view .LVU143
+ 551              	.LBE15:
+ 552              	.LBE14:
+ 553              		.loc 1 168 1 is_stmt 0 view .LVU144
+ 554 0044 10BD     		pop	{r4, pc}
+ 555              	.LVL45:
+ 556              	.L29:
+ 155:chelper/kin_cartesian.c ****         break;
+ 557              		.loc 1 155 9 is_stmt 1 view .LVU145
+ 558              	.LBB16:
+ 559              	.LBI16:
+ 107:chelper/kin_cartesian.c **** {
+ 560              		.loc 1 107 1 view .LVU146
+ 561              	.LBB17:
+ 109:chelper/kin_cartesian.c ****     sk->scale = steps_per_mm;
+ 562              		.loc 1 109 5 view .LVU147
+ 110:chelper/kin_cartesian.c ****     sk->step_dist = 1.0 / steps_per_mm;
+ 563              		.loc 1 110 15 is_stmt 0 view .LVU148
+ 564 0046 84ED100B 		vstr.64	d0, [r4, #64]
+ 109:chelper/kin_cartesian.c ****     sk->scale = steps_per_mm;
+ 565              		.loc 1 109 14 view .LVU149
+ 566 004a C163     		str	r1, [r0, #60]
+ 110:chelper/kin_cartesian.c ****     sk->step_dist = 1.0 / steps_per_mm;
+ 567              		.loc 1 110 5 is_stmt 1 view .LVU150
+ 111:chelper/kin_cartesian.c ****     sk->calc_position_cb = cartesian_y_calc_position;
+ 568              		.loc 1 111 5 view .LVU151
+ 111:chelper/kin_cartesian.c ****     sk->calc_position_cb = cartesian_y_calc_position;
+ 569              		.loc 1 111 25 is_stmt 0 view .LVU152
+ 570 004c 0A49     		ldr	r1, .L32
+ 571              	.LVL46:
+ 111:chelper/kin_cartesian.c ****     sk->calc_position_cb = cartesian_y_calc_position;
+ 572              		.loc 1 111 25 view .LVU153
+ 573 004e 0020     		movs	r0, #0
+ 574              	.LVL47:
+ 111:chelper/kin_cartesian.c ****     sk->calc_position_cb = cartesian_y_calc_position;
+ 575              		.loc 1 111 25 view .LVU154
+ 576 0050 FFF7FEFF 		bl	__aeabi_ddiv
+ 577              	.LVL48:
+ 112:chelper/kin_cartesian.c **** }
+ 578              		.loc 1 112 26 view .LVU155
+ 579 0054 0B4B     		ldr	r3, .L32+12
+ 580 0056 2360     		str	r3, [r4]
+ 111:chelper/kin_cartesian.c ****     sk->calc_position_cb = cartesian_y_calc_position;
+ARM GAS  /tmp/ccLITLtJ.s 			page 15
+
+
+ 581              		.loc 1 111 19 view .LVU156
+ 582 0058 C4E90A01 		strd	r0, [r4, #40]
+ 112:chelper/kin_cartesian.c **** }
+ 583              		.loc 1 112 5 is_stmt 1 view .LVU157
+ 584              	.LBE17:
+ 585              	.LBE16:
+ 586              		.loc 1 168 1 is_stmt 0 view .LVU158
+ 587 005c 10BD     		pop	{r4, pc}
+ 588              	.LVL49:
+ 589              	.L28:
+ 161:chelper/kin_cartesian.c ****         break;
+ 590              		.loc 1 161 9 is_stmt 1 view .LVU159
+ 591              	.LBB18:
+ 592              	.LBI18:
+ 131:chelper/kin_cartesian.c **** {
+ 593              		.loc 1 131 1 view .LVU160
+ 594              	.LBB19:
+ 133:chelper/kin_cartesian.c ****     sk->scale = steps_per_mm;
+ 595              		.loc 1 133 5 view .LVU161
+ 134:chelper/kin_cartesian.c ****     sk->step_dist = 1.0 / steps_per_mm;
+ 596              		.loc 1 134 15 is_stmt 0 view .LVU162
+ 597 005e 84ED100B 		vstr.64	d0, [r4, #64]
+ 133:chelper/kin_cartesian.c ****     sk->scale = steps_per_mm;
+ 598              		.loc 1 133 14 view .LVU163
+ 599 0062 C163     		str	r1, [r0, #60]
+ 134:chelper/kin_cartesian.c ****     sk->step_dist = 1.0 / steps_per_mm;
+ 600              		.loc 1 134 5 is_stmt 1 view .LVU164
+ 135:chelper/kin_cartesian.c ****     sk->calc_position_cb = cartesian_e_calc_position;
+ 601              		.loc 1 135 5 view .LVU165
+ 135:chelper/kin_cartesian.c ****     sk->calc_position_cb = cartesian_e_calc_position;
+ 602              		.loc 1 135 25 is_stmt 0 view .LVU166
+ 603 0064 0449     		ldr	r1, .L32
+ 604              	.LVL50:
+ 135:chelper/kin_cartesian.c ****     sk->calc_position_cb = cartesian_e_calc_position;
+ 605              		.loc 1 135 25 view .LVU167
+ 606 0066 0020     		movs	r0, #0
+ 607              	.LVL51:
+ 135:chelper/kin_cartesian.c ****     sk->calc_position_cb = cartesian_e_calc_position;
+ 608              		.loc 1 135 25 view .LVU168
+ 609 0068 FFF7FEFF 		bl	__aeabi_ddiv
+ 610              	.LVL52:
+ 136:chelper/kin_cartesian.c **** }
+ 611              		.loc 1 136 26 view .LVU169
+ 612 006c 064B     		ldr	r3, .L32+16
+ 613 006e 2360     		str	r3, [r4]
+ 135:chelper/kin_cartesian.c ****     sk->calc_position_cb = cartesian_e_calc_position;
+ 614              		.loc 1 135 19 view .LVU170
+ 615 0070 C4E90A01 		strd	r0, [r4, #40]
+ 136:chelper/kin_cartesian.c **** }
+ 616              		.loc 1 136 5 is_stmt 1 view .LVU171
+ 617              	.LVL53:
+ 136:chelper/kin_cartesian.c **** }
+ 618              		.loc 1 136 5 is_stmt 0 view .LVU172
+ 619              	.LBE19:
+ 620              	.LBE18:
+ 621              		.loc 1 168 1 view .LVU173
+ 622 0074 10BD     		pop	{r4, pc}
+ARM GAS  /tmp/ccLITLtJ.s 			page 16
+
+
+ 623              	.LVL54:
+ 624              	.L33:
+ 625              		.loc 1 168 1 view .LVU174
+ 626 0076 00BF     		.align	2
+ 627              	.L32:
+ 628 0078 0000F03F 		.word	1072693248
+ 629 007c 00000000 		.word	cartesian_x_calc_position
+ 630 0080 00000000 		.word	cartesian_z_calc_position
+ 631 0084 00000000 		.word	cartesian_y_calc_position
+ 632 0088 00000000 		.word	cartesian_e_calc_position
+ 633              		.cfi_endproc
+ 634              	.LFE14:
+ 636              		.section	.text.cartesian_coord_to_steps,"ax",%progbits
+ 637              		.align	1
+ 638              		.p2align 2,,3
+ 639              		.global	cartesian_coord_to_steps
+ 640              		.syntax unified
+ 641              		.thumb
+ 642              		.thumb_func
+ 643              		.fpu fpv4-sp-d16
+ 645              	cartesian_coord_to_steps:
+ 646              	.LVL55:
+ 647              	.LFB15:
+ 169:chelper/kin_cartesian.c **** 
+ 170:chelper/kin_cartesian.c **** /* ========== Coordinate Transformation ========== */
+ 171:chelper/kin_cartesian.c **** 
+ 172:chelper/kin_cartesian.c **** /**
+ 173:chelper/kin_cartesian.c ****  * @brief Convert cartesian coordinates to stepper positions
+ 174:chelper/kin_cartesian.c ****  * 
+ 175:chelper/kin_cartesian.c ****  * For Cartesian kinematics, this is a simple scaling operation.
+ 176:chelper/kin_cartesian.c ****  * 
+ 177:chelper/kin_cartesian.c ****  * @param pos           Input cartesian position (mm)
+ 178:chelper/kin_cartesian.c ****  * @param steps_per_mm  Array of steps_per_mm for each axis [X, Y, Z, E]
+ 179:chelper/kin_cartesian.c ****  * @param steps         Output stepper positions (steps)
+ 180:chelper/kin_cartesian.c ****  */
+ 181:chelper/kin_cartesian.c **** void
+ 182:chelper/kin_cartesian.c **** cartesian_coord_to_steps(const struct coord *pos, const double *steps_per_mm,
+ 183:chelper/kin_cartesian.c ****                          double *steps)
+ 184:chelper/kin_cartesian.c **** {
+ 648              		.loc 1 184 1 is_stmt 1 view -0
+ 649              		.cfi_startproc
+ 650              		@ args = 0, pretend = 0, frame = 0
+ 651              		@ frame_needed = 0, uses_anonymous_args = 0
+ 185:chelper/kin_cartesian.c ****     steps[AXIS_X] = pos->x * steps_per_mm[AXIS_X];
+ 652              		.loc 1 185 5 view .LVU176
+ 184:chelper/kin_cartesian.c ****     steps[AXIS_X] = pos->x * steps_per_mm[AXIS_X];
+ 653              		.loc 1 184 1 is_stmt 0 view .LVU177
+ 654 0000 70B5     		push	{r4, r5, r6, lr}
+ 655              		.cfi_def_cfa_offset 16
+ 656              		.cfi_offset 4, -16
+ 657              		.cfi_offset 5, -12
+ 658              		.cfi_offset 6, -8
+ 659              		.cfi_offset 14, -4
+ 184:chelper/kin_cartesian.c ****     steps[AXIS_X] = pos->x * steps_per_mm[AXIS_X];
+ 660              		.loc 1 184 1 view .LVU178
+ 661 0002 1446     		mov	r4, r2
+ 662 0004 0546     		mov	r5, r0
+ARM GAS  /tmp/ccLITLtJ.s 			page 17
+
+
+ 663              		.loc 1 185 28 view .LVU179
+ 664 0006 D1E90023 		ldrd	r2, [r1]
+ 665              	.LVL56:
+ 184:chelper/kin_cartesian.c ****     steps[AXIS_X] = pos->x * steps_per_mm[AXIS_X];
+ 666              		.loc 1 184 1 view .LVU180
+ 667 000a 0E46     		mov	r6, r1
+ 668              		.loc 1 185 28 view .LVU181
+ 669 000c D0E90001 		ldrd	r0, [r0]
+ 670              	.LVL57:
+ 671              		.loc 1 185 28 view .LVU182
+ 672 0010 FFF7FEFF 		bl	__aeabi_dmul
+ 673              	.LVL58:
+ 674              		.loc 1 185 19 view .LVU183
+ 675 0014 C4E90001 		strd	r0, [r4]
+ 186:chelper/kin_cartesian.c ****     steps[AXIS_Y] = pos->y * steps_per_mm[AXIS_Y];
+ 676              		.loc 1 186 5 is_stmt 1 view .LVU184
+ 677              		.loc 1 186 28 is_stmt 0 view .LVU185
+ 678 0018 D6E90223 		ldrd	r2, [r6, #8]
+ 679 001c D5E90201 		ldrd	r0, [r5, #8]
+ 680 0020 FFF7FEFF 		bl	__aeabi_dmul
+ 681              	.LVL59:
+ 682              		.loc 1 186 19 view .LVU186
+ 683 0024 C4E90201 		strd	r0, [r4, #8]
+ 187:chelper/kin_cartesian.c ****     steps[AXIS_Z] = pos->z * steps_per_mm[AXIS_Z];
+ 684              		.loc 1 187 5 is_stmt 1 view .LVU187
+ 685              		.loc 1 187 28 is_stmt 0 view .LVU188
+ 686 0028 D6E90423 		ldrd	r2, [r6, #16]
+ 687 002c D5E90401 		ldrd	r0, [r5, #16]
+ 688 0030 FFF7FEFF 		bl	__aeabi_dmul
+ 689              	.LVL60:
+ 690              		.loc 1 187 19 view .LVU189
+ 691 0034 C4E90401 		strd	r0, [r4, #16]
+ 188:chelper/kin_cartesian.c ****     steps[AXIS_E] = pos->e * steps_per_mm[AXIS_E];
+ 692              		.loc 1 188 5 is_stmt 1 view .LVU190
+ 693              		.loc 1 188 28 is_stmt 0 view .LVU191
+ 694 0038 D6E90623 		ldrd	r2, [r6, #24]
+ 695 003c D5E90601 		ldrd	r0, [r5, #24]
+ 696 0040 FFF7FEFF 		bl	__aeabi_dmul
+ 697              	.LVL61:
+ 698              		.loc 1 188 19 view .LVU192
+ 699 0044 C4E90601 		strd	r0, [r4, #24]
+ 189:chelper/kin_cartesian.c **** }
+ 700              		.loc 1 189 1 view .LVU193
+ 701 0048 70BD     		pop	{r4, r5, r6, pc}
+ 702              		.loc 1 189 1 view .LVU194
+ 703              		.cfi_endproc
+ 704              	.LFE15:
+ 706 004a 00BF     		.section	.text.cartesian_steps_to_coord,"ax",%progbits
+ 707              		.align	1
+ 708              		.p2align 2,,3
+ 709              		.global	cartesian_steps_to_coord
+ 710              		.syntax unified
+ 711              		.thumb
+ 712              		.thumb_func
+ 713              		.fpu fpv4-sp-d16
+ 715              	cartesian_steps_to_coord:
+ 716              	.LVL62:
+ARM GAS  /tmp/ccLITLtJ.s 			page 18
+
+
+ 717              	.LFB16:
+ 190:chelper/kin_cartesian.c **** 
+ 191:chelper/kin_cartesian.c **** /**
+ 192:chelper/kin_cartesian.c ****  * @brief Convert stepper positions to cartesian coordinates
+ 193:chelper/kin_cartesian.c ****  * 
+ 194:chelper/kin_cartesian.c ****  * @param steps         Input stepper positions (steps)
+ 195:chelper/kin_cartesian.c ****  * @param steps_per_mm  Array of steps_per_mm for each axis [X, Y, Z, E]
+ 196:chelper/kin_cartesian.c ****  * @param pos           Output cartesian position (mm)
+ 197:chelper/kin_cartesian.c ****  */
+ 198:chelper/kin_cartesian.c **** void
+ 199:chelper/kin_cartesian.c **** cartesian_steps_to_coord(const double *steps, const double *steps_per_mm,
+ 200:chelper/kin_cartesian.c ****                          struct coord *pos)
+ 201:chelper/kin_cartesian.c **** {
+ 718              		.loc 1 201 1 is_stmt 1 view -0
+ 719              		.cfi_startproc
+ 720              		@ args = 0, pretend = 0, frame = 0
+ 721              		@ frame_needed = 0, uses_anonymous_args = 0
+ 202:chelper/kin_cartesian.c ****     pos->x = steps[AXIS_X] / steps_per_mm[AXIS_X];
+ 722              		.loc 1 202 5 view .LVU196
+ 201:chelper/kin_cartesian.c ****     pos->x = steps[AXIS_X] / steps_per_mm[AXIS_X];
+ 723              		.loc 1 201 1 is_stmt 0 view .LVU197
+ 724 0000 70B5     		push	{r4, r5, r6, lr}
+ 725              		.cfi_def_cfa_offset 16
+ 726              		.cfi_offset 4, -16
+ 727              		.cfi_offset 5, -12
+ 728              		.cfi_offset 6, -8
+ 729              		.cfi_offset 14, -4
+ 201:chelper/kin_cartesian.c ****     pos->x = steps[AXIS_X] / steps_per_mm[AXIS_X];
+ 730              		.loc 1 201 1 view .LVU198
+ 731 0002 1446     		mov	r4, r2
+ 732 0004 0546     		mov	r5, r0
+ 733              		.loc 1 202 28 view .LVU199
+ 734 0006 D1E90023 		ldrd	r2, [r1]
+ 735              	.LVL63:
+ 201:chelper/kin_cartesian.c ****     pos->x = steps[AXIS_X] / steps_per_mm[AXIS_X];
+ 736              		.loc 1 201 1 view .LVU200
+ 737 000a 0E46     		mov	r6, r1
+ 738              		.loc 1 202 28 view .LVU201
+ 739 000c D0E90001 		ldrd	r0, [r0]
+ 740              	.LVL64:
+ 741              		.loc 1 202 28 view .LVU202
+ 742 0010 FFF7FEFF 		bl	__aeabi_ddiv
+ 743              	.LVL65:
+ 744              		.loc 1 202 12 view .LVU203
+ 745 0014 C4E90001 		strd	r0, [r4]
+ 203:chelper/kin_cartesian.c ****     pos->y = steps[AXIS_Y] / steps_per_mm[AXIS_Y];
+ 746              		.loc 1 203 5 is_stmt 1 view .LVU204
+ 747              		.loc 1 203 28 is_stmt 0 view .LVU205
+ 748 0018 D6E90223 		ldrd	r2, [r6, #8]
+ 749 001c D5E90201 		ldrd	r0, [r5, #8]
+ 750 0020 FFF7FEFF 		bl	__aeabi_ddiv
+ 751              	.LVL66:
+ 752              		.loc 1 203 12 view .LVU206
+ 753 0024 C4E90201 		strd	r0, [r4, #8]
+ 204:chelper/kin_cartesian.c ****     pos->z = steps[AXIS_Z] / steps_per_mm[AXIS_Z];
+ 754              		.loc 1 204 5 is_stmt 1 view .LVU207
+ 755              		.loc 1 204 28 is_stmt 0 view .LVU208
+ARM GAS  /tmp/ccLITLtJ.s 			page 19
+
+
+ 756 0028 D6E90423 		ldrd	r2, [r6, #16]
+ 757 002c D5E90401 		ldrd	r0, [r5, #16]
+ 758 0030 FFF7FEFF 		bl	__aeabi_ddiv
+ 759              	.LVL67:
+ 760              		.loc 1 204 12 view .LVU209
+ 761 0034 C4E90401 		strd	r0, [r4, #16]
+ 205:chelper/kin_cartesian.c ****     pos->e = steps[AXIS_E] / steps_per_mm[AXIS_E];
+ 762              		.loc 1 205 5 is_stmt 1 view .LVU210
+ 763              		.loc 1 205 28 is_stmt 0 view .LVU211
+ 764 0038 D6E90623 		ldrd	r2, [r6, #24]
+ 765 003c D5E90601 		ldrd	r0, [r5, #24]
+ 766 0040 FFF7FEFF 		bl	__aeabi_ddiv
+ 767              	.LVL68:
+ 768              		.loc 1 205 12 view .LVU212
+ 769 0044 C4E90601 		strd	r0, [r4, #24]
+ 206:chelper/kin_cartesian.c **** }
+ 770              		.loc 1 206 1 view .LVU213
+ 771 0048 70BD     		pop	{r4, r5, r6, pc}
+ 772              		.loc 1 206 1 view .LVU214
+ 773              		.cfi_endproc
+ 774              	.LFE16:
+ 776              		.global	__aeabi_dcmplt
+ 777              		.global	__aeabi_dcmpgt
+ 778 004a 00BF     		.section	.text.cartesian_check_limits,"ax",%progbits
+ 779              		.align	1
+ 780              		.p2align 2,,3
+ 781              		.global	cartesian_check_limits
+ 782              		.syntax unified
+ 783              		.thumb
+ 784              		.thumb_func
+ 785              		.fpu fpv4-sp-d16
+ 787              	cartesian_check_limits:
+ 788              	.LVL69:
+ 789              	.LFB17:
+ 207:chelper/kin_cartesian.c **** 
+ 208:chelper/kin_cartesian.c **** /* ========== Limits Checking ========== */
+ 209:chelper/kin_cartesian.c **** 
+ 210:chelper/kin_cartesian.c **** /**
+ 211:chelper/kin_cartesian.c ****  * @brief Check if position is within axis limits
+ 212:chelper/kin_cartesian.c ****  * 
+ 213:chelper/kin_cartesian.c ****  * @param pos       Position to check
+ 214:chelper/kin_cartesian.c ****  * @param min_pos   Minimum position for each axis [X, Y, Z, E]
+ 215:chelper/kin_cartesian.c ****  * @param max_pos   Maximum position for each axis [X, Y, Z, E]
+ 216:chelper/kin_cartesian.c ****  * @return 0 if within limits, -1 if out of bounds
+ 217:chelper/kin_cartesian.c ****  */
+ 218:chelper/kin_cartesian.c **** int
+ 219:chelper/kin_cartesian.c **** cartesian_check_limits(const struct coord *pos, const double *min_pos,
+ 220:chelper/kin_cartesian.c ****                        const double *max_pos)
+ 221:chelper/kin_cartesian.c **** {
+ 790              		.loc 1 221 1 is_stmt 1 view -0
+ 791              		.cfi_startproc
+ 792              		@ args = 0, pretend = 0, frame = 0
+ 793              		@ frame_needed = 0, uses_anonymous_args = 0
+ 222:chelper/kin_cartesian.c ****     if (pos->x < min_pos[AXIS_X] || pos->x > max_pos[AXIS_X]) {
+ 794              		.loc 1 222 5 view .LVU216
+ 221:chelper/kin_cartesian.c ****     if (pos->x < min_pos[AXIS_X] || pos->x > max_pos[AXIS_X]) {
+ 795              		.loc 1 221 1 is_stmt 0 view .LVU217
+ARM GAS  /tmp/ccLITLtJ.s 			page 20
+
+
+ 796 0000 2DE97043 		push	{r4, r5, r6, r8, r9, lr}
+ 797              		.cfi_def_cfa_offset 24
+ 798              		.cfi_offset 4, -24
+ 799              		.cfi_offset 5, -20
+ 800              		.cfi_offset 6, -16
+ 801              		.cfi_offset 8, -12
+ 802              		.cfi_offset 9, -8
+ 803              		.cfi_offset 14, -4
+ 804              		.loc 1 222 12 view .LVU218
+ 805 0004 D0E90089 		ldrd	r8, [r0]
+ 221:chelper/kin_cartesian.c ****     if (pos->x < min_pos[AXIS_X] || pos->x > max_pos[AXIS_X]) {
+ 806              		.loc 1 221 1 view .LVU219
+ 807 0008 0546     		mov	r5, r0
+ 808 000a 0C46     		mov	r4, r1
+ 809 000c 1646     		mov	r6, r2
+ 810              		.loc 1 222 8 view .LVU220
+ 811 000e 4046     		mov	r0, r8
+ 812              	.LVL70:
+ 813              		.loc 1 222 8 view .LVU221
+ 814 0010 D1E90023 		ldrd	r2, [r1]
+ 815              	.LVL71:
+ 816              		.loc 1 222 8 view .LVU222
+ 817 0014 4946     		mov	r1, r9
+ 818              	.LVL72:
+ 819              		.loc 1 222 8 view .LVU223
+ 820 0016 FFF7FEFF 		bl	__aeabi_dcmplt
+ 821              	.LVL73:
+ 822 001a 58BB     		cbnz	r0, .L45
+ 823              		.loc 1 222 34 discriminator 1 view .LVU224
+ 824 001c D6E90023 		ldrd	r2, [r6]
+ 825 0020 4046     		mov	r0, r8
+ 826 0022 4946     		mov	r1, r9
+ 827 0024 FFF7FEFF 		bl	__aeabi_dcmpgt
+ 828              	.LVL74:
+ 829 0028 20BB     		cbnz	r0, .L45
+ 223:chelper/kin_cartesian.c ****         return -1;
+ 224:chelper/kin_cartesian.c ****     }
+ 225:chelper/kin_cartesian.c ****     if (pos->y < min_pos[AXIS_Y] || pos->y > max_pos[AXIS_Y]) {
+ 830              		.loc 1 225 5 is_stmt 1 view .LVU225
+ 831              		.loc 1 225 12 is_stmt 0 view .LVU226
+ 832 002a D5E90289 		ldrd	r8, [r5, #8]
+ 833              		.loc 1 225 8 view .LVU227
+ 834 002e D4E90223 		ldrd	r2, [r4, #8]
+ 835 0032 4046     		mov	r0, r8
+ 836 0034 4946     		mov	r1, r9
+ 837 0036 FFF7FEFF 		bl	__aeabi_dcmplt
+ 838              	.LVL75:
+ 839 003a D8B9     		cbnz	r0, .L45
+ 840              		.loc 1 225 34 discriminator 1 view .LVU228
+ 841 003c D6E90223 		ldrd	r2, [r6, #8]
+ 842 0040 4046     		mov	r0, r8
+ 843 0042 4946     		mov	r1, r9
+ 844 0044 FFF7FEFF 		bl	__aeabi_dcmpgt
+ 845              	.LVL76:
+ 846 0048 A0B9     		cbnz	r0, .L45
+ 226:chelper/kin_cartesian.c ****         return -1;
+ 227:chelper/kin_cartesian.c ****     }
+ARM GAS  /tmp/ccLITLtJ.s 			page 21
+
+
+ 228:chelper/kin_cartesian.c ****     if (pos->z < min_pos[AXIS_Z] || pos->z > max_pos[AXIS_Z]) {
+ 847              		.loc 1 228 5 is_stmt 1 view .LVU229
+ 848              		.loc 1 228 12 is_stmt 0 view .LVU230
+ 849 004a D5E90489 		ldrd	r8, [r5, #16]
+ 850              		.loc 1 228 8 view .LVU231
+ 851 004e D4E90423 		ldrd	r2, [r4, #16]
+ 852 0052 4046     		mov	r0, r8
+ 853 0054 4946     		mov	r1, r9
+ 854 0056 FFF7FEFF 		bl	__aeabi_dcmplt
+ 855              	.LVL77:
+ 856 005a 58B9     		cbnz	r0, .L45
+ 857              		.loc 1 228 34 discriminator 1 view .LVU232
+ 858 005c D6E90423 		ldrd	r2, [r6, #16]
+ 859 0060 4046     		mov	r0, r8
+ 860 0062 4946     		mov	r1, r9
+ 861 0064 FFF7FEFF 		bl	__aeabi_dcmpgt
+ 862              	.LVL78:
+ 863 0068 0038     		subs	r0, r0, #0
+ 864 006a 18BF     		it	ne
+ 865 006c 0120     		movne	r0, #1
+ 866 006e 4042     		rsbs	r0, r0, #0
+ 867              	.L38:
+ 229:chelper/kin_cartesian.c ****         return -1;
+ 230:chelper/kin_cartesian.c ****     }
+ 231:chelper/kin_cartesian.c ****     /* Extruder typically doesn't have position limits */
+ 232:chelper/kin_cartesian.c ****     
+ 233:chelper/kin_cartesian.c ****     return 0;
+ 234:chelper/kin_cartesian.c **** }
+ 868              		.loc 1 234 1 view .LVU233
+ 869 0070 BDE87083 		pop	{r4, r5, r6, r8, r9, pc}
+ 870              	.LVL79:
+ 871              	.L45:
+ 229:chelper/kin_cartesian.c ****         return -1;
+ 872              		.loc 1 229 16 view .LVU234
+ 873 0074 4FF0FF30 		mov	r0, #-1
+ 874 0078 FAE7     		b	.L38
+ 875              		.cfi_endproc
+ 876              	.LFE17:
+ 878 007a 00BF     		.section	.text.cartesian_clamp_to_limits,"ax",%progbits
+ 879              		.align	1
+ 880              		.p2align 2,,3
+ 881              		.global	cartesian_clamp_to_limits
+ 882              		.syntax unified
+ 883              		.thumb
+ 884              		.thumb_func
+ 885              		.fpu fpv4-sp-d16
+ 887              	cartesian_clamp_to_limits:
+ 888              	.LVL80:
+ 889              	.LFB18:
+ 235:chelper/kin_cartesian.c **** 
+ 236:chelper/kin_cartesian.c **** /**
+ 237:chelper/kin_cartesian.c ****  * @brief Clamp position to axis limits
+ 238:chelper/kin_cartesian.c ****  * 
+ 239:chelper/kin_cartesian.c ****  * @param pos       Position to clamp (modified in place)
+ 240:chelper/kin_cartesian.c ****  * @param min_pos   Minimum position for each axis
+ 241:chelper/kin_cartesian.c ****  * @param max_pos   Maximum position for each axis
+ 242:chelper/kin_cartesian.c ****  */
+ARM GAS  /tmp/ccLITLtJ.s 			page 22
+
+
+ 243:chelper/kin_cartesian.c **** void
+ 244:chelper/kin_cartesian.c **** cartesian_clamp_to_limits(struct coord *pos, const double *min_pos,
+ 245:chelper/kin_cartesian.c ****                           const double *max_pos)
+ 246:chelper/kin_cartesian.c **** {
+ 890              		.loc 1 246 1 is_stmt 1 view -0
+ 891              		.cfi_startproc
+ 892              		@ args = 0, pretend = 0, frame = 0
+ 893              		@ frame_needed = 0, uses_anonymous_args = 0
+ 247:chelper/kin_cartesian.c ****     if (pos->x < min_pos[AXIS_X]) {
+ 894              		.loc 1 247 5 view .LVU236
+ 246:chelper/kin_cartesian.c ****     if (pos->x < min_pos[AXIS_X]) {
+ 895              		.loc 1 246 1 is_stmt 0 view .LVU237
+ 896 0000 2DE9F047 		push	{r4, r5, r6, r7, r8, r9, r10, lr}
+ 897              		.cfi_def_cfa_offset 32
+ 898              		.cfi_offset 4, -32
+ 899              		.cfi_offset 5, -28
+ 900              		.cfi_offset 6, -24
+ 901              		.cfi_offset 7, -20
+ 902              		.cfi_offset 8, -16
+ 903              		.cfi_offset 9, -12
+ 904              		.cfi_offset 10, -8
+ 905              		.cfi_offset 14, -4
+ 906              		.loc 1 247 25 view .LVU238
+ 907 0004 D1E90089 		ldrd	r8, [r1]
+ 908              		.loc 1 247 12 view .LVU239
+ 909 0008 D0E90067 		ldrd	r6, [r0]
+ 246:chelper/kin_cartesian.c ****     if (pos->x < min_pos[AXIS_X]) {
+ 910              		.loc 1 246 1 view .LVU240
+ 911 000c 0446     		mov	r4, r0
+ 912 000e 0D46     		mov	r5, r1
+ 913 0010 9246     		mov	r10, r2
+ 914              		.loc 1 247 8 view .LVU241
+ 915 0012 3046     		mov	r0, r6
+ 916              	.LVL81:
+ 917              		.loc 1 247 8 view .LVU242
+ 918 0014 3946     		mov	r1, r7
+ 919              	.LVL82:
+ 920              		.loc 1 247 8 view .LVU243
+ 921 0016 4246     		mov	r2, r8
+ 922              	.LVL83:
+ 923              		.loc 1 247 8 view .LVU244
+ 924 0018 4B46     		mov	r3, r9
+ 925 001a FFF7FEFF 		bl	__aeabi_dcmplt
+ 926              	.LVL84:
+ 927 001e 0028     		cmp	r0, #0
+ 928 0020 33D0     		beq	.L66
+ 248:chelper/kin_cartesian.c ****         pos->x = min_pos[AXIS_X];
+ 929              		.loc 1 248 9 is_stmt 1 view .LVU245
+ 930              		.loc 1 248 16 is_stmt 0 view .LVU246
+ 931 0022 C4E90089 		strd	r8, [r4]
+ 932              	.L50:
+ 249:chelper/kin_cartesian.c ****     } else if (pos->x > max_pos[AXIS_X]) {
+ 250:chelper/kin_cartesian.c ****         pos->x = max_pos[AXIS_X];
+ 251:chelper/kin_cartesian.c ****     }
+ 252:chelper/kin_cartesian.c ****     
+ 253:chelper/kin_cartesian.c ****     if (pos->y < min_pos[AXIS_Y]) {
+ 933              		.loc 1 253 5 is_stmt 1 view .LVU247
+ARM GAS  /tmp/ccLITLtJ.s 			page 23
+
+
+ 934              		.loc 1 253 12 is_stmt 0 view .LVU248
+ 935 0026 D4E90267 		ldrd	r6, [r4, #8]
+ 936              		.loc 1 253 25 view .LVU249
+ 937 002a D5E90289 		ldrd	r8, [r5, #8]
+ 938              		.loc 1 253 8 view .LVU250
+ 939 002e 3046     		mov	r0, r6
+ 940 0030 3946     		mov	r1, r7
+ 941 0032 4246     		mov	r2, r8
+ 942 0034 4B46     		mov	r3, r9
+ 943 0036 FFF7FEFF 		bl	__aeabi_dcmplt
+ 944              	.LVL85:
+ 945 003a C8B1     		cbz	r0, .L67
+ 254:chelper/kin_cartesian.c ****         pos->y = min_pos[AXIS_Y];
+ 946              		.loc 1 254 9 is_stmt 1 view .LVU251
+ 947              		.loc 1 254 16 is_stmt 0 view .LVU252
+ 948 003c C4E90289 		strd	r8, [r4, #8]
+ 949              	.L54:
+ 255:chelper/kin_cartesian.c ****     } else if (pos->y > max_pos[AXIS_Y]) {
+ 256:chelper/kin_cartesian.c ****         pos->y = max_pos[AXIS_Y];
+ 257:chelper/kin_cartesian.c ****     }
+ 258:chelper/kin_cartesian.c ****     
+ 259:chelper/kin_cartesian.c ****     if (pos->z < min_pos[AXIS_Z]) {
+ 950              		.loc 1 259 5 is_stmt 1 view .LVU253
+ 951              		.loc 1 259 12 is_stmt 0 view .LVU254
+ 952 0040 D4E90467 		ldrd	r6, [r4, #16]
+ 953              		.loc 1 259 25 view .LVU255
+ 954 0044 D5E90489 		ldrd	r8, [r5, #16]
+ 955              		.loc 1 259 8 view .LVU256
+ 956 0048 3046     		mov	r0, r6
+ 957 004a 3946     		mov	r1, r7
+ 958 004c 4246     		mov	r2, r8
+ 959 004e 4B46     		mov	r3, r9
+ 960 0050 FFF7FEFF 		bl	__aeabi_dcmplt
+ 961              	.LVL86:
+ 962 0054 40B9     		cbnz	r0, .L70
+ 260:chelper/kin_cartesian.c ****         pos->z = min_pos[AXIS_Z];
+ 261:chelper/kin_cartesian.c ****     } else if (pos->z > max_pos[AXIS_Z]) {
+ 963              		.loc 1 261 12 is_stmt 1 view .LVU257
+ 964              		.loc 1 261 32 is_stmt 0 view .LVU258
+ 965 0056 DAE90489 		ldrd	r8, [r10, #16]
+ 966              		.loc 1 261 15 view .LVU259
+ 967 005a 3046     		mov	r0, r6
+ 968 005c 3946     		mov	r1, r7
+ 969 005e 4246     		mov	r2, r8
+ 970 0060 4B46     		mov	r3, r9
+ 971 0062 FFF7FEFF 		bl	__aeabi_dcmpgt
+ 972              	.LVL87:
+ 973 0066 08B1     		cbz	r0, .L47
+ 974              	.L70:
+ 262:chelper/kin_cartesian.c ****         pos->z = max_pos[AXIS_Z];
+ 975              		.loc 1 262 9 is_stmt 1 view .LVU260
+ 976              		.loc 1 262 16 is_stmt 0 view .LVU261
+ 977 0068 C4E90489 		strd	r8, [r4, #16]
+ 978              	.L47:
+ 263:chelper/kin_cartesian.c ****     }
+ 264:chelper/kin_cartesian.c **** }
+ 979              		.loc 1 264 1 view .LVU262
+ARM GAS  /tmp/ccLITLtJ.s 			page 24
+
+
+ 980 006c BDE8F087 		pop	{r4, r5, r6, r7, r8, r9, r10, pc}
+ 981              	.LVL88:
+ 982              	.L67:
+ 255:chelper/kin_cartesian.c ****         pos->y = max_pos[AXIS_Y];
+ 983              		.loc 1 255 12 is_stmt 1 view .LVU263
+ 255:chelper/kin_cartesian.c ****         pos->y = max_pos[AXIS_Y];
+ 984              		.loc 1 255 15 is_stmt 0 view .LVU264
+ 985 0070 3046     		mov	r0, r6
+ 986 0072 3946     		mov	r1, r7
+ 255:chelper/kin_cartesian.c ****         pos->y = max_pos[AXIS_Y];
+ 987              		.loc 1 255 32 view .LVU265
+ 988 0074 DAE90267 		ldrd	r6, [r10, #8]
+ 255:chelper/kin_cartesian.c ****         pos->y = max_pos[AXIS_Y];
+ 989              		.loc 1 255 15 view .LVU266
+ 990 0078 3246     		mov	r2, r6
+ 991 007a 3B46     		mov	r3, r7
+ 992 007c FFF7FEFF 		bl	__aeabi_dcmpgt
+ 993              	.LVL89:
+ 994 0080 0028     		cmp	r0, #0
+ 995 0082 DDD0     		beq	.L54
+ 256:chelper/kin_cartesian.c ****     }
+ 996              		.loc 1 256 9 is_stmt 1 view .LVU267
+ 256:chelper/kin_cartesian.c ****     }
+ 997              		.loc 1 256 16 is_stmt 0 view .LVU268
+ 998 0084 C4E90267 		strd	r6, [r4, #8]
+ 999 0088 DAE7     		b	.L54
+ 1000              	.L66:
+ 249:chelper/kin_cartesian.c ****         pos->x = max_pos[AXIS_X];
+ 1001              		.loc 1 249 12 is_stmt 1 view .LVU269
+ 249:chelper/kin_cartesian.c ****         pos->x = max_pos[AXIS_X];
+ 1002              		.loc 1 249 15 is_stmt 0 view .LVU270
+ 1003 008a 3046     		mov	r0, r6
+ 1004 008c 3946     		mov	r1, r7
+ 249:chelper/kin_cartesian.c ****         pos->x = max_pos[AXIS_X];
+ 1005              		.loc 1 249 32 view .LVU271
+ 1006 008e DAE90067 		ldrd	r6, [r10]
+ 249:chelper/kin_cartesian.c ****         pos->x = max_pos[AXIS_X];
+ 1007              		.loc 1 249 15 view .LVU272
+ 1008 0092 3246     		mov	r2, r6
+ 1009 0094 3B46     		mov	r3, r7
+ 1010 0096 FFF7FEFF 		bl	__aeabi_dcmpgt
+ 1011              	.LVL90:
+ 1012 009a 0028     		cmp	r0, #0
+ 1013 009c C3D0     		beq	.L50
+ 250:chelper/kin_cartesian.c ****     }
+ 1014              		.loc 1 250 9 is_stmt 1 view .LVU273
+ 250:chelper/kin_cartesian.c ****     }
+ 1015              		.loc 1 250 16 is_stmt 0 view .LVU274
+ 1016 009e C4E90067 		strd	r6, [r4]
+ 1017 00a2 C0E7     		b	.L50
+ 1018              		.cfi_endproc
+ 1019              	.LFE18:
+ 1021              		.global	__aeabi_dsub
+ 1022              		.global	__aeabi_dadd
+ 1023              		.section	.text.cartesian_move_distance,"ax",%progbits
+ 1024              		.align	1
+ 1025              		.p2align 2,,3
+ARM GAS  /tmp/ccLITLtJ.s 			page 25
+
+
+ 1026              		.global	cartesian_move_distance
+ 1027              		.syntax unified
+ 1028              		.thumb
+ 1029              		.thumb_func
+ 1030              		.fpu fpv4-sp-d16
+ 1032              	cartesian_move_distance:
+ 1033              	.LVL91:
+ 1034              	.LFB19:
+ 265:chelper/kin_cartesian.c **** 
+ 266:chelper/kin_cartesian.c **** /* ========== Move Distance Calculation ========== */
+ 267:chelper/kin_cartesian.c **** 
+ 268:chelper/kin_cartesian.c **** /**
+ 269:chelper/kin_cartesian.c ****  * @brief Calculate the Euclidean distance of a move
+ 270:chelper/kin_cartesian.c ****  * 
+ 271:chelper/kin_cartesian.c ****  * @param start Start position
+ 272:chelper/kin_cartesian.c ****  * @param end   End position
+ 273:chelper/kin_cartesian.c ****  * @return Distance in mm (XYZ only, not including E)
+ 274:chelper/kin_cartesian.c ****  */
+ 275:chelper/kin_cartesian.c **** double
+ 276:chelper/kin_cartesian.c **** cartesian_move_distance(const struct coord *start, const struct coord *end)
+ 277:chelper/kin_cartesian.c **** {
+ 1035              		.loc 1 277 1 is_stmt 1 view -0
+ 1036              		.cfi_startproc
+ 1037              		@ args = 0, pretend = 0, frame = 0
+ 1038              		@ frame_needed = 0, uses_anonymous_args = 0
+ 278:chelper/kin_cartesian.c ****     double dx = end->x - start->x;
+ 1039              		.loc 1 278 5 view .LVU276
+ 277:chelper/kin_cartesian.c ****     double dx = end->x - start->x;
+ 1040              		.loc 1 277 1 is_stmt 0 view .LVU277
+ 1041 0000 2DE9F843 		push	{r3, r4, r5, r6, r7, r8, r9, lr}
+ 1042              		.cfi_def_cfa_offset 32
+ 1043              		.cfi_offset 3, -32
+ 1044              		.cfi_offset 4, -28
+ 1045              		.cfi_offset 5, -24
+ 1046              		.cfi_offset 6, -20
+ 1047              		.cfi_offset 7, -16
+ 1048              		.cfi_offset 8, -12
+ 1049              		.cfi_offset 9, -8
+ 1050              		.cfi_offset 14, -4
+ 277:chelper/kin_cartesian.c ****     double dx = end->x - start->x;
+ 1051              		.loc 1 277 1 view .LVU278
+ 1052 0004 0546     		mov	r5, r0
+ 1053 0006 0C46     		mov	r4, r1
+ 1054              		.loc 1 278 12 view .LVU279
+ 1055 0008 D0E90023 		ldrd	r2, [r0]
+ 1056 000c D1E90001 		ldrd	r0, [r1]
+ 1057              	.LVL92:
+ 1058              		.loc 1 278 12 view .LVU280
+ 1059 0010 FFF7FEFF 		bl	__aeabi_dsub
+ 1060              	.LVL93:
+ 279:chelper/kin_cartesian.c ****     double dy = end->y - start->y;
+ 1061              		.loc 1 279 12 view .LVU281
+ 1062 0014 D5E90223 		ldrd	r2, [r5, #8]
+ 278:chelper/kin_cartesian.c ****     double dx = end->x - start->x;
+ 1063              		.loc 1 278 12 view .LVU282
+ 1064 0018 8046     		mov	r8, r0
+ 1065 001a 8946     		mov	r9, r1
+ARM GAS  /tmp/ccLITLtJ.s 			page 26
+
+
+ 1066              	.LVL94:
+ 1067              		.loc 1 279 5 is_stmt 1 view .LVU283
+ 1068              		.loc 1 279 12 is_stmt 0 view .LVU284
+ 1069 001c D4E90201 		ldrd	r0, [r4, #8]
+ 1070 0020 FFF7FEFF 		bl	__aeabi_dsub
+ 1071              	.LVL95:
+ 280:chelper/kin_cartesian.c ****     double dz = end->z - start->z;
+ 1072              		.loc 1 280 12 view .LVU285
+ 1073 0024 D5E90423 		ldrd	r2, [r5, #16]
+ 279:chelper/kin_cartesian.c ****     double dy = end->y - start->y;
+ 1074              		.loc 1 279 12 view .LVU286
+ 1075 0028 0646     		mov	r6, r0
+ 1076 002a 0F46     		mov	r7, r1
+ 1077              	.LVL96:
+ 1078              		.loc 1 280 5 is_stmt 1 view .LVU287
+ 1079              		.loc 1 280 12 is_stmt 0 view .LVU288
+ 1080 002c D4E90401 		ldrd	r0, [r4, #16]
+ 1081 0030 FFF7FEFF 		bl	__aeabi_dsub
+ 1082              	.LVL97:
+ 281:chelper/kin_cartesian.c ****     
+ 282:chelper/kin_cartesian.c ****     return sqrt(dx * dx + dy * dy + dz * dz);
+ 1083              		.loc 1 282 20 view .LVU289
+ 1084 0034 4246     		mov	r2, r8
+ 280:chelper/kin_cartesian.c ****     double dz = end->z - start->z;
+ 1085              		.loc 1 280 12 view .LVU290
+ 1086 0036 0446     		mov	r4, r0
+ 1087              	.LVL98:
+ 280:chelper/kin_cartesian.c ****     double dz = end->z - start->z;
+ 1088              		.loc 1 280 12 view .LVU291
+ 1089 0038 0D46     		mov	r5, r1
+ 1090              	.LVL99:
+ 1091              		.loc 1 282 5 is_stmt 1 view .LVU292
+ 1092              		.loc 1 282 20 is_stmt 0 view .LVU293
+ 1093 003a 4B46     		mov	r3, r9
+ 1094 003c 4046     		mov	r0, r8
+ 1095 003e 4946     		mov	r1, r9
+ 1096 0040 FFF7FEFF 		bl	__aeabi_dmul
+ 1097              	.LVL100:
+ 1098              		.loc 1 282 30 view .LVU294
+ 1099 0044 3246     		mov	r2, r6
+ 1100              		.loc 1 282 20 view .LVU295
+ 1101 0046 8046     		mov	r8, r0
+ 1102              	.LVL101:
+ 1103              		.loc 1 282 20 view .LVU296
+ 1104 0048 8946     		mov	r9, r1
+ 1105              		.loc 1 282 30 view .LVU297
+ 1106 004a 3B46     		mov	r3, r7
+ 1107 004c 3046     		mov	r0, r6
+ 1108 004e 3946     		mov	r1, r7
+ 1109 0050 FFF7FEFF 		bl	__aeabi_dmul
+ 1110              	.LVL102:
+ 1111 0054 0246     		mov	r2, r0
+ 1112 0056 0B46     		mov	r3, r1
+ 1113              		.loc 1 282 25 view .LVU298
+ 1114 0058 4046     		mov	r0, r8
+ 1115 005a 4946     		mov	r1, r9
+ 1116 005c FFF7FEFF 		bl	__aeabi_dadd
+ARM GAS  /tmp/ccLITLtJ.s 			page 27
+
+
+ 1117              	.LVL103:
+ 1118              		.loc 1 282 40 view .LVU299
+ 1119 0060 2246     		mov	r2, r4
+ 1120              		.loc 1 282 25 view .LVU300
+ 1121 0062 0646     		mov	r6, r0
+ 1122              	.LVL104:
+ 1123              		.loc 1 282 25 view .LVU301
+ 1124 0064 0F46     		mov	r7, r1
+ 1125              		.loc 1 282 40 view .LVU302
+ 1126 0066 2B46     		mov	r3, r5
+ 1127 0068 2046     		mov	r0, r4
+ 1128 006a 2946     		mov	r1, r5
+ 1129 006c FFF7FEFF 		bl	__aeabi_dmul
+ 1130              	.LVL105:
+ 1131 0070 0B46     		mov	r3, r1
+ 1132 0072 0246     		mov	r2, r0
+ 1133              		.loc 1 282 12 view .LVU303
+ 1134 0074 3946     		mov	r1, r7
+ 1135 0076 3046     		mov	r0, r6
+ 1136 0078 FFF7FEFF 		bl	__aeabi_dadd
+ 1137              	.LVL106:
+ 283:chelper/kin_cartesian.c **** }
+ 1138              		.loc 1 283 1 view .LVU304
+ 1139 007c BDE8F843 		pop	{r3, r4, r5, r6, r7, r8, r9, lr}
+ 1140              		.cfi_restore 14
+ 1141              		.cfi_restore 9
+ 1142              		.cfi_restore 8
+ 1143              		.cfi_restore 7
+ 1144              		.cfi_restore 6
+ 1145              		.cfi_restore 5
+ 1146              		.cfi_restore 4
+ 1147              		.cfi_restore 3
+ 1148              		.cfi_def_cfa_offset 0
+ 1149              	.LVL107:
+ 282:chelper/kin_cartesian.c **** }
+ 1150              		.loc 1 282 12 view .LVU305
+ 1151 0080 41EC100B 		vmov	d0, r0, r1
+ 1152 0084 FFF7FEBF 		b	sqrt
+ 1153              	.LVL108:
+ 1154              		.cfi_endproc
+ 1155              	.LFE19:
+ 1157              		.section	.text.cartesian_calc_direction,"ax",%progbits
+ 1158              		.align	1
+ 1159              		.p2align 2,,3
+ 1160              		.global	cartesian_calc_direction
+ 1161              		.syntax unified
+ 1162              		.thumb
+ 1163              		.thumb_func
+ 1164              		.fpu fpv4-sp-d16
+ 1166              	cartesian_calc_direction:
+ 1167              	.LVL109:
+ 1168              	.LFB20:
+ 284:chelper/kin_cartesian.c **** 
+ 285:chelper/kin_cartesian.c **** /**
+ 286:chelper/kin_cartesian.c ****  * @brief Calculate the direction vector for a move (normalized)
+ 287:chelper/kin_cartesian.c ****  * 
+ 288:chelper/kin_cartesian.c ****  * @param start     Start position
+ARM GAS  /tmp/ccLITLtJ.s 			page 28
+
+
+ 289:chelper/kin_cartesian.c ****  * @param end       End position
+ 290:chelper/kin_cartesian.c ****  * @param axes_r    Output direction vector (normalized)
+ 291:chelper/kin_cartesian.c ****  * @return Move distance in mm
+ 292:chelper/kin_cartesian.c ****  */
+ 293:chelper/kin_cartesian.c **** double
+ 294:chelper/kin_cartesian.c **** cartesian_calc_direction(const struct coord *start, const struct coord *end,
+ 295:chelper/kin_cartesian.c ****                          struct coord *axes_r)
+ 296:chelper/kin_cartesian.c **** {
+ 1169              		.loc 1 296 1 is_stmt 1 view -0
+ 1170              		.cfi_startproc
+ 1171              		@ args = 0, pretend = 0, frame = 8
+ 1172              		@ frame_needed = 0, uses_anonymous_args = 0
+ 297:chelper/kin_cartesian.c ****     double dx = end->x - start->x;
+ 1173              		.loc 1 297 5 view .LVU307
+ 296:chelper/kin_cartesian.c ****     double dx = end->x - start->x;
+ 1174              		.loc 1 296 1 is_stmt 0 view .LVU308
+ 1175 0000 2DE9F04F 		push	{r4, r5, r6, r7, r8, r9, r10, fp, lr}
+ 1176              		.cfi_def_cfa_offset 36
+ 1177              		.cfi_offset 4, -36
+ 1178              		.cfi_offset 5, -32
+ 1179              		.cfi_offset 6, -28
+ 1180              		.cfi_offset 7, -24
+ 1181              		.cfi_offset 8, -20
+ 1182              		.cfi_offset 9, -16
+ 1183              		.cfi_offset 10, -12
+ 1184              		.cfi_offset 11, -8
+ 1185              		.cfi_offset 14, -4
+ 1186 0004 2DED028B 		vpush.64	{d8}
+ 1187              		.cfi_def_cfa_offset 44
+ 1188              		.cfi_offset 80, -44
+ 1189              		.cfi_offset 81, -40
+ 1190 0008 83B0     		sub	sp, sp, #12
+ 1191              		.cfi_def_cfa_offset 56
+ 296:chelper/kin_cartesian.c ****     double dx = end->x - start->x;
+ 1192              		.loc 1 296 1 view .LVU309
+ 1193 000a 0546     		mov	r5, r0
+ 1194 000c 0C46     		mov	r4, r1
+ 1195 000e 1646     		mov	r6, r2
+ 1196              		.loc 1 297 12 view .LVU310
+ 1197 0010 D0E90023 		ldrd	r2, [r0]
+ 1198              	.LVL110:
+ 1199              		.loc 1 297 12 view .LVU311
+ 1200 0014 D1E90001 		ldrd	r0, [r1]
+ 1201              	.LVL111:
+ 296:chelper/kin_cartesian.c ****     double dx = end->x - start->x;
+ 1202              		.loc 1 296 1 view .LVU312
+ 1203 0018 0196     		str	r6, [sp, #4]
+ 1204              		.loc 1 297 12 view .LVU313
+ 1205 001a FFF7FEFF 		bl	__aeabi_dsub
+ 1206              	.LVL112:
+ 298:chelper/kin_cartesian.c ****     double dy = end->y - start->y;
+ 1207              		.loc 1 298 12 view .LVU314
+ 1208 001e D5E90223 		ldrd	r2, [r5, #8]
+ 297:chelper/kin_cartesian.c ****     double dx = end->x - start->x;
+ 1209              		.loc 1 297 12 view .LVU315
+ 1210 0022 8046     		mov	r8, r0
+ 1211 0024 8946     		mov	r9, r1
+ARM GAS  /tmp/ccLITLtJ.s 			page 29
+
+
+ 1212              	.LVL113:
+ 1213              		.loc 1 298 5 is_stmt 1 view .LVU316
+ 1214              		.loc 1 298 12 is_stmt 0 view .LVU317
+ 1215 0026 D4E90201 		ldrd	r0, [r4, #8]
+ 1216 002a FFF7FEFF 		bl	__aeabi_dsub
+ 1217              	.LVL114:
+ 299:chelper/kin_cartesian.c ****     double dz = end->z - start->z;
+ 1218              		.loc 1 299 12 view .LVU318
+ 1219 002e D5E90423 		ldrd	r2, [r5, #16]
+ 298:chelper/kin_cartesian.c ****     double dy = end->y - start->y;
+ 1220              		.loc 1 298 12 view .LVU319
+ 1221 0032 8246     		mov	r10, r0
+ 1222 0034 8B46     		mov	fp, r1
+ 1223              	.LVL115:
+ 1224              		.loc 1 299 5 is_stmt 1 view .LVU320
+ 1225              		.loc 1 299 12 is_stmt 0 view .LVU321
+ 1226 0036 D4E90401 		ldrd	r0, [r4, #16]
+ 1227 003a FFF7FEFF 		bl	__aeabi_dsub
+ 1228              	.LVL116:
+ 300:chelper/kin_cartesian.c ****     double de = end->e - start->e;
+ 1229              		.loc 1 300 12 view .LVU322
+ 1230 003e D5E90623 		ldrd	r2, [r5, #24]
+ 299:chelper/kin_cartesian.c ****     double dz = end->z - start->z;
+ 1231              		.loc 1 299 12 view .LVU323
+ 1232 0042 41EC180B 		vmov	d8, r0, r1
+ 1233              	.LVL117:
+ 1234              		.loc 1 300 5 is_stmt 1 view .LVU324
+ 1235              		.loc 1 300 12 is_stmt 0 view .LVU325
+ 1236 0046 D4E90601 		ldrd	r0, [r4, #24]
+ 1237              	.LVL118:
+ 1238              		.loc 1 300 12 view .LVU326
+ 1239 004a FFF7FEFF 		bl	__aeabi_dsub
+ 1240              	.LVL119:
+ 301:chelper/kin_cartesian.c ****     
+ 302:chelper/kin_cartesian.c ****     /* Calculate total distance (including extruder for normalization) */
+ 303:chelper/kin_cartesian.c ****     double dist = sqrt(dx * dx + dy * dy + dz * dz + de * de);
+ 1241              		.loc 1 303 27 view .LVU327
+ 1242 004e 4246     		mov	r2, r8
+ 300:chelper/kin_cartesian.c ****     double de = end->e - start->e;
+ 1243              		.loc 1 300 12 view .LVU328
+ 1244 0050 0646     		mov	r6, r0
+ 1245              	.LVL120:
+ 300:chelper/kin_cartesian.c ****     double de = end->e - start->e;
+ 1246              		.loc 1 300 12 view .LVU329
+ 1247 0052 0F46     		mov	r7, r1
+ 1248              	.LVL121:
+ 1249              		.loc 1 303 5 is_stmt 1 view .LVU330
+ 1250              		.loc 1 303 27 is_stmt 0 view .LVU331
+ 1251 0054 4B46     		mov	r3, r9
+ 1252 0056 4046     		mov	r0, r8
+ 1253 0058 4946     		mov	r1, r9
+ 1254 005a FFF7FEFF 		bl	__aeabi_dmul
+ 1255              	.LVL122:
+ 1256              		.loc 1 303 37 view .LVU332
+ 1257 005e 5246     		mov	r2, r10
+ 1258              		.loc 1 303 27 view .LVU333
+ 1259 0060 0446     		mov	r4, r0
+ARM GAS  /tmp/ccLITLtJ.s 			page 30
+
+
+ 1260              	.LVL123:
+ 1261              		.loc 1 303 27 view .LVU334
+ 1262 0062 0D46     		mov	r5, r1
+ 1263              	.LVL124:
+ 1264              		.loc 1 303 37 view .LVU335
+ 1265 0064 5B46     		mov	r3, fp
+ 1266 0066 5046     		mov	r0, r10
+ 1267 0068 5946     		mov	r1, fp
+ 1268 006a FFF7FEFF 		bl	__aeabi_dmul
+ 1269              	.LVL125:
+ 1270 006e 0246     		mov	r2, r0
+ 1271 0070 0B46     		mov	r3, r1
+ 1272              		.loc 1 303 32 view .LVU336
+ 1273 0072 2046     		mov	r0, r4
+ 1274 0074 2946     		mov	r1, r5
+ 1275 0076 FFF7FEFF 		bl	__aeabi_dadd
+ 1276              	.LVL126:
+ 1277              		.loc 1 303 47 view .LVU337
+ 1278 007a 53EC182B 		vmov	r2, r3, d8
+ 1279              		.loc 1 303 32 view .LVU338
+ 1280 007e 0446     		mov	r4, r0
+ 1281 0080 0D46     		mov	r5, r1
+ 1282              		.loc 1 303 47 view .LVU339
+ 1283 0082 51EC180B 		vmov	r0, r1, d8
+ 1284 0086 FFF7FEFF 		bl	__aeabi_dmul
+ 1285              	.LVL127:
+ 1286 008a 0246     		mov	r2, r0
+ 1287 008c 0B46     		mov	r3, r1
+ 1288              		.loc 1 303 42 view .LVU340
+ 1289 008e 2046     		mov	r0, r4
+ 1290 0090 2946     		mov	r1, r5
+ 1291 0092 FFF7FEFF 		bl	__aeabi_dadd
+ 1292              	.LVL128:
+ 1293              		.loc 1 303 57 view .LVU341
+ 1294 0096 3246     		mov	r2, r6
+ 1295              		.loc 1 303 42 view .LVU342
+ 1296 0098 0446     		mov	r4, r0
+ 1297 009a 0D46     		mov	r5, r1
+ 1298              		.loc 1 303 57 view .LVU343
+ 1299 009c 3B46     		mov	r3, r7
+ 1300 009e 3046     		mov	r0, r6
+ 1301 00a0 3946     		mov	r1, r7
+ 1302 00a2 FFF7FEFF 		bl	__aeabi_dmul
+ 1303              	.LVL129:
+ 1304 00a6 0246     		mov	r2, r0
+ 1305 00a8 0B46     		mov	r3, r1
+ 1306              		.loc 1 303 19 view .LVU344
+ 1307 00aa 2046     		mov	r0, r4
+ 1308 00ac 2946     		mov	r1, r5
+ 1309 00ae FFF7FEFF 		bl	__aeabi_dadd
+ 1310              	.LVL130:
+ 1311 00b2 41EC100B 		vmov	d0, r0, r1
+ 1312 00b6 FFF7FEFF 		bl	sqrt
+ 1313              	.LVL131:
+ 1314 00ba 55EC104B 		vmov	r4, r5, d0
+ 304:chelper/kin_cartesian.c ****     
+ 305:chelper/kin_cartesian.c ****     if (dist < 1e-9) {
+ARM GAS  /tmp/ccLITLtJ.s 			page 31
+
+
+ 1315              		.loc 1 305 5 is_stmt 1 view .LVU345
+ 1316              		.loc 1 305 8 is_stmt 0 view .LVU346
+ 1317 00be 29A3     		adr	r3, .L81+4
+ 1318 00c0 D3E90023 		ldrd	r2, [r3]
+ 1319 00c4 10EE100A 		vmov	r0, s0	@ int
+ 1320 00c8 2946     		mov	r1, r5
+ 1321 00ca FFF7FEFF 		bl	__aeabi_dcmplt
+ 1322              	.LVL132:
+ 1323 00ce 0028     		cmp	r0, #0
+ 1324 00d0 32D1     		bne	.L80
+ 306:chelper/kin_cartesian.c ****         /* Zero-length move */
+ 307:chelper/kin_cartesian.c ****         axes_r->x = 0.0;
+ 308:chelper/kin_cartesian.c ****         axes_r->y = 0.0;
+ 309:chelper/kin_cartesian.c ****         axes_r->z = 0.0;
+ 310:chelper/kin_cartesian.c ****         axes_r->e = 0.0;
+ 311:chelper/kin_cartesian.c ****         return 0.0;
+ 312:chelper/kin_cartesian.c ****     }
+ 313:chelper/kin_cartesian.c ****     
+ 314:chelper/kin_cartesian.c ****     /* Normalize direction vector */
+ 315:chelper/kin_cartesian.c ****     double inv_dist = 1.0 / dist;
+ 1325              		.loc 1 315 5 is_stmt 1 view .LVU347
+ 1326              		.loc 1 315 12 is_stmt 0 view .LVU348
+ 1327 00d2 2246     		mov	r2, r4
+ 1328 00d4 2B46     		mov	r3, r5
+ 1329 00d6 2249     		ldr	r1, .L81
+ 1330 00d8 0020     		movs	r0, #0
+ 1331 00da FFF7FEFF 		bl	__aeabi_ddiv
+ 1332              	.LVL133:
+ 1333 00de 0246     		mov	r2, r0
+ 1334 00e0 0B46     		mov	r3, r1
+ 316:chelper/kin_cartesian.c ****     axes_r->x = dx * inv_dist;
+ 1335              		.loc 1 316 20 view .LVU349
+ 1336 00e2 4046     		mov	r0, r8
+ 1337 00e4 4946     		mov	r1, r9
+ 315:chelper/kin_cartesian.c ****     axes_r->x = dx * inv_dist;
+ 1338              		.loc 1 315 12 view .LVU350
+ 1339 00e6 9046     		mov	r8, r2
+ 1340              	.LVL134:
+ 315:chelper/kin_cartesian.c ****     axes_r->x = dx * inv_dist;
+ 1341              		.loc 1 315 12 view .LVU351
+ 1342 00e8 9946     		mov	r9, r3
+ 1343              	.LVL135:
+ 1344              		.loc 1 316 5 is_stmt 1 view .LVU352
+ 1345              		.loc 1 316 20 is_stmt 0 view .LVU353
+ 1346 00ea FFF7FEFF 		bl	__aeabi_dmul
+ 1347              	.LVL136:
+ 1348              		.loc 1 316 15 view .LVU354
+ 1349 00ee 019B     		ldr	r3, [sp, #4]
+ 317:chelper/kin_cartesian.c ****     axes_r->y = dy * inv_dist;
+ 1350              		.loc 1 317 20 view .LVU355
+ 1351 00f0 4246     		mov	r2, r8
+ 316:chelper/kin_cartesian.c ****     axes_r->x = dx * inv_dist;
+ 1352              		.loc 1 316 15 view .LVU356
+ 1353 00f2 C3E90001 		strd	r0, [r3]
+ 1354              		.loc 1 317 5 is_stmt 1 view .LVU357
+ 1355              		.loc 1 317 20 is_stmt 0 view .LVU358
+ 1356 00f6 4B46     		mov	r3, r9
+ARM GAS  /tmp/ccLITLtJ.s 			page 32
+
+
+ 1357 00f8 5046     		mov	r0, r10
+ 1358 00fa 5946     		mov	r1, fp
+ 1359 00fc FFF7FEFF 		bl	__aeabi_dmul
+ 1360              	.LVL137:
+ 1361              		.loc 1 317 15 view .LVU359
+ 1362 0100 019B     		ldr	r3, [sp, #4]
+ 318:chelper/kin_cartesian.c ****     axes_r->z = dz * inv_dist;
+ 1363              		.loc 1 318 20 view .LVU360
+ 1364 0102 4246     		mov	r2, r8
+ 317:chelper/kin_cartesian.c ****     axes_r->y = dy * inv_dist;
+ 1365              		.loc 1 317 15 view .LVU361
+ 1366 0104 C3E90201 		strd	r0, [r3, #8]
+ 1367              		.loc 1 318 5 is_stmt 1 view .LVU362
+ 1368              		.loc 1 318 20 is_stmt 0 view .LVU363
+ 1369 0108 4B46     		mov	r3, r9
+ 1370 010a 51EC180B 		vmov	r0, r1, d8
+ 1371 010e FFF7FEFF 		bl	__aeabi_dmul
+ 1372              	.LVL138:
+ 1373              		.loc 1 318 15 view .LVU364
+ 1374 0112 019B     		ldr	r3, [sp, #4]
+ 319:chelper/kin_cartesian.c ****     axes_r->e = de * inv_dist;
+ 1375              		.loc 1 319 20 view .LVU365
+ 1376 0114 4246     		mov	r2, r8
+ 318:chelper/kin_cartesian.c ****     axes_r->z = dz * inv_dist;
+ 1377              		.loc 1 318 15 view .LVU366
+ 1378 0116 C3E90401 		strd	r0, [r3, #16]
+ 1379              		.loc 1 319 5 is_stmt 1 view .LVU367
+ 1380              		.loc 1 319 20 is_stmt 0 view .LVU368
+ 1381 011a 4B46     		mov	r3, r9
+ 1382 011c 3046     		mov	r0, r6
+ 1383 011e 3946     		mov	r1, r7
+ 1384 0120 FFF7FEFF 		bl	__aeabi_dmul
+ 1385              	.LVL139:
+ 1386              		.loc 1 319 15 view .LVU369
+ 1387 0124 019B     		ldr	r3, [sp, #4]
+ 320:chelper/kin_cartesian.c ****     
+ 321:chelper/kin_cartesian.c ****     return dist;
+ 322:chelper/kin_cartesian.c **** }
+ 1388              		.loc 1 322 1 view .LVU370
+ 1389 0126 45EC104B 		vmov	d0, r4, r5
+ 319:chelper/kin_cartesian.c ****     axes_r->e = de * inv_dist;
+ 1390              		.loc 1 319 15 view .LVU371
+ 1391 012a C3E90601 		strd	r0, [r3, #24]
+ 321:chelper/kin_cartesian.c **** }
+ 1392              		.loc 1 321 5 is_stmt 1 view .LVU372
+ 1393              		.loc 1 322 1 is_stmt 0 view .LVU373
+ 1394 012e 03B0     		add	sp, sp, #12
+ 1395              		.cfi_remember_state
+ 1396              		.cfi_def_cfa_offset 44
+ 1397              		@ sp needed
+ 1398 0130 BDEC028B 		vldm	sp!, {d8}
+ 1399              		.cfi_restore 80
+ 1400              		.cfi_restore 81
+ 1401              		.cfi_def_cfa_offset 36
+ 1402              	.LVL140:
+ 1403              		.loc 1 322 1 view .LVU374
+ 1404 0134 BDE8F08F 		pop	{r4, r5, r6, r7, r8, r9, r10, fp, pc}
+ARM GAS  /tmp/ccLITLtJ.s 			page 33
+
+
+ 1405              	.LVL141:
+ 1406              	.L80:
+ 1407              		.cfi_restore_state
+ 307:chelper/kin_cartesian.c ****         axes_r->y = 0.0;
+ 1408              		.loc 1 307 9 is_stmt 1 view .LVU375
+ 307:chelper/kin_cartesian.c ****         axes_r->y = 0.0;
+ 1409              		.loc 1 307 19 is_stmt 0 view .LVU376
+ 1410 0138 0024     		movs	r4, #0
+ 1411 013a 0025     		movs	r5, #0
+ 1412 013c 019B     		ldr	r3, [sp, #4]
+ 1413              		.loc 1 322 1 view .LVU377
+ 1414 013e 45EC104B 		vmov	d0, r4, r5
+ 307:chelper/kin_cartesian.c ****         axes_r->y = 0.0;
+ 1415              		.loc 1 307 19 view .LVU378
+ 1416 0142 C3E90045 		strd	r4, [r3]
+ 308:chelper/kin_cartesian.c ****         axes_r->z = 0.0;
+ 1417              		.loc 1 308 9 is_stmt 1 view .LVU379
+ 308:chelper/kin_cartesian.c ****         axes_r->z = 0.0;
+ 1418              		.loc 1 308 19 is_stmt 0 view .LVU380
+ 1419 0146 C3E90245 		strd	r4, [r3, #8]
+ 309:chelper/kin_cartesian.c ****         axes_r->e = 0.0;
+ 1420              		.loc 1 309 9 is_stmt 1 view .LVU381
+ 309:chelper/kin_cartesian.c ****         axes_r->e = 0.0;
+ 1421              		.loc 1 309 19 is_stmt 0 view .LVU382
+ 1422 014a C3E90445 		strd	r4, [r3, #16]
+ 310:chelper/kin_cartesian.c ****         return 0.0;
+ 1423              		.loc 1 310 9 is_stmt 1 view .LVU383
+ 310:chelper/kin_cartesian.c ****         return 0.0;
+ 1424              		.loc 1 310 19 is_stmt 0 view .LVU384
+ 1425 014e C3E90645 		strd	r4, [r3, #24]
+ 311:chelper/kin_cartesian.c ****     }
+ 1426              		.loc 1 311 9 is_stmt 1 view .LVU385
+ 1427              		.loc 1 322 1 is_stmt 0 view .LVU386
+ 1428 0152 03B0     		add	sp, sp, #12
+ 1429              		.cfi_def_cfa_offset 44
+ 1430              		@ sp needed
+ 1431 0154 BDEC028B 		vldm	sp!, {d8}
+ 1432              		.cfi_restore 80
+ 1433              		.cfi_restore 81
+ 1434              		.cfi_def_cfa_offset 36
+ 1435              	.LVL142:
+ 1436              		.loc 1 322 1 view .LVU387
+ 1437 0158 BDE8F08F 		pop	{r4, r5, r6, r7, r8, r9, r10, fp, pc}
+ 1438              	.LVL143:
+ 1439              	.L82:
+ 1440              		.loc 1 322 1 view .LVU388
+ 1441 015c AFF30080 		.align	3
+ 1442              	.L81:
+ 1443 0160 0000F03F 		.word	1072693248
+ 1444 0164 95D626E8 		.word	-400107883
+ 1445 0168 0B2E113E 		.word	1041313291
+ 1446              		.cfi_endproc
+ 1447              	.LFE20:
+ 1449              		.text
+ 1450              	.Letext0:
+ 1451              		.file 2 "chelper/list.h"
+ 1452              		.file 3 "chelper/trapq.h"
+ARM GAS  /tmp/ccLITLtJ.s 			page 34
+
+
+ 1453              		.file 4 "chelper/itersolve.h"
+ 1454              		.file 5 "/usr/include/newlib/math.h"
+ARM GAS  /tmp/ccLITLtJ.s 			page 35
+
+
+DEFINED SYMBOLS
+                            *ABS*:0000000000000000 kin_cartesian.c
+     /tmp/ccLITLtJ.s:19     .text.cartesian_x_calc_position:0000000000000000 $t
+     /tmp/ccLITLtJ.s:27     .text.cartesian_x_calc_position:0000000000000000 cartesian_x_calc_position
+     /tmp/ccLITLtJ.s:71     .text.cartesian_y_calc_position:0000000000000000 $t
+     /tmp/ccLITLtJ.s:78     .text.cartesian_y_calc_position:0000000000000000 cartesian_y_calc_position
+     /tmp/ccLITLtJ.s:121    .text.cartesian_z_calc_position:0000000000000000 $t
+     /tmp/ccLITLtJ.s:128    .text.cartesian_z_calc_position:0000000000000000 cartesian_z_calc_position
+     /tmp/ccLITLtJ.s:171    .text.cartesian_e_calc_position:0000000000000000 $t
+     /tmp/ccLITLtJ.s:178    .text.cartesian_e_calc_position:0000000000000000 cartesian_e_calc_position
+     /tmp/ccLITLtJ.s:222    .text.cartesian_stepper_x_setup:0000000000000000 $t
+     /tmp/ccLITLtJ.s:230    .text.cartesian_stepper_x_setup:0000000000000000 cartesian_stepper_x_setup
+     /tmp/ccLITLtJ.s:275    .text.cartesian_stepper_x_setup:0000000000000024 $d
+     /tmp/ccLITLtJ.s:281    .text.cartesian_stepper_y_setup:0000000000000000 $t
+     /tmp/ccLITLtJ.s:289    .text.cartesian_stepper_y_setup:0000000000000000 cartesian_stepper_y_setup
+     /tmp/ccLITLtJ.s:334    .text.cartesian_stepper_y_setup:0000000000000024 $d
+     /tmp/ccLITLtJ.s:340    .text.cartesian_stepper_z_setup:0000000000000000 $t
+     /tmp/ccLITLtJ.s:348    .text.cartesian_stepper_z_setup:0000000000000000 cartesian_stepper_z_setup
+     /tmp/ccLITLtJ.s:393    .text.cartesian_stepper_z_setup:0000000000000024 $d
+     /tmp/ccLITLtJ.s:399    .text.cartesian_stepper_e_setup:0000000000000000 $t
+     /tmp/ccLITLtJ.s:407    .text.cartesian_stepper_e_setup:0000000000000000 cartesian_stepper_e_setup
+     /tmp/ccLITLtJ.s:452    .text.cartesian_stepper_e_setup:0000000000000024 $d
+     /tmp/ccLITLtJ.s:458    .text.cartesian_stepper_setup:0000000000000000 $t
+     /tmp/ccLITLtJ.s:466    .text.cartesian_stepper_setup:0000000000000000 cartesian_stepper_setup
+     /tmp/ccLITLtJ.s:628    .text.cartesian_stepper_setup:0000000000000078 $d
+     /tmp/ccLITLtJ.s:637    .text.cartesian_coord_to_steps:0000000000000000 $t
+     /tmp/ccLITLtJ.s:645    .text.cartesian_coord_to_steps:0000000000000000 cartesian_coord_to_steps
+     /tmp/ccLITLtJ.s:707    .text.cartesian_steps_to_coord:0000000000000000 $t
+     /tmp/ccLITLtJ.s:715    .text.cartesian_steps_to_coord:0000000000000000 cartesian_steps_to_coord
+     /tmp/ccLITLtJ.s:779    .text.cartesian_check_limits:0000000000000000 $t
+     /tmp/ccLITLtJ.s:787    .text.cartesian_check_limits:0000000000000000 cartesian_check_limits
+     /tmp/ccLITLtJ.s:879    .text.cartesian_clamp_to_limits:0000000000000000 $t
+     /tmp/ccLITLtJ.s:887    .text.cartesian_clamp_to_limits:0000000000000000 cartesian_clamp_to_limits
+     /tmp/ccLITLtJ.s:1024   .text.cartesian_move_distance:0000000000000000 $t
+     /tmp/ccLITLtJ.s:1032   .text.cartesian_move_distance:0000000000000000 cartesian_move_distance
+     /tmp/ccLITLtJ.s:1158   .text.cartesian_calc_direction:0000000000000000 $t
+     /tmp/ccLITLtJ.s:1166   .text.cartesian_calc_direction:0000000000000000 cartesian_calc_direction
+     /tmp/ccLITLtJ.s:1443   .text.cartesian_calc_direction:0000000000000160 $d
+
+UNDEFINED SYMBOLS
+__aeabi_dmul
+move_get_coord
+__aeabi_ddiv
+__aeabi_dcmplt
+__aeabi_dcmpgt
+__aeabi_dsub
+__aeabi_dadd
+sqrt
