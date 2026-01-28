@@ -23,25 +23,23 @@ KIAUH 是一个用于在 Linux 系统上安装和管理 Klipper 3D 打印机固�
 ### 快速开始
 
 ```bash
-# 编译 ARM 固件 (需要 arm-none-eabi-gcc)
+# 安装 ARM 交叉编译工具链
+sudo apt-get install gcc-arm-none-eabi
+
+# 编译 ARM 固件
 cd klipper-mcu
 make
 
 # 生成文件
 # build/klipper-mcu.bin  - 可烧录的二进制文件 (20KB)
-# build/klipper-mcu.elf  - ELF 可执行文件
+# build/klipper-mcu.elf  - ARM 32-bit ELF 可执行文件
 # build/klipper-mcu.hex  - Intel HEX 格式
 
 # 烧录到 STM32F407 (需要 st-flash)
 make flash
-```
 
-### 主机编译验证
-
-```bash
-# 使用主机 GCC 编译验证代码
-make -f Makefile.host
-make -f Makefile.host run
+# 或使用 OpenOCD 烧录
+make flash-openocd
 ```
 
 ### 运行测试
